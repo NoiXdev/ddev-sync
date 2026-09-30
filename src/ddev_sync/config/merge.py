@@ -14,6 +14,11 @@ from ddev_sync.errors import ConfigError
 LIST_MODES = frozenset({"extend", "replace", "prepend"})
 DEFAULT_LIST_MODE = "extend"
 
+# A list directive spells its payload as `values:` in most places, but the
+# hook/setup command lists documented in spec §4.5 spell it `commands:`
+# instead. Both are accepted; a directive uses exactly one of them.
+LIST_PAYLOAD_KEYS = frozenset({"values", "commands"})
+
 
 @dataclass(frozen=True)
 class LayerDoc:
@@ -95,16 +100,36 @@ def _display(path: tuple[str, ...]) -> str:
 
 
 def _is_list_directive(value: dict[str, Any], path: tuple[str, ...]) -> bool:
-    if "values" not in value:
+    # 'values' alone is always a directive - this is the original, generic
+    # spelling and needs no 'mode' to disambiguate it from an ordinary nested
+    # map. 'commands' is the hook/setup spelling (spec §4.5); it is only
+    # unambiguous as a directive when 'mode' sits next to it, because a bare
+    # `{"commands": [...]}` is also the legitimate, pre-existing shape of
+    # `setup: {commands: [...]}`, where 'commands' is just a regular nested
+    # key, not a directive payload.
+    #
+    # A bare 'mode' with neither is deliberately NOT raised here, even though
+    # it is likely a typo (e.g. forgetting 'commands'): this merge function is
+    # schema-agnostic and 'mode' is not a reserved word outside a directive -
+    # a document is free to use it as an ordinary data key anywhere else, and
+    # `test_merge_properties.py`'s Hypothesis suite generates exactly such
+    # arbitrary documents (it found `{"mode": 0}` as plain data within hours
+    # of this rule existing). Raising here would make the merge function
+    # fail on valid, unrelated input.
+    if "values" in value:
+        payload_key = "values"
+    elif "mode" in value and "commands" in value:
+        payload_key = "commands"
+    else:
         return False
-    unexpected = set(value) - {"mode", "values"}
+    unexpected = set(value) - {"mode", payload_key}
     if unexpected:
         raise ConfigError(
-            f"{_display(path)}: a list directive accepts only 'mode' and 'values', "
+            f"{_display(path)}: a list directive accepts only 'mode' and {payload_key!r}, "
             f"found {', '.join(sorted(unexpected))}"
         )
-    if not isinstance(value["values"], list):
-        raise ConfigError(f"{_display(path)}: 'values' must be a list")
+    if not isinstance(value[payload_key], list):
+        raise ConfigError(f"{_display(path)}: {payload_key!r} must be a list")
     mode = value.get("mode", DEFAULT_LIST_MODE)
     if mode not in LIST_MODES:
         raise ConfigError(
@@ -123,7 +148,8 @@ def _apply_list(
     parent: dict[str, Any],
 ) -> None:
     mode = directive.get("mode", DEFAULT_LIST_MODE)
-    values = list(directive["values"])
+    payload_key = "commands" if "commands" in directive else "values"
+    values = list(directive[payload_key])
     existing = parent.get(key)
     base = list(existing) if isinstance(existing, list) else []
     base_labels = list(result.list_sources.get(path, ()))

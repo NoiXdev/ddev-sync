@@ -128,3 +128,54 @@ def test_malformed_list_directives_name_the_path_and_the_problem(
         merge_layers([layer("project", sync={"rules": directive})])
     assert "sync.rules" in str(caught.value)
     assert expected in str(caught.value)
+
+
+def test_mode_and_commands_is_recognised_as_a_list_directive_that_replaces() -> None:
+    result = merge_layers(
+        [
+            layer("profile", rules=["a", "b"]),
+            layer("project", rules={"mode": "replace", "commands": ["c"]}),
+        ]
+    )
+    assert result.data == {"rules": ["c"]}
+    assert result.list_sources == {("rules",): ("project",)}
+
+
+def test_mode_prepend_with_commands_keeps_alignment() -> None:
+    result = merge_layers(
+        [
+            layer("profile", rules=["a"]),
+            layer("project", rules={"mode": "prepend", "commands": ["x", "y"]}),
+        ]
+    )
+    assert result.data == {"rules": ["x", "y", "a"]}
+    assert result.list_sources == {("rules",): ("project", "project", "profile")}
+
+
+def test_a_bare_mode_key_without_values_or_commands_is_not_a_directive() -> None:
+    """Deviation from the letter of Ruling F3: F3 asked for this to raise
+    ConfigError, but 'mode' is not a reserved word for a schema-agnostic
+    merge function - a document may legitimately use it as an ordinary data
+    key anywhere outside an actual list directive.
+    `test_merge_properties.py`'s Hypothesis suite demonstrates the collision:
+    it generates arbitrary documents and found one shaped exactly like
+    `{"mode": 0}`, which a raise would incorrectly reject. So a lone 'mode'
+    key falls through to the ordinary nested-map merge instead.
+    """
+    result = merge_layers([layer("project", sync={"rules": {"mode": "replace"}})])
+    assert result.data == {"sync": {"rules": {"mode": "replace"}}}
+
+
+def test_values_and_commands_together_is_rejected_as_an_unexpected_key() -> None:
+    with pytest.raises(ConfigError) as caught:
+        merge_layers([layer("project", sync={"rules": {"values": ["a"], "commands": ["b"]}})])
+    assert "sync.rules" in str(caught.value)
+    assert "found commands" in str(caught.value)
+
+
+def test_a_bare_commands_key_without_mode_is_not_a_directive() -> None:
+    """`setup: {commands: [...]}` must keep working: 'commands' alone, with no
+    'mode' sibling, is the pre-existing nested-map shape, not a directive.
+    """
+    result = merge_layers([layer("project", setup={"commands": ["run-this"]})])
+    assert result.data == {"setup": {"commands": ["run-this"]}}
