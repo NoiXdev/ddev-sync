@@ -1,0 +1,19 @@
+# Fallback profile. Applies to DDEV types with no dedicated profile.
+# Credentials must be supplied in .ddev/ddev-sync.yaml because there is no
+# framework convention to read them from.
+name: generic
+
+env:
+  strategy: none
+
+database:
+  remote_credentials: explicit
+
+files:
+  paths: []
+
+sanitize:
+  rules: []
+
+setup:
+  commands: []
