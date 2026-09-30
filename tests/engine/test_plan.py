@@ -8,6 +8,7 @@ from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.plan import Plan, build_plan
 from ddev_sync.engine.steps import StepKind, steps_for_selection
+from ddev_sync.errors import ConfigError
 from ddev_sync.profiles.registry import ResolvedProfile
 
 
@@ -62,12 +63,14 @@ def kinds(plan: Plan) -> list[str]:
 
 
 def test_a_database_only_plan_has_preflight_dump_download_import() -> None:
-    assert kinds(plan_for(["db"])) == [
+    plan = plan_for(["db"])
+    assert kinds(plan) == [
         "preflight",
         "db.dump",
         "db.download",
         "db.import",
     ]
+    assert all(not step.is_hook for step in plan.steps)
 
 
 def test_steps_are_numbered_from_one_in_order() -> None:
@@ -158,6 +161,8 @@ def test_a_post_hook_lands_immediately_after_its_step() -> None:
     ]
     assert plan.steps[-1].detail == "typo3 cache:flush"
     assert plan.steps[-1].source == ".ddev/ddev-sync.yaml"
+    assert plan.steps[-1].is_hook is True
+    assert plan.steps[-2].is_hook is False
 
 
 def test_a_pre_hook_lands_immediately_before_its_step() -> None:
@@ -166,7 +171,9 @@ def test_a_pre_hook_lands_immediately_before_its_step() -> None:
         user_layers=[hooks_layer(pre_db_dump={"commands": [{"run": "echo starting"}]})],
     )
     assert plan.steps[1].detail == "echo starting"
+    assert plan.steps[1].is_hook is True
     assert plan.steps[2].detail.startswith("mysqldump")
+    assert plan.steps[2].is_hook is False
 
 
 def test_hooks_on_steps_that_were_not_selected_do_not_run() -> None:
@@ -203,6 +210,28 @@ def test_a_malformed_hook_entry_is_labelled_rather_than_crashing() -> None:
     assert plan.steps[-1].detail == "unknown operation"
 
 
+def test_mode_replace_on_a_hook_discards_a_weaker_layers_commands() -> None:
+    weak = hooks_layer(post_db_import={"mode": "extend", "commands": [{"run": "weak"}]})
+    strong = LayerDoc(
+        ".ddev/ddev-sync.local.yaml",
+        {"hooks": {"post_db_import": {"mode": "replace", "commands": [{"run": "strong"}]}}},
+    )
+    plan = plan_for(["db"], user_layers=[weak, strong])
+    hook_steps = [step.detail for step in plan.steps if step.is_hook]
+    assert hook_steps == ["strong"]
+
+
+def test_mode_extend_on_a_hook_keeps_both_layers_commands() -> None:
+    weak = hooks_layer(post_db_import={"mode": "extend", "commands": [{"run": "weak"}]})
+    strong = LayerDoc(
+        ".ddev/ddev-sync.local.yaml",
+        {"hooks": {"post_db_import": {"mode": "extend", "commands": [{"run": "strong"}]}}},
+    )
+    plan = plan_for(["db"], user_layers=[weak, strong])
+    hook_steps = [step.detail for step in plan.steps if step.is_hook]
+    assert hook_steps == ["weak", "strong"]
+
+
 def test_multiple_hooks_keep_their_configured_order() -> None:
     plan = plan_for(
         ["db"],
@@ -222,14 +251,34 @@ def test_a_files_block_of_the_wrong_shape_yields_no_file_steps(files_value: Any)
     assert [step for step in plan.steps if step.kind is StepKind.FILES_SYNC] == []
 
 
-def test_non_mapping_entries_in_a_list_are_ignored() -> None:
+def test_a_bare_string_entry_is_normalised_to_a_named_operation() -> None:
     plan = plan_for(
         ["setup"],
-        user_layers=[LayerDoc("bad", {"setup": {"commands": ["a bare string"]}})],
+        user_layers=[LayerDoc("bad", {"setup": {"commands": ["ddev-sync:flush-cache"]}})],
+    )
+    setup_steps = [step for step in plan.steps if step.kind is StepKind.SETUP]
+    assert len(setup_steps) == 2
+    assert setup_steps[0].detail == "composer install --no-interaction"
+    assert setup_steps[1].detail == "ddev-sync:flush-cache"
+    assert setup_steps[1].source == "bad"
+
+
+def test_genuinely_malformed_entries_are_ignored_rather_than_crashing() -> None:
+    plan = plan_for(
+        ["setup"],
+        user_layers=[LayerDoc("bad", {"setup": {"commands": [42, ["nested-list"]]}})],
     )
     setup_steps = [step for step in plan.steps if step.kind is StepKind.SETUP]
     assert len(setup_steps) == 1
     assert setup_steps[0].detail == "composer install --no-interaction"
+
+
+def test_a_database_override_uses_the_top_level_database_key_not_a_sync_wrapper() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"database": {"target_database": "acme"}})
+    plan = plan_for(["db"], user_layers=[extra])
+    step = next(entry for entry in plan.steps if entry.kind is StepKind.DB_IMPORT)
+    assert "mysql -h ddev-acme-db acme <" in step.detail
+    assert step.source == ".ddev/ddev-sync.yaml"
 
 
 def test_a_missing_env_map_falls_back_to_the_default_variable_name() -> None:
@@ -295,6 +344,32 @@ def test_a_jump_host_target_without_a_user_omits_the_at_sign() -> None:
     assert "-J bastion.example:22" in plan.steps[0].detail
 
 
+def test_an_ssh_alias_target_omits_the_port_flag_from_the_preflight_preview() -> None:
+    aliased = ResolvedTarget(
+        name="production",
+        host="app-prod",
+        via_ssh_alias=True,
+        path="/srv/app/",
+        stage=Stage.PRODUCTION,
+    )
+    profile = ResolvedProfile(
+        name="generic", label="generic", data={}, layers=(LayerDoc("profile:generic", {}),)
+    )
+    plan = build_plan(
+        target=aliased,
+        project=project(),
+        profile=profile,
+        merged=merge_layers([LayerDoc("profile:generic", {})]),
+        steps=steps_for_selection([]),
+    )
+    assert plan.steps[0].detail == "ssh app-prod"
+
+
+def test_a_direct_target_includes_the_port_flag_in_the_preflight_preview() -> None:
+    plan = plan_for([])
+    assert plan.steps[0].detail == "ssh -p 22 deploy@web01.example"
+
+
 def test_a_sanitize_block_with_several_rules_pluralises() -> None:
     extra = LayerDoc(
         ".ddev/ddev-sync.yaml",
@@ -313,6 +388,20 @@ def test_a_sanitize_rule_without_a_name_is_labelled_unnamed() -> None:
     plan = plan_for(["sanitize"], user_layers=[extra])
     step = next(entry for entry in plan.steps if entry.kind is StepKind.SANITIZE)
     assert "unnamed" in step.detail
+
+
+def test_a_files_entry_missing_remote_names_the_entry_instead_of_crashing() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"files": {"paths": [{"local": "public/uploads/"}]}})
+    with pytest.raises(ConfigError) as caught:
+        plan_for(["files"], user_layers=[extra])
+    assert "remote" in str(caught.value)
+
+
+def test_a_files_entry_missing_local_names_the_entry_instead_of_crashing() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"files": {"paths": [{"remote": "shared/x/"}]}})
+    with pytest.raises(ConfigError) as caught:
+        plan_for(["files"], user_layers=[extra])
+    assert "local" in str(caught.value)
 
 
 def test_a_target_path_without_a_trailing_slash_still_joins_correctly() -> None:

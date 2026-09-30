@@ -13,6 +13,7 @@ from ddev_sync.config.merge import MergeResult
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.steps import StepKind, hook_name
+from ddev_sync.errors import ConfigError
 from ddev_sync.profiles.registry import ResolvedProfile
 from ddev_sync.transport.ssh import remote_endpoint, scp_download_command
 
@@ -22,13 +23,20 @@ DOWNLOAD_DIR = ".ddev/.downloads"
 
 @dataclass(frozen=True)
 class PlannedStep:
-    """One line of the plan: what runs, where, and which layer asked for it."""
+    """One line of the plan: what runs, where, and which layer asked for it.
+
+    `kind` always names the parent step, even for a hook - a `post_db_import`
+    hook keeps `kind == StepKind.DB_IMPORT` so callers can still group a hook
+    with the step it hangs off. `is_hook` is what the renderer uses to tell a
+    step from its hooks; the parent's `kind` alone cannot do that.
+    """
 
     index: int
     kind: StepKind
     where: str
     detail: str
     source: str
+    is_hook: bool = False
 
 
 @dataclass(frozen=True)
@@ -52,15 +60,17 @@ def build_plan(
 ) -> Plan:
     """Expand the selected steps, with their hooks, into numbered plan entries."""
     builder = _Builder(target=target, project=project, merged=merged)
-    entries: list[tuple[StepKind, str, str, str]] = []
+    entries: list[tuple[StepKind, str, str, str, bool]] = []
     for kind in steps:
-        entries.extend(builder.hooks(kind, "pre"))
-        entries.extend(builder.step(kind))
-        entries.extend(builder.hooks(kind, "post"))
+        entries.extend((*entry, True) for entry in builder.hooks(kind, "pre"))
+        entries.extend((*entry, False) for entry in builder.step(kind))
+        entries.extend((*entry, True) for entry in builder.hooks(kind, "post"))
 
     numbered = tuple(
-        PlannedStep(index=number, kind=kind, where=where, detail=detail, source=source)
-        for number, (kind, where, detail, source) in enumerate(entries, start=1)
+        PlannedStep(
+            index=number, kind=kind, where=where, detail=detail, source=source, is_hook=is_hook
+        )
+        for number, (kind, where, detail, source, is_hook) in enumerate(entries, start=1)
     )
     notices = () if profile.notice is None else (profile.notice,)
     return Plan(
@@ -97,12 +107,16 @@ class _Builder:
         return handlers[kind]()
 
     def hooks(self, kind: StepKind, phase: str) -> list[tuple[StepKind, str, str, str]]:
-        path = ("hooks", hook_name(kind, phase), "commands")
-        commands = self._list_at(path)
-        sources = self._list_sources.get(path, ())
+        # A hook's merged shape depends on whether any layer wrote an explicit
+        # `mode:` alongside `commands:` (spec §4.5): with `mode`, `{mode,
+        # commands}` is a list directive and collapses to a flat list right
+        # at ("hooks", <name>); without it, `commands` is an ordinary nested
+        # key and the list sits one level deeper, as it always has.
+        hook_path = ("hooks", hook_name(kind, phase))
+        path = hook_path if isinstance(self._node_at(hook_path), list) else (*hook_path, "commands")
         return [
-            (kind, "local", _hook_detail(entry), _source_at(sources, position))
-            for position, entry in enumerate(commands)
+            (kind, "local", _hook_detail(entry), source)
+            for entry, source in self._command_entries_at(path)
         ]
 
     def _preflight(self) -> list[tuple[StepKind, str, str, str]]:
@@ -122,7 +136,7 @@ class _Builder:
         return [(StepKind.DB_DOWNLOAD, "scp", detail, "built-in")]
 
     def _db_import(self) -> list[tuple[StepKind, str, str, str]]:
-        database = self._scalar_at(("sync", "database", "target_database"), default="db")
+        database = self._scalar_at(("database", "target_database"), default="db")
         detail = (
             f"mysql -h {self._project.db_container} {database} < {DOWNLOAD_DIR}/{DUMP_FILENAME}"
         )
@@ -131,7 +145,7 @@ class _Builder:
                 StepKind.DB_IMPORT,
                 "local",
                 detail,
-                self._source(("sync", "database", "target_database")),
+                self._source(("database", "target_database")),
             )
         ]
 
@@ -140,8 +154,10 @@ class _Builder:
         sources = self._list_sources.get(("files", "paths"), ())
         entries: list[tuple[StepKind, str, str, str]] = []
         for position, mapping in enumerate(paths):
-            remote = f"{self._target.path}{mapping['remote']}"
-            local = f"{self._project.root}/{mapping['local']}"
+            remote_suffix = _require_key(mapping, "remote")
+            local_suffix = _require_key(mapping, "local")
+            remote = f"{self._target.path}{remote_suffix}"
+            local = f"{self._project.root}/{local_suffix}"
             detail = f"{remote} -> {local}"
             entries.append((StepKind.FILES_SYNC, "rsync", detail, _source_at(sources, position)))
         return entries
@@ -163,11 +179,9 @@ class _Builder:
         ]
 
     def _setup(self) -> list[tuple[StepKind, str, str, str]]:
-        commands = self._list_at(("setup", "commands"))
-        sources = self._list_sources.get(("setup", "commands"), ())
         return [
-            (StepKind.SETUP, "local", _hook_detail(entry), _source_at(sources, position))
-            for position, entry in enumerate(commands)
+            (StepKind.SETUP, "local", _hook_detail(entry), source)
+            for entry, source in self._command_entries_at(("setup", "commands"))
         ]
 
     def _list_at(self, path: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -179,6 +193,33 @@ class _Builder:
         if not isinstance(node, list):
             return []
         return [entry for entry in node if isinstance(entry, dict)]
+
+    def _node_at(self, path: tuple[str, ...]) -> Any:
+        node: Any = self._data
+        for part in path:
+            if not isinstance(node, dict):
+                return None
+            node = node.get(part)
+        return node
+
+    def _command_entries_at(self, path: tuple[str, ...]) -> list[tuple[dict[str, Any], str]]:
+        """Hook and setup command lists (spec §4.5) additionally accept a bare
+        string as shorthand for a named built-in operation, e.g.
+        `- ddev-sync:flush-cache` normalises to `{"operation": "ddev-sync:flush-cache"}`.
+        Anything that is neither a string nor a mapping is malformed and is
+        dropped rather than crashing the whole plan.
+        """
+        node = self._node_at(path)
+        if not isinstance(node, list):
+            return []
+        sources = self._list_sources.get(path, ())
+        pairs: list[tuple[dict[str, Any], str]] = []
+        for position, entry in enumerate(node):
+            if isinstance(entry, str):
+                pairs.append(({"operation": entry}, _source_at(sources, position)))
+            elif isinstance(entry, dict):
+                pairs.append((entry, _source_at(sources, position)))
+        return pairs
 
     def _scalar_at(self, path: tuple[str, ...], *, default: str) -> str:
         node: Any = self._data
@@ -204,6 +245,12 @@ def _hook_detail(entry: dict[str, Any]) -> str:
     return f"{command}{suffix}"
 
 
+def _require_key(mapping: dict[str, Any], key: str) -> str:
+    if key not in mapping:
+        raise ConfigError(f"files.paths entry {mapping!r} is missing {key!r}")
+    return str(mapping[key])
+
+
 def _ssh_preview(target: ResolvedTarget) -> list[str]:
     parts: list[str] = []
     if target.jump_host is not None:
@@ -211,5 +258,7 @@ def _ssh_preview(target: ResolvedTarget) -> list[str]:
         if target.jump_host_user is not None:
             endpoint = f"{target.jump_host_user}@{endpoint}"
         parts.extend(["-J", f"{endpoint}:{target.jump_host_port}"])
+    if target.port is not None:
+        parts.extend(["-p", str(target.port)])
     parts.append(remote_endpoint(target))
     return parts
