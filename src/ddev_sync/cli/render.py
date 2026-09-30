@@ -5,7 +5,12 @@ output snapshot-testable, so a change to a profile shows up as a readable diff
 in a golden file instead of being discovered in production.
 """
 
+from collections.abc import Mapping
+
+from ddev_sync.config.models import ResolvedTarget
+from ddev_sync.config.targets import CollectedTarget
 from ddev_sync.engine.plan import Plan, PlannedStep
+from ddev_sync.operations.preflight import MIN_FREE_BYTES, PreflightReport
 
 _KIND_WIDTH = 14
 _WHERE_WIDTH = 7
@@ -66,3 +71,37 @@ def _legend(plan: Plan) -> str:
         if step.source not in seen:
             seen.append(step.source)
     return "   ".join(f"[{source}]" for source in seen)
+
+
+def render_targets(collected: Mapping[str, CollectedTarget]) -> str:
+    """List every target, its endpoint, and the layer that defined it."""
+    names = sorted(collected)
+    if not names:
+        return "  No sync targets are defined.\n  Run 'ddev sync init' to create one.\n"
+    width = max(len(name) for name in names)
+    lines = ["  Targets", ""]
+    for name in names:
+        spec = collected[name].spec
+        host = spec.ssh_alias or spec.host or "?"
+        user = "" if spec.ssh_alias or not spec.user else f"{spec.user}@"
+        lines.append(
+            f"  {name:<{width}}  {user}{host}:{spec.path or '?'}   [{collected[name].source}]"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def render_doctor(report: PreflightReport, target: ResolvedTarget) -> str:
+    """Render the preflight report as a checklist."""
+    checks = (
+        ("ssh connection", report.ssh_ok, f"{target.host}"),
+        ("deploy path", report.remote_path_ok, target.path),
+        (
+            "disk space",
+            report.free_bytes >= MIN_FREE_BYTES,
+            f"{report.free_bytes // 1024**3} GB free",
+        ),
+    )
+    lines = [f"  Doctor for target {target.name!r}", ""]
+    for label, ok, detail in checks:
+        lines.append(f"  {'OK  ' if ok else 'FAIL'}{label:<18}{detail}")
+    return "\n".join(lines) + "\n"
