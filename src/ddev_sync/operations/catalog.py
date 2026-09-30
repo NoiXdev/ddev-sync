@@ -5,8 +5,6 @@ needs several statements, or it needs to shell out to a framework CLI. Adding
 an entry here is a deliberate act; profiles cannot invent new ones.
 """
 
-from collections.abc import Sequence
-
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.sanitize import (
     SANITIZE_OPERATIONS,
@@ -53,7 +51,11 @@ class ClearMailConfig:
         table = _identifier(_required(rule, "table"))
         column = _identifier(_required(rule, "key_column"))
         keys = rule.params.get("keys", [])
-        if not isinstance(keys, Sequence) or isinstance(keys, str) or not keys:
+        if not isinstance(keys, list):
+            raise OperationError(
+                f"sanitize rule {rule.name!r}: 'keys' must be a list, got {type(keys).__name__}"
+            )
+        if not keys:
             return
         values = ", ".join(f"'{_quote(str(key))}'" for key in keys)
         _run_sql(
@@ -114,7 +116,7 @@ _ADMIN_DRIVERS: dict[str, list[str]] = {
     "drush": ["vendor/bin/drush", "user:create"],
 }
 
-_ALREADY_EXISTS = ("already exists", "already in use", "duplicate")
+_ALREADY_EXISTS = ("already exists", "already in use", "duplicate user")
 
 
 class CreateAdmin:
@@ -138,6 +140,7 @@ class CreateAdmin:
             return
         combined = f"{result.stdout}{result.stderr}".lower()
         if any(marker in combined for marker in _ALREADY_EXISTS):
+            print(f"  local admin already exists - user: {user}")
             return
         raise OperationError(
             f"sanitize rule {rule.name!r}: creating the admin user failed: {result.stderr.strip()}"

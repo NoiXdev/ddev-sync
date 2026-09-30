@@ -70,6 +70,21 @@ def test_clear_mail_config_with_no_keys_runs_nothing(tmp_path: Path) -> None:
     assert runner.calls == []
 
 
+def test_clear_mail_config_with_malformed_keys_is_rejected(tmp_path: Path) -> None:
+    config = rule_config(
+        name="mail",
+        operation="clear_mail_config",
+        table="t",
+        key_column="k",
+        keys="core.mailerSettings.host",
+    )
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(FakeCommandRunner(), tmp_path, **config), {})
+    message = str(caught.value)
+    assert "mail" in message
+    assert "'keys'" in message
+
+
 def test_clear_mail_config_escapes_quotes_in_a_key(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["mysql"], stdout="")
@@ -191,13 +206,18 @@ def test_create_admin_uses_the_documented_local_password(tmp_path: Path) -> None
     assert LOCAL_ADMIN_PASSWORD in runner.calls[0]
 
 
-def test_an_existing_admin_is_not_an_error(tmp_path: Path) -> None:
+def test_an_existing_admin_is_not_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(
         ["vendor/bin/typo3"], returncode=1, stderr="A user with this name already exists"
     )
     config = rule_config(name="admin", operation="create_admin", driver="typo3", user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    out = capsys.readouterr().out
+    assert "already exists" in out
+    assert "ddev" in out
 
 
 def test_another_create_admin_failure_is_an_error(tmp_path: Path) -> None:
@@ -207,6 +227,19 @@ def test_another_create_admin_failure_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(OperationError) as caught:
         SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     assert "database is gone" in str(caught.value)
+
+
+def test_an_unrelated_duplicate_key_error_is_not_swallowed(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["vendor/bin/typo3"],
+        returncode=1,
+        stderr="Duplicate entry 'admin' for key 'PRIMARY'",
+    )
+    config = rule_config(name="admin", operation="create_admin", driver="typo3", user="ddev")
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert "Duplicate entry" in str(caught.value)
 
 
 def test_an_unknown_create_admin_driver_lists_the_valid_ones(tmp_path: Path) -> None:
