@@ -254,6 +254,16 @@ def test_a_differently_cased_file_is_never_silently_treated_as_a_match(tmp_path:
     assert (tmp_path / ".ENV").read_text(encoding="utf-8") == "DB_HOST=10.0.0.1\n"
 
 
+def test_a_directory_named_like_the_env_file_is_not_mistaken_for_it(tmp_path: Path) -> None:
+    (tmp_path / ".env").mkdir()
+    context = make_context(tmp_path, **PROFILE_PATCH)
+    with pytest.raises(OperationError) as caught:
+        EnvRewriteOperation().execute(context, {})
+    message = str(caught.value)
+    assert ".env.local" in message
+    assert ".env" in message
+
+
 def test_a_string_file_setting_is_treated_as_a_single_candidate(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("DB_HOST=10.0.0.1\n", encoding="utf-8")
     context = make_context(

@@ -135,10 +135,16 @@ class EnvRewriteOperation:
         which file moved. Comparing against `iterdir()`'s literal directory
         entries instead makes the match exact - and thus this method's
         result identical - on every platform.
+
+        Do not "simplify" this back to `context.local(name).is_file()` on a
+        constructed path: that is exactly the probe that folds case. The
+        `is_file()` call below is safe because it runs on an entry that
+        `iterdir()` already produced, so its name is never a guess - it
+        only excludes directories and other non-files from candidacy.
         """
         configured = settings.get("file", [".env.local", ".env"])
         candidates = [configured] if isinstance(configured, str) else list(configured)
-        existing = {entry.name for entry in context.project.root.iterdir()}
+        existing = {entry.name for entry in context.project.root.iterdir() if entry.is_file()}
         for name in candidates:
             if str(name) in existing:
                 return context.local(str(name))
