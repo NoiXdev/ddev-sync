@@ -55,8 +55,9 @@ def _kind_label(step: PlannedStep) -> str:
 def _endpoint(plan: Plan) -> str:
     target = plan.target
     host = target.host if target.user is None else f"{target.user}@{target.host}"
-    port = "" if target.port is None else str(target.port)
-    return f"{host}:{port}{target.path}"
+    if target.port is None:
+        return f"{host}  {target.path}"
+    return f"{host}:{target.port}  {target.path}"
 
 
 def _legend(plan: Plan) -> str:

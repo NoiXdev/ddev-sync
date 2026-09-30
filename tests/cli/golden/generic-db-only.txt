@@ -1,5 +1,5 @@
   Plan for target 'production'        generic
-  acme  -  deploy@web01.example:22/srv/app/
+  acme  -  deploy@web01.example:22  /srv/app/
   Nothing will be executed.
 
    1  preflight     remote  ssh -p 22 deploy@web01.example   [built-in]

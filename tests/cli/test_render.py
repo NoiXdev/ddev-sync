@@ -79,7 +79,7 @@ def test_the_output_contains_no_ansi_escapes() -> None:
 
 def test_the_header_shows_the_port_when_the_target_has_one() -> None:
     output = render_plan(small_plan())
-    assert "deploy@web01.example:22/srv/app/" in output
+    assert "deploy@web01.example:22  /srv/app/" in output
 
 
 def test_the_header_omits_the_port_for_an_ssh_alias_target() -> None:
@@ -96,8 +96,34 @@ def test_the_header_omits_the_port_for_an_ssh_alias_target() -> None:
         steps=(),
     )
     output = render_plan(plan)
-    assert "app-prod:/srv/app/" in output
+    assert "app-prod  /srv/app/" in output
     assert "app-prod:22" not in output
+    assert "app-prod:" not in output
+
+
+def test_the_port_and_path_are_separated_with_spaces() -> None:
+    """Port and path must be separated so readers can distinguish scp-style host:path."""
+    output = render_plan(small_plan())
+    # With port: should have two spaces between port and path
+    assert "deploy@web01.example:22  /srv/app/" in output
+    # Verify the concatenated form is NOT present
+    assert "deploy@web01.example:22/srv/app/" not in output
+
+    # For ssh alias (no port), should also have two spaces
+    alias_plan = Plan(
+        target=ResolvedTarget(
+            name="production",
+            host="app-prod",
+            via_ssh_alias=True,
+            path="/srv/acme/",
+            stage=Stage.PRODUCTION,
+        ),
+        profile_label="generic",
+        project_name="myapp",
+        steps=(),
+    )
+    alias_output = render_plan(alias_plan)
+    assert "app-prod  /srv/acme/" in alias_output
 
 
 def test_each_step_line_names_its_own_source() -> None:
