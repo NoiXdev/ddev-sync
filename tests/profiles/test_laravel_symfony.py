@@ -70,6 +70,20 @@ def test_symfony_sets_a_composed_database_url() -> None:
     assert "${DDEV_SITENAME}" in values["DATABASE_URL"]
 
 
+def test_the_symfony_database_url_agrees_with_the_discrete_parts() -> None:
+    values = REGISTRY.resolve("symfony", None).data["env"]["set"]
+    expected = (
+        f"mysql://{values['DATABASE_USER']}:{values['DATABASE_PASSWORD']}"
+        f"@{values['DATABASE_HOST']}:{values['DATABASE_PORT']}"
+        f"/{values['DATABASE_NAME']}"
+    )
+    assert values["DATABASE_URL"] == expected, (
+        "DATABASE_URL and the discrete DATABASE_* keys must describe the same "
+        "database. A Symfony project may read either; if they disagree, the app "
+        "silently talks to the wrong one."
+    )
+
+
 def test_symfony_clears_the_cache_after_import() -> None:
     commands = setup_commands("symfony")
     assert any("cache:clear" in command for command in commands)
