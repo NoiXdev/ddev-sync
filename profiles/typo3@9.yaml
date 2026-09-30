@@ -8,6 +8,11 @@ sanitize:
       - { name: clear-sys-log, sql: "TRUNCATE TABLE sys_log" }
       - name: anonymize-fe-users
         sql: "UPDATE fe_users SET email = CONCAT('fe', uid, '@example.invalid')"
+      - name: reset-fe-passwords
+        operation: reset_passwords
+        table: fe_users
+        column: password
+        value: "$argon2i$disabled"
       - { name: local-admin, operation: create_admin, driver: console, user: ddev }
       - name: flush-cache
         operation: flush_cache
