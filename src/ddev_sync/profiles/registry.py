@@ -14,6 +14,7 @@ import yaml
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.errors import ProfileError
+from ddev_sync.profiles.schema import validate_profile
 
 DEFAULT_PROFILE_ROOT = Path("/opt/ddev-sync/profiles")
 
@@ -72,6 +73,7 @@ class ProfileRegistry:
 
         merged = merge_layers(layers)
         merged.data.pop("extends", None)
+        validate_profile(merged.data)
         return ResolvedProfile(
             name=name,
             label=f"{name}@{chosen}" if chosen is not None else name,

@@ -84,10 +84,17 @@ def test_an_unknown_profile_lists_the_ones_that_exist(root: Path) -> None:
     assert "generic, typo3" in message
 
 
-def test_an_empty_profile_file_is_an_empty_document(tmp_path: Path) -> None:
+def test_an_empty_profile_file_has_no_name_and_is_rejected(tmp_path: Path) -> None:
+    # An empty YAML document parses to `{}` (see `_read`'s `raw is None` branch
+    # below), which is a legitimate *document* but not a well-formed *profile*:
+    # `validate_profile` now runs on every merged profile and requires `name`,
+    # so a nameless profile fails at load time rather than resolving to a
+    # silently useless empty plan.
     profiles = tmp_path / "profiles"
     write_profile(profiles, "empty.yaml", "")
-    assert ProfileRegistry(profiles).resolve("empty", None).data == {}
+    with pytest.raises(ProfileError) as caught:
+        ProfileRegistry(profiles).resolve("empty", None)
+    assert "name" in str(caught.value)
 
 
 def test_unparseable_profile_yaml_names_the_file(tmp_path: Path) -> None:
