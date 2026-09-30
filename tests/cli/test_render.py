@@ -12,8 +12,12 @@ from ddev_sync.profiles.registry import ProfileRegistry
 GOLDEN = Path(__file__).parent / "golden"
 
 
-def step(index: int, kind: StepKind, where: str, detail: str, source: str) -> PlannedStep:
-    return PlannedStep(index=index, kind=kind, where=where, detail=detail, source=source)
+def step(
+    index: int, kind: StepKind, where: str, detail: str, source: str, *, is_hook: bool = False
+) -> PlannedStep:
+    return PlannedStep(
+        index=index, kind=kind, where=where, detail=detail, source=source, is_hook=is_hook
+    )
 
 
 def small_plan(notices: tuple[str, ...] = ()) -> Plan:
@@ -71,6 +75,59 @@ def test_a_plan_with_no_notices_prints_none() -> None:
 
 def test_the_output_contains_no_ansi_escapes() -> None:
     assert "\x1b[" not in render_plan(small_plan(notices=("a notice",)))
+
+
+def test_the_header_shows_the_port_when_the_target_has_one() -> None:
+    output = render_plan(small_plan())
+    assert "deploy@web01.example:22/srv/app/" in output
+
+
+def test_the_header_omits_the_port_for_an_ssh_alias_target() -> None:
+    plan = Plan(
+        target=ResolvedTarget(
+            name="production",
+            host="app-prod",
+            via_ssh_alias=True,
+            path="/srv/app/",
+            stage=Stage.PRODUCTION,
+        ),
+        profile_label="generic",
+        project_name="acme",
+        steps=(),
+    )
+    output = render_plan(plan)
+    assert "app-prod:/srv/app/" in output
+    assert "app-prod:22" not in output
+
+
+def test_each_step_line_names_its_own_source() -> None:
+    output = render_plan(small_plan())
+    lines = output.splitlines()
+    preflight_line = next(line for line in lines if " 1  preflight" in line)
+    dump_line = next(line for line in lines if " 2  db.dump" in line)
+    assert preflight_line.endswith("[built-in]")
+    assert dump_line.endswith("[profile:typo3@12]")
+
+
+def test_a_hook_step_shows_hook_in_the_kind_column_not_its_parents_kind() -> None:
+    plan = Plan(
+        target=small_plan().target,
+        profile_label="typo3@12",
+        project_name="acme",
+        steps=(
+            step(
+                1,
+                StepKind.DB_IMPORT,
+                "local",
+                "typo3 cache:flush",
+                "profile:typo3@12",
+                is_hook=True,
+            ),
+        ),
+    )
+    output = render_plan(plan)
+    assert " 1  hook" in output
+    assert "db.import" not in output.split("Nothing will be executed.")[1]
 
 
 def test_an_empty_plan_still_renders_a_header() -> None:

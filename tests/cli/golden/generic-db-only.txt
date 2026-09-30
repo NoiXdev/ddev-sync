@@ -1,10 +1,10 @@
   Plan for target 'production'        generic
-  acme  -  deploy@web01.example:/srv/app/
+  acme  -  deploy@web01.example:22/srv/app/
   Nothing will be executed.
 
-   1  preflight     remote  ssh deploy@web01.example
-   2  db.dump       remote  mysqldump --single-transaction $DATABASE_NAME
-   3  db.download   scp     deploy@web01.example:/srv/app/dump.sql -> .ddev/.downloads/dump.sql
-   4  db.import     local   mysql -h ddev-acme-db db < .ddev/.downloads/dump.sql
+   1  preflight     remote  ssh -p 22 deploy@web01.example   [built-in]
+   2  db.dump       remote  mysqldump --single-transaction $DATABASE_NAME   [built-in]
+   3  db.download   scp     deploy@web01.example:/srv/app/dump.sql -> .ddev/.downloads/dump.sql   [built-in]
+   4  db.import     local   mysql -h ddev-acme-db db < .ddev/.downloads/dump.sql   [built-in]
 
   Sources:  [built-in]
