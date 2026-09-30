@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, TargetSpec
-from ddev_sync.errors import TargetError
+from ddev_sync.errors import ConfigError, TargetError
 
 MAX_EXTENDS_DEPTH = 16
 
@@ -26,7 +26,7 @@ def collect_targets(layers: Sequence[LayerDoc]) -> dict[str, CollectedTarget]:
     merged = merge_layers(
         [LayerDoc(entry.label, {"targets": entry.data.get("targets", {})}) for entry in layers]
     )
-    raw_targets = merged.data.get("targets", {})
+    raw_targets = _as_mapping(merged.data.get("targets"), "targets")
     collected: dict[str, CollectedTarget] = {}
     for name, raw in raw_targets.items():
         collected[name] = CollectedTarget(
@@ -39,6 +39,18 @@ def collect_targets(layers: Sequence[LayerDoc]) -> dict[str, CollectedTarget]:
 def list_target_names(collected: Mapping[str, CollectedTarget]) -> list[str]:
     """Target names in a stable order, for menus and `ddev sync targets`."""
     return sorted(collected)
+
+
+def _as_mapping(raw: Any, label: str) -> dict[str, Any]:
+    """An empty `targets:` block is a legitimate "nothing defined yet" - treat
+    it as such rather than crashing; anything else that is not a mapping is a
+    genuine configuration mistake and is named explicitly.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{label!r} must be a mapping of target definitions")
+    return raw
 
 
 def _parse_spec(name: str, raw: Any) -> TargetSpec:
@@ -71,7 +83,7 @@ def resolve_target(name: str, collected: Mapping[str, CollectedTarget]) -> Resol
     """Flatten a target's `extends` chain and validate that it is complete."""
     chain = _extends_chain(name, collected)
     flattened = _flatten(chain)
-    return _build(name, flattened)
+    return _build(name, flattened, source=collected[name].source)
 
 
 def _extends_chain(name: str, collected: Mapping[str, CollectedTarget]) -> list[TargetSpec]:
@@ -103,15 +115,35 @@ def _extends_chain(name: str, collected: Mapping[str, CollectedTarget]) -> list[
 
 
 def _flatten(chain: Sequence[TargetSpec]) -> dict[str, Any]:
+    # `exclude_unset` (not `exclude_defaults`): a child that explicitly writes
+    # `port: 22` must still override a base's `port: 2222`, and `22` happens
+    # to equal the field's default. `exclude_defaults` cannot tell "the user
+    # wrote this default value" from "the user never mentioned this field",
+    # so it silently drops the former too - an explicit default could never
+    # win. `exclude_unset` tracks which fields pydantic actually saw on the
+    # constructor call, which is the distinction spec §4.4 needs.
     flattened: dict[str, Any] = {}
-    for spec in chain:
-        for key, value in spec.model_dump(exclude_none=True, exclude_defaults=True).items():
-            if key != "extends":
-                flattened[key] = value
+    host_index: int | None = None
+    alias_index: int | None = None
+    for index, spec in enumerate(chain):
+        for key, value in spec.model_dump(exclude_none=True, exclude_unset=True).items():
+            if key == "extends":
+                continue
+            flattened[key] = value
+            if key == "host":
+                host_index = index
+            elif key == "ssh_alias":
+                alias_index = index
+    # `ssh_alias` and `host` are alternative ways to say "where to connect".
+    # When both are set somewhere in the chain, whichever was set by the
+    # stronger (later) link wins; a weaker layer's alias must not silently
+    # shadow a stronger layer's explicit host, and vice versa.
+    if host_index is not None and alias_index is not None and host_index > alias_index:
+        flattened.pop("ssh_alias", None)
     return flattened
 
 
-def _build(name: str, flattened: dict[str, Any]) -> ResolvedTarget:
+def _build(name: str, flattened: dict[str, Any], *, source: str) -> ResolvedTarget:
     alias = flattened.pop("ssh_alias", None)
     if alias is not None:
         flattened["host"] = alias
@@ -124,10 +156,10 @@ def _build(name: str, flattened: dict[str, Any]) -> ResolvedTarget:
     missing = [key for key in ("host", "path", "stage") if key not in flattened]
     if missing:
         raise TargetError(
-            f"target {name!r} is missing {', '.join(missing)}; "
+            f"target {name!r} (from {source}) is missing {', '.join(missing)}; "
             "set them directly or inherit them with extends"
         )
     try:
         return ResolvedTarget(name=name, **flattened)
     except ValidationError as error:
-        raise TargetError(f"target {name!r}: {error}") from error
+        raise TargetError(f"target {name!r} (from {source}): {error}") from error

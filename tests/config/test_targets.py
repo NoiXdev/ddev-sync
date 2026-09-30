@@ -11,7 +11,7 @@ from ddev_sync.config.targets import (
     list_target_names,
     resolve_target,
 )
-from ddev_sync.errors import TargetError
+from ddev_sync.errors import ConfigError, TargetError
 
 
 def layer(label: str, targets: dict[str, Any]) -> LayerDoc:
@@ -51,6 +51,16 @@ def test_a_stronger_layer_overrides_only_the_keys_it_sets() -> None:
 
 def test_no_targets_anywhere_is_an_empty_mapping() -> None:
     assert collect_targets([LayerDoc("project", {})]) == {}
+
+
+def test_an_empty_targets_block_is_treated_as_no_targets_rather_than_crashing() -> None:
+    assert collect_targets([LayerDoc("project", {"targets": None})]) == {}
+
+
+def test_a_non_mapping_targets_block_is_rejected() -> None:
+    with pytest.raises(ConfigError) as caught:
+        collect_targets([LayerDoc("project", {"targets": ["oops"]})])
+    assert "targets" in str(caught.value)
 
 
 def test_target_names_are_listed_sorted() -> None:
@@ -137,10 +147,59 @@ def test_a_child_default_does_not_overwrite_an_explicit_value_from_its_base() ->
             }
         ),
     )
-    # 'production' never sets a port, so TargetSpec gives it the default 22.
-    # Without exclude_defaults=True in _flatten, that 22 would overwrite the
-    # base's explicit 2222 and this assertion is what catches it.
+    # 'production' never mentions port at all, so with exclude_unset=True in
+    # _flatten it contributes nothing for that field and the base's explicit
+    # 2222 survives. Without exclude_unset=True (e.g. with exclude_defaults),
+    # TargetSpec's default of 22 would be indistinguishable from an explicit
+    # 22 and this assertion is what catches an implementation that conflates
+    # the two.
     assert resolved.port == 2222
+
+
+def test_an_explicitly_written_default_port_still_overrides_the_base() -> None:
+    resolved = resolve_target(
+        "production",
+        collected_from(
+            {
+                "cluster": {"host": "web01.example", "user": "deploy", "port": 2222},
+                "production": {
+                    "extends": "cluster",
+                    "port": 22,
+                    "path": "/srv/app/",
+                    "stage": "production",
+                },
+            }
+        ),
+    )
+    # 'production' explicitly writes port: 22, which happens to equal
+    # TargetSpec's default. exclude_defaults cannot distinguish "wrote the
+    # default" from "wrote nothing" and would leave the base's 2222 in place;
+    # exclude_unset can, and spec §4.4 says inline keys win over inherited
+    # ones regardless of what value they happen to carry.
+    assert resolved.port == 22
+
+
+def test_an_explicitly_written_default_jump_host_port_still_overrides_the_base() -> None:
+    resolved = resolve_target(
+        "production",
+        collected_from(
+            {
+                "cluster": {
+                    "host": "web01.example",
+                    "user": "deploy",
+                    "jump_host": "bastion.example",
+                    "jump_host_port": 2200,
+                },
+                "production": {
+                    "extends": "cluster",
+                    "jump_host_port": 22,
+                    "path": "/srv/app/",
+                    "stage": "production",
+                },
+            }
+        ),
+    )
+    assert resolved.jump_host_port == 22
 
 
 def test_an_ssh_alias_target_needs_no_user_or_port() -> None:
@@ -152,6 +211,49 @@ def test_an_ssh_alias_target_needs_no_user_or_port() -> None:
     )
     assert resolved.via_ssh_alias is True
     assert resolved.host == "app-prod"
+    assert resolved.user is None
+    assert resolved.port is None
+
+
+def test_a_stronger_explicit_host_overrides_a_weaker_ssh_alias() -> None:
+    resolved = resolve_target(
+        "production",
+        collected_from(
+            {
+                "cluster": {"ssh_alias": "myalias", "path": "/a/", "stage": "dev"},
+                "production": {
+                    "extends": "cluster",
+                    "host": "real.example",
+                    "user": "u",
+                    "port": 2200,
+                },
+            }
+        ),
+    )
+    assert resolved.host == "real.example"
+    assert resolved.via_ssh_alias is False
+    assert resolved.user == "u"
+    assert resolved.port == 2200
+
+
+def test_a_stronger_ssh_alias_overrides_a_weaker_explicit_host() -> None:
+    resolved = resolve_target(
+        "production",
+        collected_from(
+            {
+                "cluster": {
+                    "host": "old.example",
+                    "user": "deploy",
+                    "port": 22,
+                    "path": "/a/",
+                    "stage": "dev",
+                },
+                "production": {"extends": "cluster", "ssh_alias": "myalias"},
+            }
+        ),
+    )
+    assert resolved.host == "myalias"
+    assert resolved.via_ssh_alias is True
     assert resolved.user is None
     assert resolved.port is None
 
@@ -181,7 +283,28 @@ def test_an_incomplete_target_names_the_missing_key(missing_key: str) -> None:
     del definition[missing_key]
     with pytest.raises(TargetError) as caught:
         resolve_target("production", collected_from({"production": definition}))
-    assert missing_key in str(caught.value)
+    message = str(caught.value)
+    assert missing_key in message
+    # collected_from() wraps everything in a single layer labelled "project";
+    # spec §4.4 requires the message to name the file the target came from.
+    assert "project" in message
+
+
+def test_an_incomplete_target_names_the_strongest_layer_it_came_from() -> None:
+    with pytest.raises(TargetError) as caught:
+        resolve_target(
+            "production",
+            collect_targets(
+                [
+                    layer("global", {"production": {"host": "web01.example", "user": "deploy"}}),
+                    layer("project", {"production": {"port": 2222}}),
+                ]
+            ),
+        )
+    message = str(caught.value)
+    assert "path" in message
+    assert "stage" in message
+    assert "project" in message
 
 
 def test_a_target_with_neither_host_nor_ssh_alias_is_rejected() -> None:
@@ -192,7 +315,9 @@ def test_a_target_with_neither_host_nor_ssh_alias_is_rejected() -> None:
                 {"production": {"user": "deploy", "path": "/srv/", "stage": "production"}}
             ),
         )
-    assert "host" in str(caught.value)
+    message = str(caught.value)
+    assert "host" in message
+    assert "project" in message
 
 
 def test_a_two_target_extends_cycle_is_reported_not_recursed() -> None:
@@ -235,6 +360,7 @@ def test_a_target_missing_user_fails_resolved_target_validation() -> None:
     message = str(caught.value)
     assert "production" in message
     assert "user" in message
+    assert "project" in message
 
 
 def test_an_extends_chain_deeper_than_the_backstop_is_rejected() -> None:
