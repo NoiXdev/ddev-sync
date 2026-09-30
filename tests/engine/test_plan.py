@@ -313,3 +313,30 @@ def test_a_sanitize_rule_without_a_name_is_labelled_unnamed() -> None:
     plan = plan_for(["sanitize"], user_layers=[extra])
     step = next(entry for entry in plan.steps if entry.kind is StepKind.SANITIZE)
     assert "unnamed" in step.detail
+
+
+def test_a_target_path_without_a_trailing_slash_still_joins_correctly() -> None:
+    unslashed = ResolvedTarget(
+        name="production",
+        host="web01.example",
+        user="deploy",
+        port=22,
+        path="/srv/app",
+        stage=Stage.PRODUCTION,
+    )
+    profile = ResolvedProfile(
+        name="typo3",
+        label="typo3@12",
+        data=PROFILE_DATA,
+        layers=(LayerDoc("profile:typo3@12", PROFILE_DATA),),
+    )
+    plan = build_plan(
+        target=unslashed,
+        project=project(),
+        profile=profile,
+        merged=merge_layers([LayerDoc("profile:typo3@12", PROFILE_DATA)]),
+        steps=steps_for_selection(["db", "files"]),
+    )
+    details = " ".join(step.detail for step in plan.steps)
+    assert "/srv/app/shared/public/fileadmin/" in details
+    assert "/srv/appshared" not in details

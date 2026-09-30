@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 class Stage(StrEnum):
@@ -56,6 +56,16 @@ class ResolvedTarget(BaseModel):
     jump_host: str | None = None
     jump_host_user: str | None = None
     jump_host_port: int = 22
+
+    @field_validator("path", mode="after")
+    @classmethod
+    def _path_ends_with_exactly_one_separator(cls, path: str) -> str:
+        """Every call site joins `path` with a relative suffix by
+        concatenation, not `os.path.join`, so the trailing separator is an
+        invariant this model must guarantee rather than one every caller has
+        to remember to normalise.
+        """
+        return f"{path.rstrip('/')}/"
 
     @model_validator(mode="after")
     def _direct_connections_need_user_and_port(self) -> "ResolvedTarget":

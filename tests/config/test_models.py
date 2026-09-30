@@ -59,3 +59,19 @@ def test_resolved_target_via_ssh_alias_needs_neither_user_nor_port() -> None:
     )
     assert target.user is None
     assert target.port is None
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [("/srv/app", "/srv/app/"), ("/srv/app/", "/srv/app/"), ("/", "/")],
+)
+def test_the_target_path_always_ends_with_exactly_one_separator(given: str, expected: str) -> None:
+    target = ResolvedTarget(
+        name="production",
+        host="web01.example",
+        user="deploy",
+        port=22,
+        path=given,
+        stage=Stage.PRODUCTION,
+    )
+    assert target.path == expected
