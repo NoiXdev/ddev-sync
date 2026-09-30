@@ -1,0 +1,65 @@
+# Laravel. The DB_* convention has been stable since Laravel 5, so there are
+# no version variants; projects that differ override database.env_map.
+name: laravel
+
+detect:
+  version_from:
+    composer_package: laravel/framework
+
+env:
+  file: [.env]
+  strategy: patch_keys
+  set:
+    APP_ENV: local
+    APP_DEBUG: "true"
+    APP_URL: "https://${DDEV_SITENAME}.ddev.site"
+    DB_CONNECTION: mysql
+    DB_HOST: "ddev-${DDEV_SITENAME}-db"
+    DB_PORT: "3306"
+    DB_DATABASE: "${SYNC_TARGET_DATABASE}"
+    DB_USERNAME: db
+    DB_PASSWORD: db
+    MAIL_MAILER: smtp
+    MAIL_HOST: localhost
+    MAIL_PORT: "1025"
+    QUEUE_CONNECTION: sync
+    SESSION_DRIVER: file
+    CACHE_STORE: file
+
+database:
+  remote_credentials: env
+  env_map:
+    name: DB_DATABASE
+    user: DB_USERNAME
+    password: DB_PASSWORD
+    host: DB_HOST
+    port: DB_PORT
+
+files:
+  paths:
+    - { remote: "shared/storage/app/public/", local: "storage/app/public/" }
+
+sanitize:
+  rules:
+    # These TRUNCATE tables that may not exist depending on project config
+    # (e.g. sessions only exists with the `database` session driver, not
+    # `file`). That is deliberate: a missing table fails loudly with the
+    # rule's own name, and the project removes the rule it does not need
+    # in its own .ddev/ddev-sync.yaml rather than the engine guessing.
+    - { name: clear-sessions, sql: "TRUNCATE TABLE sessions" }
+    - { name: clear-jobs, sql: "TRUNCATE TABLE jobs" }
+    - { name: clear-failed-jobs, sql: "TRUNCATE TABLE failed_jobs" }
+    - name: anonymize-users
+      sql: "UPDATE users SET email = CONCAT('user', id, '@example.invalid')"
+    - name: reset-user-passwords
+      operation: reset_passwords
+      table: users
+      column: password
+      value: "$2y$10$disabledhashdisabledhashdisabledhashdisabledhashdi"
+
+setup:
+  commands:
+    - run: "composer install --no-interaction"
+    - { run: "php artisan migrate --force", allow_failure: true }
+    - run: "php artisan optimize:clear"
+    - { run: "php artisan storage:link", allow_failure: true }

@@ -221,6 +221,13 @@ def test_golden_typo3_12_full() -> None:
     )
 
 
+def test_golden_laravel_full() -> None:
+    write_or_compare(
+        "laravel-full.txt",
+        render_plan(golden_plan("laravel", None, ["db", "files", "sanitize", "setup"])),
+    )
+
+
 def _target() -> ResolvedTarget:
     return ResolvedTarget(
         name="production",

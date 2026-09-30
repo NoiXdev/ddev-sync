@@ -11,3 +11,5 @@ An unverified variant still works - it is just not yet known to be correct.
 | typo3@11 | | | | not yet verified |
 | typo3@12 | | | | not yet verified |
 | typo3@13 | | | | not yet verified |
+| laravel | | | | not yet verified |
+| symfony | | | | not yet verified |
