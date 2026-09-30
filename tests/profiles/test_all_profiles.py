@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from ddev_sync.profiles.registry import ProfileRegistry
+from tests.test_no_legacy_terms import BANNED
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
 REGISTRY = ProfileRegistry(PROFILE_ROOT)
@@ -30,9 +31,11 @@ def test_every_profile_declares_a_name_matching_its_filename(name: str) -> None:
 
 @pytest.mark.parametrize(("name", "major"), variants())
 def test_no_profile_mentions_an_agency_specific_term(name: str, major: str | None) -> None:
-    text = str(REGISTRY.resolve(name, major).data).lower()
-    for banned in ("a3b", "a3better", "beijer"):
-        assert banned not in text
+    # Reuses the repo-wide scanner's own pattern rather than spelling the
+    # banned terms out a second time here: a literal copy of them would trip
+    # that very scanner, since it only exempts its own file by name.
+    text = str(REGISTRY.resolve(name, major).data)
+    assert BANNED.search(text) is None
 
 
 @pytest.mark.parametrize(("name", "major"), variants())
