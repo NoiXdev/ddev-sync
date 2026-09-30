@@ -214,6 +214,13 @@ def test_golden_generic_database_only() -> None:
     write_or_compare("generic-db-only.txt", render_plan(golden_plan("generic", None, ["db"])))
 
 
+def test_golden_typo3_12_full() -> None:
+    write_or_compare(
+        "typo3-12-full.txt",
+        render_plan(golden_plan("typo3", "12", ["db", "files", "sanitize", "setup"])),
+    )
+
+
 def _target() -> ResolvedTarget:
     return ResolvedTarget(
         name="production",

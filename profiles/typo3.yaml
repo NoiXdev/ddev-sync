@@ -1,0 +1,67 @@
+# TYPO3. Version deltas live in typo3@<major>.yaml.
+# Env variable names follow the convention used by helhum/dotenv-connector and
+# the TYPO3_* mapping most composer-based TYPO3 projects adopt. Projects that
+# differ override database.env_map in .ddev/ddev-sync.yaml.
+name: typo3
+
+detect:
+  version_from:
+    composer_package: typo3/cms-core
+
+env:
+  file: [.env.local, .env]
+  strategy: patch_keys
+  set:
+    TYPO3_DB_HOST: "ddev-${DDEV_SITENAME}-db"
+    TYPO3_DB_USER: db
+    TYPO3_DB_PASSWORD: db
+    TYPO3_DB_PORT: "3306"
+    TYPO3_DB_NAME: "${SYNC_TARGET_DATABASE}"
+    TYPO3_GFX_PROCESSOR: ImageMagick
+    TYPO3_GFX_PROCESSOR_PATH: /usr/bin/
+    TYPO3_MAIL_TRANSPORT: sendmail
+    TYPO3_SYS_TRUSTED_HOSTS_PATTERN: ".*"
+
+database:
+  remote_credentials: env
+  env_map:
+    name: TYPO3_DB_NAME
+    user: TYPO3_DB_USER
+    password: TYPO3_DB_PASSWORD
+    host: TYPO3_DB_HOST
+    port: TYPO3_DB_PORT
+
+files:
+  paths:
+    - { remote: "shared/public/fileadmin/", local: "public/fileadmin/" }
+    - { remote: "shared/public/uploads/", local: "public/uploads/" }
+
+sanitize:
+  rules:
+    - name: clear-be-sessions
+      sql: "TRUNCATE TABLE be_sessions"
+    - name: clear-fe-sessions
+      sql: "TRUNCATE TABLE fe_sessions"
+    - name: clear-sys-log
+      sql: "TRUNCATE TABLE sys_log"
+    - name: anonymize-fe-users
+      sql: "UPDATE fe_users SET email = CONCAT('fe', uid, '@example.invalid')"
+    - name: reset-fe-passwords
+      operation: reset_passwords
+      table: fe_users
+      column: password
+      value: "$argon2i$disabled"
+    - name: local-admin
+      operation: create_admin
+      driver: typo3
+      user: ddev
+    - name: flush-cache
+      operation: flush_cache
+      command: "vendor/bin/typo3 cache:flush"
+
+setup:
+  commands:
+    - run: "composer install --no-interaction"
+    - run: "vendor/bin/typo3 database:updateschema"
+      allow_failure: true
+    - run: "vendor/bin/typo3 cache:flush"

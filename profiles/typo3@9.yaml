@@ -1,0 +1,21 @@
+extends: typo3
+sanitize:
+  rules:
+    mode: replace
+    values:
+      - { name: clear-be-sessions, sql: "TRUNCATE TABLE be_sessions" }
+      - { name: clear-fe-sessions, sql: "TRUNCATE TABLE fe_sessions" }
+      - { name: clear-sys-log, sql: "TRUNCATE TABLE sys_log" }
+      - name: anonymize-fe-users
+        sql: "UPDATE fe_users SET email = CONCAT('fe', uid, '@example.invalid')"
+      - { name: local-admin, operation: create_admin, driver: console, user: ddev }
+      - name: flush-cache
+        operation: flush_cache
+        command: "vendor/bin/typo3cms cache:flush"
+setup:
+  commands:
+    mode: replace
+    values:
+      - run: "composer install --no-interaction"
+      - { run: "vendor/bin/typo3cms database:updateschema", allow_failure: true }
+      - run: "vendor/bin/typo3cms cache:flush"
