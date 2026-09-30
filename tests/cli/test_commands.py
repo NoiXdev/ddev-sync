@@ -36,15 +36,21 @@ def project(tmp_path: Path) -> Path:
 
 
 def invoke(project: Path, tmp_path: Path, *extra: str) -> int:
+    # The path options (`--project-root`/`--home`/`--profile-root`) are
+    # declared on the group only, so they must come *before* a subcommand
+    # name on the command line - anything after the subcommand name belongs
+    # to that subcommand's own parser. This is also the order the DDEV
+    # wrapper in Plan 3 will actually use: `ddev sync <subcommand>` expands
+    # with the root supplied up front.
     return main(
         [
-            *extra,
             "--project-root",
             str(project),
             "--home",
             str(tmp_path / "home"),
             "--profile-root",
             str(PROFILE_ROOT),
+            *extra,
         ]
     )
 
@@ -68,6 +74,78 @@ def test_targets_with_none_defined_points_at_init(
     (root / ".ddev" / "config.yaml").write_text("name: a\ntype: php\n", encoding="utf-8")
     assert invoke(root, tmp_path, "targets") == 0
     assert "ddev sync init" in capsys.readouterr().out
+
+
+def test_targets_with_path_options_before_the_subcommand_name(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Regression test for a real bug: when the three path options were
+    declared on both the group and every subcommand, whichever copy the
+    parser consulted depended on where the flags sat relative to the
+    subcommand name - `targets --project-root X` and `--project-root X
+    targets` silently resolved `X` two different ways, one of them wrong,
+    with no error. This is also the order the DDEV wrapper (Plan 3) will
+    actually invoke this CLI in: `ddev sync targets` expands with the root
+    supplied up front.
+    """
+    code = main(
+        [
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "targets",
+        ]
+    )
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "production" in output
+    assert "deploy@web01.example:/srv/app/" in output
+
+
+def test_doctor_with_path_options_before_the_subcommand_name(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
+
+    monkeypatch.setattr(
+        PreflightOperation,
+        "check",
+        lambda _self, _context: PreflightReport(True, True, 50 * 1024**3),
+    )
+    code = main(
+        [
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "doctor",
+            "--target",
+            "production",
+        ]
+    )
+    assert code == 0
+    assert "ssh" in capsys.readouterr().out
+
+
+def test_path_options_after_the_subcommand_name_are_rejected_loudly(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The three path options live on the group only now; putting them after
+    a subcommand name must fail loudly with a usage error - not silently
+    fall back to the defaults, which is the bug this whole group of tests
+    guards against.
+    """
+    code = main(["targets", "--project-root", str(project)])
+    assert code == 2
+    assert "no such option" in capsys.readouterr().err.lower()
 
 
 def test_doctor_reports_each_check(
