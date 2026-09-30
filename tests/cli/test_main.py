@@ -72,6 +72,51 @@ def test_a_configuration_error_exits_one_with_a_readable_message(
     assert "Traceback" not in error
 
 
+def test_an_empty_targets_block_exits_one_without_a_traceback(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (project / ".ddev" / "ddev-sync.yaml").write_text("version: 1\ntargets:\n", encoding="utf-8")
+    code = invoke(project, tmp_path, "--dry-run")
+    assert code == 1
+    error = capsys.readouterr().err
+    assert "ddev sync init" in error
+    assert "Traceback" not in error
+
+
+def test_an_empty_project_block_exits_one_without_a_traceback(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (project / ".ddev" / "ddev-sync.yaml").write_text("version: 1\nproject:\n", encoding="utf-8")
+    code = invoke(project, tmp_path, "--dry-run")
+    assert code == 1
+    error = capsys.readouterr().err
+    assert "ddev sync init" in error
+    assert "Traceback" not in error
+
+
+def test_a_files_entry_missing_remote_exits_one_without_a_traceback(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\n"
+        "targets:\n"
+        "  production:\n"
+        "    host: web01.example\n"
+        "    user: deploy\n"
+        "    path: /srv/app/\n"
+        "    stage: production\n"
+        "files:\n"
+        "  paths:\n"
+        "    - local: public/uploads/\n",
+        encoding="utf-8",
+    )
+    code = invoke(project, tmp_path, "--dry-run", "--steps", "files")
+    assert code == 1
+    error = capsys.readouterr().err
+    assert "remote" in error
+    assert "Traceback" not in error
+
+
 def test_an_unknown_step_name_is_rejected(
     project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -102,9 +147,17 @@ def test_an_unknown_option_is_a_click_usage_error(
     assert "no such option" in capsys.readouterr().err.lower()
 
 
-def test_the_version_info_flag_prints_the_package_version(
+def test_the_version_flag_prints_the_package_version(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    code = main(["--version-info"])
+    code = main(["--version"])
     assert code == 0
     assert "ddev-sync" in capsys.readouterr().out
+
+
+def test_the_framework_version_flag_overrides_detection(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = invoke(project, tmp_path, "--dry-run", "--framework-version", "12", "--steps", "db")
+    assert code == 0
+    assert "db.dump" in capsys.readouterr().out

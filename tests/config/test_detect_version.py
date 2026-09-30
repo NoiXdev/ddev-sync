@@ -108,7 +108,7 @@ def test_a_wordpress_version_file_without_the_variable_returns_none(tmp_path: Pa
 def test_the_version_flag_beats_everything(tmp_path: Path) -> None:
     write_lock(tmp_path, [{"name": "typo3/cms-core", "version": "v12.4.0"}])
     assert resolve_version("9", None, project_at(tmp_path), "typo3") == Resolution(
-        value="9", source="--version flag"
+        value="9", source="--framework-version flag"
     )
 
 

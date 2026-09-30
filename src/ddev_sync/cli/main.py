@@ -19,8 +19,8 @@ from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT
 @click.option("--target", "target_name", default=None, help="Which sync target to use.")
 @click.option("--type", "type_flag", default=None, help="Override the detected project type.")
 @click.option(
-    "--version",
-    "version_flag",
+    "--framework-version",
+    "framework_version_flag",
     default=None,
     help="Override the detected framework major version.",
 )
@@ -33,11 +33,11 @@ from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT
 @click.option("--project-root", type=click.Path(path_type=Path), default=DEFAULT_PROJECT_ROOT)
 @click.option("--home", type=click.Path(path_type=Path), default=None)
 @click.option("--profile-root", type=click.Path(path_type=Path), default=DEFAULT_PROFILE_ROOT)
-@click.version_option(package_version("ddev-sync"), "--version-info", prog_name="ddev-sync")
+@click.version_option(package_version("ddev-sync"), "--version", prog_name="ddev-sync")
 def cli(
     target_name: str | None,
     type_flag: str | None,
-    version_flag: str | None,
+    framework_version_flag: str | None,
     steps: str | None,
     dry_run: bool,
     project_root: Path,
@@ -50,7 +50,7 @@ def cli(
         home=home if home is not None else Path.home(),
         target_name=target_name,
         type_flag=type_flag,
-        version_flag=version_flag,
+        framework_version_flag=framework_version_flag,
         profile_root=profile_root,
     )
     selection = (

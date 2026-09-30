@@ -73,7 +73,7 @@ def resolve_version(
 ) -> Resolution | None:
     """Pick the framework major version. Returns None when nothing can decide."""
     if flag is not None:
-        return Resolution(value=flag, source="--version flag")
+        return Resolution(value=flag, source="--framework-version flag")
     if configured is not None:
         return Resolution(value=configured, source=".ddev/ddev-sync.yaml")
     detected = detect_major_version(project, profile_name)

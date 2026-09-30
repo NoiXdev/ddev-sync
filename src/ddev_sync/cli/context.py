@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ddev_sync.config.detect import resolve_profile_name, resolve_version
 from ddev_sync.config.loader import discover_config_paths, load_user_layers
@@ -9,7 +10,7 @@ from ddev_sync.config.merge import LayerDoc, MergeResult, merge_layers
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import collect_targets, list_target_names, resolve_target
 from ddev_sync.ddev.project import DdevProject, read_ddev_project
-from ddev_sync.errors import TargetError
+from ddev_sync.errors import ConfigError, TargetError
 from ddev_sync.profiles.registry import ProfileRegistry, ResolvedProfile
 
 
@@ -30,14 +31,14 @@ def build_context(
     home: Path,
     target_name: str | None,
     type_flag: str | None,
-    version_flag: str | None,
+    framework_version_flag: str | None,
     profile_root: Path,
 ) -> RunContext:
     """Read config, detect type and version, resolve profile and target."""
     project = read_ddev_project(project_root)
     user_layers = load_user_layers(discover_config_paths(project_root, home))
     user_merged = merge_layers(user_layers)
-    configured = user_merged.data.get("project", {})
+    configured = _as_mapping(user_merged.data.get("project"), "project")
 
     profile_resolution = resolve_profile_name(
         type_flag, _text(configured.get("type")), project.type
@@ -53,7 +54,7 @@ def build_context(
     assert profile_resolution is not None
 
     version_resolution = resolve_version(
-        version_flag, _text(configured.get("version")), project, profile_resolution.value
+        framework_version_flag, _text(configured.get("version")), project, profile_resolution.value
     )
     major = None if version_resolution is None else version_resolution.value
 
@@ -69,6 +70,18 @@ def build_context(
     return RunContext(
         project=project, profile=profile, target=target, merged=merged, notices=notices
     )
+
+
+def _as_mapping(raw: object, label: str) -> dict[str, Any]:
+    """An empty `project:` block is a legitimate "nothing to override" -
+    treat it as such rather than crashing; anything else that is not a
+    mapping is a genuine configuration mistake and is named explicitly.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{label!r} must be a mapping with optional 'type' and 'version'")
+    return raw
 
 
 def _text(value: object) -> str | None:
