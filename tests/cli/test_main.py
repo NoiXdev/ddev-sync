@@ -52,14 +52,6 @@ def test_dry_run_prints_the_plan_and_exits_zero(
     assert "db.dump" in output
 
 
-def test_without_dry_run_it_says_execution_is_not_implemented_yet(
-    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    code = invoke(project, tmp_path, "--steps", "db")
-    assert code == 1
-    assert "not implemented" in capsys.readouterr().err
-
-
 def test_a_configuration_error_exits_one_with_a_readable_message(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -135,7 +127,10 @@ def test_steps_accepts_a_comma_separated_list(
 def test_no_steps_flag_plans_everything(
     project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert invoke(project, tmp_path, "--dry-run") == 0
+    # `--yes` is required here: without an explicit `--steps`, a real (non-test)
+    # invocation would otherwise prompt interactively for which step groups to
+    # run (Task 13) - `--yes` is what says "use the full default selection".
+    assert invoke(project, tmp_path, "--dry-run", "--yes") == 0
     assert "db.dump" in capsys.readouterr().out
 
 
