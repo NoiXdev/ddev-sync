@@ -404,6 +404,91 @@ def test_a_files_entry_missing_local_names_the_entry_instead_of_crashing() -> No
     assert "local" in str(caught.value)
 
 
+def test_a_hook_with_a_typoed_mode_and_no_commands_is_a_config_error() -> None:
+    # `mode: replce` is a typo for `mode: replace`; without a recognised
+    # payload key, `config/merge.py` cannot tell this apart from an ordinary
+    # nested map and merges it as plain data (spec §4.5 is schema-agnostic on
+    # purpose). Left unchecked, the hook silently never runs.
+    with pytest.raises(ConfigError) as caught:
+        plan_for(["db"], user_layers=[hooks_layer(post_db_import={"mode": "replce"})])
+    assert "hooks.post_db_import" in str(caught.value)
+    assert "mode" in str(caught.value)
+
+
+def test_the_mode_typo_error_names_the_valid_modes() -> None:
+    with pytest.raises(ConfigError) as caught:
+        plan_for(["db"], user_layers=[hooks_layer(post_db_import={"mode": "replce"})])
+    assert "extend" in str(caught.value)
+    assert "prepend" in str(caught.value)
+    assert "replace" in str(caught.value)
+
+
+def test_a_setup_block_with_a_typoed_mode_and_no_commands_is_a_config_error() -> None:
+    profile = ResolvedProfile(
+        name="generic", label="generic", data={}, layers=(LayerDoc("profile:generic", {}),)
+    )
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"setup": {"mode": "replce"}})
+    with pytest.raises(ConfigError) as caught:
+        build_plan(
+            target=target(),
+            project=project(),
+            profile=profile,
+            merged=merge_layers([LayerDoc("profile:generic", {}), extra]),
+            steps=steps_for_selection(["setup"]),
+        )
+    assert "setup" in str(caught.value)
+    assert "mode" in str(caught.value)
+
+
+def test_a_hook_with_mode_and_commands_together_is_not_a_config_error() -> None:
+    # The happy path for the same shape: `mode` alongside `commands` is a
+    # legitimate list directive, not the typo case above.
+    plan = plan_for(
+        ["db"],
+        user_layers=[
+            hooks_layer(post_db_import={"mode": "replace", "commands": [{"run": "flush"}]})
+        ],
+    )
+    assert plan.steps[-1].detail == "flush"
+
+
+def test_pre_sync_runs_before_anything_else() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml", {"hooks": {"pre_sync": {"commands": [{"run": "maintenance-on"}]}}}
+    )
+    plan = plan_for(["db"], user_layers=[extra])
+    assert plan.steps[0].detail == "maintenance-on"
+    assert plan.steps[0].is_hook is True
+    assert plan.steps[0].kind is StepKind.PREFLIGHT
+    assert plan.steps[1].kind is StepKind.PREFLIGHT
+    assert plan.steps[1].is_hook is False
+
+
+def test_no_pre_sync_hooks_means_no_extra_step() -> None:
+    plan = plan_for(["db"])
+    assert plan.steps[0].kind is StepKind.PREFLIGHT
+    assert plan.steps[0].is_hook is False
+
+
+def test_every_planned_step_carries_params() -> None:
+    plan = plan_for(["db", "files"])
+    assert all(isinstance(step.params, dict) for step in plan.steps)
+
+
+def test_a_files_sync_step_carries_the_raw_mapping_as_params() -> None:
+    plan = plan_for(["files"])
+    step = next(entry for entry in plan.steps if entry.kind is StepKind.FILES_SYNC)
+    assert step.params == {"remote": "shared/public/fileadmin/", "local": "public/fileadmin/"}
+
+
+def test_a_hook_step_carries_its_command_entry_as_params() -> None:
+    plan = plan_for(
+        ["db"],
+        user_layers=[hooks_layer(post_db_import={"commands": [{"run": "typo3 cache:flush"}]})],
+    )
+    assert plan.steps[-1].params == {"run": "typo3 cache:flush"}
+
+
 def test_a_target_path_without_a_trailing_slash_still_joins_correctly() -> None:
     unslashed = ResolvedTarget(
         name="production",

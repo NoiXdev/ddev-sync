@@ -4,7 +4,7 @@
 
    1  preflight     remote  ssh -p 22 deploy@web01.example   [built-in]
    2  db.dump       remote  mysqldump --single-transaction $DATABASE_NAME   [built-in]
-   3  db.download   scp     deploy@web01.example:/srv/app/dump.sql -> .ddev/.downloads/dump.sql   [built-in]
+   3  db.download   scp     scp -P 22 deploy@web01.example:/srv/app/dump.sql .ddev/.downloads/dump.sql   [built-in]
    4  db.import     local   mysql -h ddev-acme-db db < .ddev/.downloads/dump.sql   [built-in]
 
   Sources:  [built-in]
