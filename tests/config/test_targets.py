@@ -127,6 +127,22 @@ def test_the_child_wins_over_the_base_it_extends() -> None:
     assert resolved.host == "new.example"
 
 
+def test_a_child_default_does_not_overwrite_an_explicit_value_from_its_base() -> None:
+    resolved = resolve_target(
+        "production",
+        collected_from(
+            {
+                "cluster": {"host": "web01.example", "user": "deploy", "port": 2222},
+                "production": {"extends": "cluster", "path": "/srv/app/", "stage": "production"},
+            }
+        ),
+    )
+    # 'production' never sets a port, so TargetSpec gives it the default 22.
+    # Without exclude_defaults=True in _flatten, that 22 would overwrite the
+    # base's explicit 2222 and this assertion is what catches it.
+    assert resolved.port == 2222
+
+
 def test_an_ssh_alias_target_needs_no_user_or_port() -> None:
     resolved = resolve_target(
         "production",
@@ -216,7 +232,9 @@ def test_a_target_missing_user_fails_resolved_target_validation() -> None:
                 {"production": {"host": "web01.example", "path": "/srv/", "stage": "production"}}
             ),
         )
-    assert "production" in str(caught.value)
+    message = str(caught.value)
+    assert "production" in message
+    assert "user" in message
 
 
 def test_an_extends_chain_deeper_than_the_backstop_is_rejected() -> None:
