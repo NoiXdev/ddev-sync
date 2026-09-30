@@ -44,7 +44,7 @@ def test_rsync_is_invoked_with_the_resolved_endpoints(tmp_path: Path) -> None:
     argv = runner.calls[0]
     assert argv[0] == "rsync"
     assert "deploy@web01.example:/srv/app/shared/public/fileadmin/" in argv
-    assert str(tmp_path / "public" / "fileadmin") in " ".join(argv)
+    assert argv[-1] == f"{tmp_path / 'public' / 'fileadmin'}/"
 
 
 def test_the_local_directory_is_created_before_the_transfer(tmp_path: Path) -> None:
