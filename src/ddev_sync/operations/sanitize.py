@@ -108,3 +108,8 @@ class SanitizeOperation:
                 f"{rule.operation!r}; available operations: {known}"
             )
         handler.run(context, rule)
+
+
+# Imported for its registration side effect. Placed at the bottom because
+# catalog.py imports SANITIZE_OPERATIONS from this module.
+from ddev_sync.operations import catalog as _catalog  # noqa: E402,F401

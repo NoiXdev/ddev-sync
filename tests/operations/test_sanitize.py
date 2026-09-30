@@ -137,7 +137,7 @@ def test_an_unknown_operation_lists_what_is_available(tmp_path: Path) -> None:
     with pytest.raises(OperationError) as caught:
         SanitizeOperation().execute(make_context(FakeCommandRunner(), tmp_path, **config), {})
     assert "teleport" in str(caught.value)
-    assert "none" in str(caught.value)
+    assert "clear_mail_config" in str(caught.value)
 
 
 def test_a_registered_operation_is_dispatched_with_its_rule(
