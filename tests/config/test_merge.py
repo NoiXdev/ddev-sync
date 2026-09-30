@@ -13,7 +13,7 @@ def layer(label: str, **data: Any) -> LayerDoc:
 def test_a_single_layer_merges_to_itself() -> None:
     result = merge_layers([layer("profile", name="typo3", version=12)])
     assert result.data == {"name": "typo3", "version": 12}
-    assert result.scalar_sources == {"name": "profile", "version": "profile"}
+    assert result.scalar_sources == {("name",): "profile", ("version",): "profile"}
 
 
 def test_a_stronger_layer_overwrites_a_scalar_and_claims_it() -> None:
@@ -24,7 +24,7 @@ def test_a_stronger_layer_overwrites_a_scalar_and_claims_it() -> None:
         ]
     )
     assert result.data == {"target_database": "acme"}
-    assert result.scalar_sources == {"target_database": "project"}
+    assert result.scalar_sources == {("target_database",): "project"}
 
 
 def test_maps_merge_deeply_and_each_leaf_keeps_its_own_source() -> None:
@@ -40,8 +40,8 @@ def test_maps_merge_deeply_and_each_leaf_keeps_its_own_source() -> None:
         "sync": {"database": {"target_database": "acme"}, "files": {"delete": False}}
     }
     assert result.scalar_sources == {
-        "sync.database.target_database": "project",
-        "sync.files.delete": "profile",
+        ("sync", "database", "target_database"): "project",
+        ("sync", "files", "delete"): "profile",
     }
 
 
@@ -58,7 +58,7 @@ def test_a_bare_list_extends_by_default() -> None:
         ]
     )
     assert result.data == {"rules": ["a", "b", "c"]}
-    assert result.list_sources == {"rules": ("profile", "profile", "project")}
+    assert result.list_sources == {("rules",): ("profile", "profile", "project")}
 
 
 def test_replace_discards_everything_below_it() -> None:
@@ -69,7 +69,7 @@ def test_replace_discards_everything_below_it() -> None:
         ]
     )
     assert result.data == {"rules": ["c"]}
-    assert result.list_sources == {"rules": ("project",)}
+    assert result.list_sources == {("rules",): ("project",)}
 
 
 def test_prepend_puts_the_stronger_layer_first_and_keeps_alignment() -> None:
@@ -80,7 +80,7 @@ def test_prepend_puts_the_stronger_layer_first_and_keeps_alignment() -> None:
         ]
     )
     assert result.data == {"rules": ["x", "y", "a"]}
-    assert result.list_sources == {"rules": ("project", "project", "profile")}
+    assert result.list_sources == {("rules",): ("project", "project", "profile")}
 
 
 def test_a_list_reappearing_after_a_scalar_override_ignores_stale_labels() -> None:
@@ -92,13 +92,25 @@ def test_a_list_reappearing_after_a_scalar_override_ignores_stale_labels() -> No
         ]
     )
     assert result.data == {"rules": ["c"]}
-    assert result.list_sources == {"rules": ("override",)}
+    assert result.list_sources == {("rules",): ("override",)}
+
+
+def test_a_literal_dotted_key_does_not_collide_with_a_nested_path() -> None:
+    result = merge_layers(
+        [
+            LayerDoc("L1", {"a.b": ["p", "q"]}),
+            LayerDoc("L2", {"a": {"b": ["x", "y", "z"]}}),
+        ]
+    )
+    assert result.data == {"a.b": ["p", "q"], "a": {"b": ["x", "y", "z"]}}
+    assert result.list_sources[("a.b",)] == ("L1", "L1")
+    assert result.list_sources[("a", "b")] == ("L2", "L2", "L2")
 
 
 def test_replace_on_the_weakest_layer_starts_from_empty() -> None:
     result = merge_layers([layer("profile", rules={"mode": "replace", "values": ["a"]})])
     assert result.data == {"rules": ["a"]}
-    assert result.list_sources == {"rules": ("profile",)}
+    assert result.list_sources == {("rules",): ("profile",)}
 
 
 @pytest.mark.parametrize(

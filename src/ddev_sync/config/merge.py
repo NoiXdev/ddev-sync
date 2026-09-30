@@ -25,18 +25,24 @@ class LayerDoc:
 
 @dataclass(frozen=True)
 class MergeResult:
-    """The merged document plus, for every value, which layer supplied it."""
+    """The merged document plus, for every value, which layer supplied it.
+
+    Provenance keys are `tuple[str, ...]`, not dot-joined strings: a literal
+    key such as `"a.b"` and the nested path `a -> b` would otherwise produce
+    the identical string `"a.b"` and silently collide. Tuples of the raw path
+    segments are unambiguous by construction.
+    """
 
     data: dict[str, Any] = field(default_factory=dict)
-    scalar_sources: dict[str, str] = field(default_factory=dict)
-    list_sources: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    scalar_sources: dict[tuple[str, ...], str] = field(default_factory=dict)
+    list_sources: dict[tuple[str, ...], tuple[str, ...]] = field(default_factory=dict)
 
 
 def merge_layers(layers: Sequence[LayerDoc]) -> MergeResult:
     """Merge `layers` in order; later layers override earlier ones."""
     result = MergeResult()
     for current in layers:
-        _merge_into(result, current.data, current.label, prefix="", node=result.data)
+        _merge_into(result, current.data, current.label, prefix=(), node=result.data)
     return result
 
 
@@ -44,17 +50,17 @@ def _merge_into(
     result: MergeResult,
     source: dict[str, Any],
     label: str,
-    prefix: str,
+    prefix: tuple[str, ...],
     node: dict[str, Any],
 ) -> None:
     # `node` is the actual dict object to write into, passed down by reference
-    # from the caller. `prefix` is only used to build the dotted provenance
-    # path (`scalar_sources` / `list_sources` keys); it is never re-parsed to
-    # find the node again, because a literal "." inside a key would make that
-    # round-trip ambiguous (a key named "." would be indistinguishable from a
-    # path separator).
+    # from the caller. `prefix` is a tuple of raw path segments, used only to
+    # build the provenance keys (`scalar_sources` / `list_sources`); it is
+    # never joined into a string and re-parsed to find the node again, which
+    # is what made the original dot-joined design ambiguous for keys
+    # containing a literal ".".
     for key, value in source.items():
-        path = f"{prefix}.{key}" if prefix else key
+        path = (*prefix, key)
         _merge_value(result, key, value, label, path, parent=node)
 
 
@@ -63,7 +69,7 @@ def _merge_value(
     key: str,
     value: Any,
     label: str,
-    path: str,
+    path: tuple[str, ...],
     parent: dict[str, Any],
 ) -> None:
     if isinstance(value, dict) and _is_list_directive(value, path):
@@ -83,21 +89,27 @@ def _merge_value(
     result.scalar_sources[path] = label
 
 
-def _is_list_directive(value: dict[str, Any], path: str) -> bool:
+def _display(path: tuple[str, ...]) -> str:
+    """Render a path tuple for human-readable error text only."""
+    return ".".join(path)
+
+
+def _is_list_directive(value: dict[str, Any], path: tuple[str, ...]) -> bool:
     if "values" not in value:
         return False
     unexpected = set(value) - {"mode", "values"}
     if unexpected:
         raise ConfigError(
-            f"{path}: a list directive accepts only 'mode' and 'values', "
+            f"{_display(path)}: a list directive accepts only 'mode' and 'values', "
             f"found {', '.join(sorted(unexpected))}"
         )
     if not isinstance(value["values"], list):
-        raise ConfigError(f"{path}: 'values' must be a list")
+        raise ConfigError(f"{_display(path)}: 'values' must be a list")
     mode = value.get("mode", DEFAULT_LIST_MODE)
     if mode not in LIST_MODES:
         raise ConfigError(
-            f"{path}: unknown list mode {mode!r}; expected one of {', '.join(sorted(LIST_MODES))}"
+            f"{_display(path)}: unknown list mode {mode!r}; expected one of "
+            f"{', '.join(sorted(LIST_MODES))}"
         )
     return True
 
@@ -107,7 +119,7 @@ def _apply_list(
     key: str,
     directive: dict[str, Any],
     label: str,
-    path: str,
+    path: tuple[str, ...],
     parent: dict[str, Any],
 ) -> None:
     mode = directive.get("mode", DEFAULT_LIST_MODE)
