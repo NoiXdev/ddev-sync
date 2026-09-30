@@ -5,6 +5,7 @@ Credentials are read from the remote at run time and never written anywhere.
 traceback or a debug log cannot leak a production secret.
 """
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -202,3 +203,98 @@ def _scrub(text: str, secret: str) -> str:
     when the caller most needs to read it.
     """
     return text.replace(secret, "<REDACTED>") if secret else text
+
+
+LOCAL_DB_USER = "db"
+LOCAL_DB_PASSWORD = "db"
+LOCAL_DB_PORT = "3306"
+
+_DEFINER = re.compile(rb"\sDEFINER=`[^`]*`@`[^`]*`")
+
+
+class DbImportOperation:
+    """Drops, recreates and repopulates the local DDEV database."""
+
+    def execute(self, context: ExecutionContext, params: Mapping[str, Any]) -> None:
+        """Import `downloads_dir/dump.sql` into the local database."""
+        dump = context.downloads_dir / DUMP_FILENAME
+        if not dump.is_file():
+            raise OperationError(
+                f"{DUMP_FILENAME} is not in {context.downloads_dir}; "
+                "the db.dump step has to run before db.import"
+            )
+        if not dump_is_complete(dump):
+            raise OperationError(f"{dump} is incomplete; delete it and run the sync again")
+
+        database = context.config("database.target_database", default="db")
+        strip_definers(dump)
+        self._recreate(context, database)
+        self._import(context, database, dump)
+        if not context.keep_dump:
+            dump.unlink(missing_ok=True)
+
+    def _recreate(self, context: ExecutionContext, database: str) -> None:
+        if not context.assume_yes and not confirm_destructive(
+            f"This will drop the local database {database!r}. Continue?"
+        ):
+            raise OperationError("import cancelled by the user")
+        for verb in ("drop", "create"):
+            result = context.runner.run(
+                [
+                    "mysqladmin",
+                    f"--user={LOCAL_DB_USER}",
+                    f"--password={LOCAL_DB_PASSWORD}",
+                    f"--host={context.project.db_container}",
+                    f"--port={LOCAL_DB_PORT}",
+                    "--force",
+                    verb,
+                    database,
+                ]
+            )
+            # `drop` on a database that is not there exits non-zero with --force;
+            # that is the normal first-run case, not a failure worth stopping for.
+            if not result.ok and verb == "create":
+                raise OperationError(
+                    f"could not create the local database {database!r}: {result.stderr.strip()}"
+                )
+
+    def _import(self, context: ExecutionContext, database: str, dump: Path) -> None:
+        result = context.runner.run(
+            [
+                "mysql",
+                f"--user={LOCAL_DB_USER}",
+                f"--password={LOCAL_DB_PASSWORD}",
+                f"--host={context.project.db_container}",
+                f"--port={LOCAL_DB_PORT}",
+                database,
+                "--execute",
+                f"source {dump}",
+            ]
+        )
+        if not result.ok:
+            raise OperationError(f"importing {dump.name} failed: {result.stderr.strip()}")
+
+
+def strip_definers(path: Path) -> None:
+    """Remove `DEFINER=` clauses, which fail to import as a non-super user.
+
+    Rewritten in chunks rather than read whole: a 400 MB dump through a single
+    `read_bytes` is an avoidable memory spike, and DEFINER clauses never span
+    a line boundary.
+    """
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with path.open("rb") as source, temporary.open("wb") as sink:
+        for line in source:
+            sink.write(_DEFINER.sub(b"", line))
+    temporary.replace(path)
+
+
+def confirm_destructive(question: str) -> bool:
+    """Ask the user to confirm a destructive local action.
+
+    A module-level function rather than a method so that tests can replace it
+    without constructing a console, and so the interactive layer in Task 13 can
+    swap in a richer prompt.
+    """
+    answer = input(f"{question} [y/N] ").strip().lower()
+    return answer in {"y", "yes"}
