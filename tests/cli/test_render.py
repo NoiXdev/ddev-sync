@@ -1,12 +1,13 @@
 import os
 from pathlib import Path
 
-from ddev_sync.cli.render import render_plan
+from ddev_sync.cli.render import render_doctor, render_plan
 from ddev_sync.config.merge import merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.plan import Plan, PlannedStep, build_plan
 from ddev_sync.engine.steps import StepKind, steps_for_selection
+from ddev_sync.operations.preflight import PreflightReport
 from ddev_sync.profiles.registry import ProfileRegistry
 
 GOLDEN = Path(__file__).parent / "golden"
@@ -211,3 +212,58 @@ def golden_plan(profile_name: str, major: str | None, selection: list[str]) -> P
 
 def test_golden_generic_database_only() -> None:
     write_or_compare("generic-db-only.txt", render_plan(golden_plan("generic", None, ["db"])))
+
+
+def _target() -> ResolvedTarget:
+    return ResolvedTarget(
+        name="production",
+        host="web01.example",
+        user="deploy",
+        port=22,
+        path="/srv/app/",
+        stage=Stage.PRODUCTION,
+    )
+
+
+def test_render_doctor_marks_every_check_ok_when_everything_passes() -> None:
+    report = PreflightReport(ssh_ok=True, remote_path_ok=True, free_bytes=50 * 1024**3)
+    output = render_doctor(report, _target())
+    assert "OK" in output
+    assert "FAIL" not in output
+
+
+def test_render_doctor_marks_a_failing_check_with_whitespace_before_the_label() -> None:
+    """Regression test: 'OK  ' and 'FAIL' used to be two string literals of
+    different lengths baked directly into the format string, so a failing
+    line ran straight into its label with no separating space
+    ('FAILssh connection'). Checking for the substrings alone would not have
+    caught that; this checks the actual layout.
+    """
+    report = PreflightReport(ssh_ok=False, remote_path_ok=False, free_bytes=1024)
+    output = render_doctor(report, _target())
+    failing_lines = [line for line in output.splitlines() if "FAIL" in line]
+    assert failing_lines
+    for line in failing_lines:
+        after_marker = line.split("FAIL", 1)[1]
+        assert after_marker[:1].isspace(), f"no space after FAIL in: {line!r}"
+
+
+def test_render_doctor_aligns_ok_and_fail_markers_to_the_same_column() -> None:
+    """OK and FAIL must land the label in the same column regardless of
+    which marker was used - a fixed field width is what a future third
+    state (e.g. "SKIP") cannot break, unlike two independently-sized string
+    literals.
+    """
+    ok_report = PreflightReport(ssh_ok=True, remote_path_ok=True, free_bytes=50 * 1024**3)
+    fail_report = PreflightReport(ssh_ok=False, remote_path_ok=False, free_bytes=1024)
+    ok_line = next(
+        line
+        for line in render_doctor(ok_report, _target()).splitlines()
+        if "ssh connection" in line
+    )
+    fail_line = next(
+        line
+        for line in render_doctor(fail_report, _target()).splitlines()
+        if "ssh connection" in line
+    )
+    assert ok_line.index("ssh connection") == fail_line.index("ssh connection")

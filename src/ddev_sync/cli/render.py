@@ -103,5 +103,10 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget) -> str:
     )
     lines = [f"  Doctor for target {target.name!r}", ""]
     for label, ok, detail in checks:
-        lines.append(f"  {'OK  ' if ok else 'FAIL'}{label:<18}{detail}")
+        # Width 6, not 4: "FAIL" alone is already 4 characters, so padding to
+        # exactly its own length adds no separating space before the label -
+        # the bug this replaced. Padding past the longest marker guarantees a
+        # real gap for every marker, not just the shorter one.
+        marker = "OK" if ok else "FAIL"
+        lines.append(f"  {marker:<6}{label:<18}{detail}")
     return "\n".join(lines) + "\n"

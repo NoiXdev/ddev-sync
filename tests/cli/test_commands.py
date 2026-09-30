@@ -126,9 +126,9 @@ def test_doctor_with_path_options_before_the_subcommand_name(
             str(tmp_path / "home"),
             "--profile-root",
             str(PROFILE_ROOT),
-            "doctor",
             "--target",
             "production",
+            "doctor",
         ]
     )
     assert code == 0
@@ -148,6 +148,20 @@ def test_path_options_after_the_subcommand_name_are_rejected_loudly(
     assert "no such option" in capsys.readouterr().err.lower()
 
 
+def test_target_after_the_subcommand_name_is_rejected_loudly(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--target is group-only now, for the same reason the path options are:
+    a second declaration on `doctor` would silently use its own default
+    depending on where the flag sat relative to the subcommand name. Putting
+    it after the subcommand name must fail loudly instead of silently
+    running against no target at all.
+    """
+    code = invoke(project, tmp_path, "doctor", "--target", "production")
+    assert code == 2
+    assert "no such option" in capsys.readouterr().err.lower()
+
+
 def test_doctor_reports_each_check(
     project: Path,
     tmp_path: Path,
@@ -161,7 +175,7 @@ def test_doctor_reports_each_check(
         "check",
         lambda _self, _context: PreflightReport(True, True, 50 * 1024**3),
     )
-    assert invoke(project, tmp_path, "doctor", "--target", "production") == 0
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 0
     output = capsys.readouterr().out
     assert "ssh" in output
     assert "deploy path" in output
@@ -181,7 +195,7 @@ def test_doctor_exits_nonzero_when_a_check_fails(
         "check",
         lambda _self, _context: PreflightReport(False, False, 1024),
     )
-    assert invoke(project, tmp_path, "doctor", "--target", "production") == 1
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
     assert "FAIL" in capsys.readouterr().out
 
 

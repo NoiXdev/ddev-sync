@@ -6,21 +6,25 @@ subcommands. Click only parses a group's own options up to the first
 non-option token on the command line; everything after a subcommand name is
 handed to that subcommand's own parser instead.
 
-`--project-root`, `--home` and `--profile-root` are declared on the group
-*only*, and resolved once into `ctx.obj` (a `_Paths`), which every subcommand
-reads via `click.pass_obj`. Declaring them a second time on each subcommand -
-an earlier version of this module did - looks harmless but is not: whichever
-copy the parser actually consults depends on where the user put the flags
-relative to the subcommand name, so `ddev-sync --project-root X targets` and
-`ddev-sync targets --project-root X` would silently resolve `X` two different
-ways (one of them wrong, with no error). One source per value removes the
-ambiguity instead of documenting around it. `--target`, `--type`,
-`--framework-version`, `--steps`, `--yes` and `--dry-run` are run-specific -
-only the default run path and `doctor` use them - and stay declared on each
-of those via `_run_options`.
+Every option is therefore declared on the group *only*, resolved once into
+`ctx.obj` (an `_Options`), and read back out by whichever subcommand needs it
+via `click.pass_obj`. Declaring an option a second time on a subcommand -
+earlier versions of this module did that, first for all nine options, then
+for six of them after round 1 only fixed the three path options - looks
+harmless but is not: whichever copy the parser actually consults depends on
+where the user put the flag relative to the subcommand name, so
+`ddev-sync --target=x doctor` and `ddev-sync doctor --target=x` would
+silently resolve `--target` two different ways, one of them wrong, with no
+error. One source per value removes the ambiguity instead of documenting
+around it - and it has to be *every* option, not just the ones a bug report
+happened to name, or the CLI's own options disagree with each other about
+where they belong. `--dry-run`, `--steps` and `--yes` have no meaning past
+the point the interactive run itself is bypassed, so they are read directly
+out of the group callback's own parameters instead of being threaded into
+`_Options` - nothing past the group needs them.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -42,45 +46,36 @@ from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT
 
 
 @dataclass(frozen=True)
-class _Paths:
-    """The three filesystem roots, resolved once by the group callback."""
+class _Options:
+    """Everything a subcommand might need, resolved once by the group callback."""
 
     project_root: Path
     home: Path
     profile_root: Path
-
-
-def _run_options[F: Callable[..., int | None]](command: F) -> F:
-    """Apply the options shared by the default run path and `doctor`."""
-    command = click.option(
-        "--yes", "assume_yes", is_flag=True, help="Assume every default; skip interactive prompts."
-    )(command)
-    command = click.option("--dry-run", is_flag=True, help="Print the plan and execute nothing.")(
-        command
-    )
-    command = click.option(
-        "--steps", default=None, help=f"Comma-separated: {', '.join(sorted(SELECTION_GROUPS))}."
-    )(command)
-    command = click.option(
-        "--framework-version",
-        "framework_version_flag",
-        default=None,
-        help="Override the detected framework major version.",
-    )(command)
-    command = click.option(
-        "--type", "type_flag", default=None, help="Override the detected project type."
-    )(command)
-    command = click.option(
-        "--target", "target_name", default=None, help="Which sync target to use."
-    )(command)
-    return command
+    target_name: str | None
+    type_flag: str | None
+    framework_version_flag: str | None
 
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--profile-root", type=click.Path(path_type=Path), default=DEFAULT_PROFILE_ROOT)
 @click.option("--home", type=click.Path(path_type=Path), default=None)
 @click.option("--project-root", type=click.Path(path_type=Path), default=DEFAULT_PROJECT_ROOT)
-@_run_options
+@click.option(
+    "--yes", "assume_yes", is_flag=True, help="Assume every default; skip interactive prompts."
+)
+@click.option("--dry-run", is_flag=True, help="Print the plan and execute nothing.")
+@click.option(
+    "--steps", default=None, help=f"Comma-separated: {', '.join(sorted(SELECTION_GROUPS))}."
+)
+@click.option(
+    "--framework-version",
+    "framework_version_flag",
+    default=None,
+    help="Override the detected framework major version.",
+)
+@click.option("--type", "type_flag", default=None, help="Override the detected project type.")
+@click.option("--target", "target_name", default=None, help="Which sync target to use.")
 @click.version_option(package_version("ddev-sync"), "--version", prog_name="ddev-sync")
 @click.pass_context
 def cli(
@@ -96,64 +91,37 @@ def cli(
     profile_root: Path,
 ) -> int | None:
     """Pull remote database, files and setup into this DDEV project."""
-    ctx.obj = _Paths(
+    ctx.obj = _Options(
         project_root=project_root,
         home=home if home is not None else Path.home(),
         profile_root=profile_root,
+        target_name=target_name,
+        type_flag=type_flag,
+        framework_version_flag=framework_version_flag,
     )
     if ctx.invoked_subcommand is not None:
         return None
-    context = _build_run_context(
-        target_name,
-        type_flag,
-        framework_version_flag,
-        ctx.obj.project_root,
-        ctx.obj.home,
-        ctx.obj.profile_root,
-    )
+    context = _build_run_context(ctx.obj)
     selection = resolve_selection(steps, assume_yes)
     return run_command(context, selection, dry_run=dry_run, assume_yes=assume_yes, echo=click.echo)
 
 
 @cli.command("targets")
 @click.pass_obj
-def targets_cmd(paths: _Paths) -> int:
+def targets_cmd(options: _Options) -> int:
     """List every defined sync target."""
-    return targets_command(paths.project_root, paths.home, click.echo)
+    return targets_command(options.project_root, options.home, click.echo)
 
 
 @cli.command("doctor")
-@_run_options
 @click.pass_obj
-def doctor_cmd(
-    paths: _Paths,
-    target_name: str | None,
-    type_flag: str | None,
-    framework_version_flag: str | None,
-    steps: str | None,
-    dry_run: bool,
-    assume_yes: bool,
-) -> int:
+def doctor_cmd(options: _Options) -> int:
     """Run the preflight checks against a target and print a checklist."""
-    context = _build_run_context(
-        target_name,
-        type_flag,
-        framework_version_flag,
-        paths.project_root,
-        paths.home,
-        paths.profile_root,
-    )
+    context = _build_run_context(options)
     return doctor_command(context, click.echo)
 
 
-def _build_run_context(
-    target_name: str | None,
-    type_flag: str | None,
-    framework_version_flag: str | None,
-    project_root: Path,
-    home: Path,
-    profile_root: Path,
-) -> RunContext:
+def _build_run_context(options: _Options) -> RunContext:
     """Assemble the run context, falling back to an interactive target pick.
 
     `build_context` resolves the target itself and raises `TargetError`
@@ -167,20 +135,20 @@ def _build_run_context(
 
     def build(name: str | None) -> RunContext:
         return build_context(
-            project_root=project_root,
-            home=home,
+            project_root=options.project_root,
+            home=options.home,
             target_name=name,
-            type_flag=type_flag,
-            framework_version_flag=framework_version_flag,
-            profile_root=profile_root,
+            type_flag=options.type_flag,
+            framework_version_flag=options.framework_version_flag,
+            profile_root=options.profile_root,
         )
 
-    if target_name is not None:
-        return build(resolve_target_name(target_name, project_root, home))
+    if options.target_name is not None:
+        return build(resolve_target_name(options.target_name, options.project_root, options.home))
     try:
         return build(None)
     except TargetError:
-        return build(resolve_target_name(None, project_root, home))
+        return build(resolve_target_name(None, options.project_root, options.home))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
