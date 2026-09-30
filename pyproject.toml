@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ddev-sync"
+version = "0.1.0"
+description = "Pull remote database, files and setup into a local DDEV environment"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.9",
+    "PyYAML>=6.0",
+    "click>=8.1",
+    "rich>=13.9",
+    "questionary>=2.0",
+]
+
+[project.scripts]
+ddev-sync = "ddev_sync.cli.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "hypothesis>=6.112",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "types-PyYAML>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ddev_sync"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=ddev_sync --cov-report=term-missing --cov-fail-under=100 -q"
+
+[tool.coverage.run]
+source = ["src/ddev_sync"]
+branch = true
+
+[tool.coverage.report]
+# Emptied on purpose: `# pragma: no cover` must not work in this repository.
+exclude_lines = []
+fail_under = 100
+show_missing = true
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN"]
+ignore = ["ANN401"]
+
+[tool.mypy]
+strict = true
+files = ["src/ddev_sync", "tests"]
