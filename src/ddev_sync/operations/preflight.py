@@ -5,7 +5,7 @@ the deploy path there - because two round trips through a jump host is two
 chances for the user to wait.
 """
 
-import shutil as shutil  # re-exported: tests monkeypatch preflight.shutil.disk_usage
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any

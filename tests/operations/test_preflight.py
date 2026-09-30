@@ -95,14 +95,11 @@ def test_the_minimum_free_space_is_two_gigabytes() -> None:
 def test_low_disk_space_is_refused_with_the_numbers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from ddev_sync.operations import preflight as preflight_module
-
     class _FakeUsage:
         free = 1024
 
     monkeypatch.setattr(
-        preflight_module.shutil,
-        "disk_usage",
+        "ddev_sync.operations.preflight.shutil.disk_usage",
         lambda _path: _FakeUsage(),
     )
     with pytest.raises(OperationError) as caught:
