@@ -81,7 +81,7 @@ def _from_remote_env(context: ExecutionContext) -> RemoteCredentials:
     }
     values: dict[str, str] = {}
     for field_name, variable in mapping.items():
-        if variable not in parsed:
+        if not parsed.get(variable):
             raise OperationError(f"{variable} is not set in {path} on {context.target.host}")
         values[field_name] = parsed[variable]
     return RemoteCredentials(**values)
@@ -197,8 +197,8 @@ def dump_is_complete(path: Path) -> bool:
 def _scrub(text: str, secret: str) -> str:
     """Remove `secret` from `text`.
 
-    `secret` is always a non-empty `RemoteCredentials.password` here - both
-    credential sources reject an empty password before a `RemoteCredentials`
-    is ever built - so there is no falsy-secret branch to guard against.
+    An empty `secret` must be a no-op: `str.replace("", x)` would otherwise
+    insert `x` between every character of the message, garbling it exactly
+    when the caller most needs to read it.
     """
-    return text.replace(secret, "<REDACTED>")
+    return text.replace(secret, "<REDACTED>") if secret else text

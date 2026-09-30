@@ -11,6 +11,7 @@ from ddev_sync.operations.database import (
     DUMP_FILENAME,
     DbDumpOperation,
     RemoteCredentials,
+    _scrub,
     dump_is_complete,
     read_remote_credentials,
 )
@@ -109,6 +110,26 @@ def test_a_missing_key_names_the_variable_and_the_file(tmp_path: Path) -> None:
         read_remote_credentials(make_context(runner, tmp_path))
     message = str(caught.value)
     assert "TYPO3_DB_USER" in message
+    assert "/srv/app/shared/.env" in message
+
+
+def test_a_key_present_but_empty_names_the_variable_and_the_file(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["ssh"],
+        stdout=(
+            "/srv/app/shared/.env\n"
+            "TYPO3_DB_NAME=acme_prod\n"
+            "TYPO3_DB_USER=acme\n"
+            "TYPO3_DB_PASSWORD=\n"
+            "TYPO3_DB_HOST=127.0.0.1\n"
+            "TYPO3_DB_PORT=3306\n"
+        ),
+    )
+    with pytest.raises(OperationError) as caught:
+        read_remote_credentials(make_context(runner, tmp_path))
+    message = str(caught.value)
+    assert "TYPO3_DB_PASSWORD" in message
     assert "/srv/app/shared/.env" in message
 
 
@@ -341,3 +362,19 @@ def test_a_dump_whose_connection_dropped_leaves_no_file_to_import_by_accident(
         DbDumpOperation().execute(context, {})
     # The next step in the plan would read this path; it must not exist.
     assert list(context.downloads_dir.glob("*.sql")) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "secret", "expected"),
+    [
+        ("failed with s3cret in it", "s3cret", "failed with <REDACTED> in it"),
+        ("nothing to redact", "s3cret", "nothing to redact"),
+        # An empty secret must be a no-op. str.replace("", x) would otherwise
+        # insert x between every character of the message.
+        ("a message", "", "a message"),
+    ],
+)
+def test_scrub_replaces_the_secret_and_tolerates_an_empty_one(
+    text: str, secret: str, expected: str
+) -> None:
+    assert _scrub(text, secret) == expected
