@@ -362,7 +362,19 @@ def test_features_and_no_features_together_is_a_usage_error(
 def test_build_is_equivalent_to_the_long_form(
     project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`build` must produce exactly the plan `--steps=setup --features=node-build` does.
+    """`build` must produce exactly the plan `--steps=setup --features=node-build
+    --only-feature-setup` does.
+
+    The long form grew a third flag in the final whole-branch review:
+    `--steps=setup --features=node-build` alone (the old long form) plans the
+    *whole* setup step, including the laravel profile's own `composer
+    install`/`php artisan migrate --force`/etc - not just node-build's two
+    commands - so it was never actually equivalent to what design doc §6
+    promises ("rebuild the frontend, nothing else"). `--only-feature-setup`
+    is what makes the equivalence hold; `test_build_only_runs_feature_
+    contributed_setup_commands` below pins the behavioural half of that, this
+    test pins that `build` and its now-three-flag long form stay one code
+    path.
 
     Writing this as a byte-for-byte comparison of the two dry-run renders -
     rather than, say, asserting each output separately contains "node-build" -
@@ -383,7 +395,9 @@ def test_build_is_equivalent_to_the_long_form(
         "--dry-run",
         "--yes",
     ]
-    long_form_code = main([*base, "--steps", "setup", "--features", "node-build"])
+    long_form_code = main(
+        [*base, "--steps", "setup", "--features", "node-build", "--only-feature-setup"]
+    )
     long_form_output = capsys.readouterr().out
     assert long_form_code == 0
 
@@ -393,6 +407,51 @@ def test_build_is_equivalent_to_the_long_form(
 
     assert alias_output == long_form_output
     assert "node-build" in alias_output
+
+
+def test_build_only_runs_feature_contributed_setup_commands(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The bug this review found by hand: `ddev sync build` used to plan the
+    *whole* setup step, which on Laravel includes `php artisan migrate
+    --force` - an unprompted migration for someone who typed `build` to
+    re-run Vite. `build` must restrict the setup step to commands a feature
+    contributed; the profile's own setup commands must not appear at all.
+    """
+    _write_node_build(project)
+    code = main(
+        [
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--feature-root",
+            str(FEATURE_ROOT),
+            "--type",
+            "laravel",
+            "--dry-run",
+            "--yes",
+            "build",
+        ]
+    )
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "node-build" in output
+    assert "migrate" not in output
+    assert "composer install" not in output
+    assert "[profile:laravel]" not in output
+
+
+def test_only_feature_setup_combined_with_build_is_a_usage_error(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = invoke(project, tmp_path, "--only-feature-setup", "--dry-run", "--yes", "build")
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "--only-feature-setup" in error
+    assert "build" in error
 
 
 def test_steps_combined_with_build_is_a_usage_error(

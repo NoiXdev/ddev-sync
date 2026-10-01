@@ -94,8 +94,20 @@ def build_plan(
     merged: MergeResult,
     steps: Sequence[StepKind],
     features: FeatureResolution = _NO_FEATURES,
+    only_feature_setup: bool = False,
 ) -> Plan:
-    """Expand the selected steps, with their hooks, into numbered plan entries."""
+    """Expand the selected steps, with their hooks, into numbered plan entries.
+
+    `only_feature_setup` is what makes `ddev sync build` mean "rebuild the
+    frontend, nothing else" (design doc §6) instead of "run the whole setup
+    step, including the profile's own composer install / migrate / cache
+    commands, and also node-build". The provenance machinery already labels
+    every entry with the layer that contributed it (`[feature:node-build]`
+    vs `[profile:laravel]`), so this filters on that label rather than
+    inventing a second way to ask "did a feature contribute this" - an entry
+    is dropped only if it belongs to the SETUP step and was not contributed
+    by a feature layer.
+    """
     builder = _Builder(target=target, project=project, merged=merged)
     entries: list[_Entry] = []
     for kind in steps:
@@ -109,6 +121,13 @@ def build_plan(
         entries.extend(builder.hooks(kind, "pre"))
         entries.extend(builder.step(kind))
         entries.extend(builder.hooks(kind, "post"))
+
+    if only_feature_setup:
+        entries = [
+            entry
+            for entry in entries
+            if entry.kind is not StepKind.SETUP or entry.source.startswith("feature:")
+        ]
 
     numbered = tuple(
         PlannedStep(

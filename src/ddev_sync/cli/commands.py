@@ -62,6 +62,7 @@ def run_command(
     dry_run: bool,
     assume_yes: bool,
     echo: Callable[[str], None],
+    only_feature_setup: bool = False,
 ) -> int:
     """Plan and, unless `dry_run`, execute a sync."""
     plan = build_plan(
@@ -71,6 +72,7 @@ def run_command(
         merged=context.merged,
         steps=steps_for_selection(selection),
         features=context.features,
+        only_feature_setup=only_feature_setup,
     )
     if dry_run:
         echo(render_plan(plan))
