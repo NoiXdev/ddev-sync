@@ -144,6 +144,42 @@ def test_an_unknown_option_is_a_click_usage_error(
     assert "no such option" in capsys.readouterr().err.lower()
 
 
+def test_an_option_placed_after_doctor_hints_that_it_must_precede_the_subcommand(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = main(["doctor", "--target", "x"])
+    assert code == 2
+    error = capsys.readouterr().err.lower()
+    assert "no such option" in error
+    assert "must precede the subcommand" in error
+    assert "--target" in error
+
+
+def test_an_option_placed_after_targets_hints_the_same_way(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Not special-cased to `doctor`: every subcommand shares the same group
+    # option list, so this must trigger identically for `targets`.
+    code = main(["targets", "--home", "/tmp/x"])
+    assert code == 2
+    error = capsys.readouterr().err.lower()
+    assert "no such option" in error
+    assert "must precede the subcommand" in error
+    assert "--home" in error
+
+
+def test_an_unknown_option_after_a_subcommand_gets_no_misleading_hint(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The hint only fires for a name that is genuinely a `cli` group option;
+    # a plain typo must not get told it merely needs to move.
+    code = main(["doctor", "--not-a-real-option"])
+    assert code == 2
+    error = capsys.readouterr().err.lower()
+    assert "no such option" in error
+    assert "must precede the subcommand" not in error
+
+
 def test_the_version_flag_prints_the_package_version(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

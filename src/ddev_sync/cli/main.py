@@ -328,6 +328,43 @@ def _build_run_context(options: _Options) -> RunContext:
         return build(resolve_target_name(None, options.project_root, options.home))
 
 
+def _group_option_names() -> frozenset[str]:
+    """Every long/short option string declared on the `cli` group itself.
+
+    Used only to recognise a `NoSuchOption` whose name happens to be one of
+    these - see `_hint_if_misplaced_group_option` - so it is computed from
+    `cli.params` rather than written out a second time, the same reasoning
+    the module docstring gives for every option living in exactly one place.
+    """
+    return frozenset(opt for param in cli.params for opt in param.opts)
+
+
+def _misplaced_group_option_hint(error: click.exceptions.NoSuchOption) -> str | None:
+    """A hint line, or `None`, for a `NoSuchOption` naming a `cli` group option.
+
+    Every option is declared once, on the group, and must precede the
+    subcommand name (module docstring above). A subcommand's own Click
+    parser therefore does not recognise `--target`, `--profile-root`, or any
+    other group option typed after, say, `doctor` - Click reports that as a
+    generic "no such option", which is accurate but does not tell the user
+    the option merely needs to move. This affects every subcommand
+    (`doctor`, `targets`, `build`) alike, since none of them declare options
+    of their own - so the check is generic, keyed off the group's own option
+    list, rather than special-cased to whichever subcommand a bug report
+    happened to name.
+
+    `ClickException.message` is typed `Final` in Click's own stubs, so the
+    hint is returned for the caller to print as a second line rather than
+    spliced into `error.message` in place.
+    """
+    if error.option_name not in _group_option_names():
+        return None
+    return (
+        f"{error.option_name!r} is a ddev-sync option and must precede the "
+        f"subcommand, e.g. 'ddev-sync {error.option_name} ... <subcommand>'."
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return a process exit code.
 
@@ -346,6 +383,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as error:
         click.echo(str(error), err=True)
         return 1
+    except click.exceptions.NoSuchOption as error:
+        error.show()
+        hint = _misplaced_group_option_hint(error)
+        if hint is not None:
+            click.echo(hint, err=True)
+        return error.exit_code
     except click.ClickException as error:
         error.show()
         return error.exit_code
