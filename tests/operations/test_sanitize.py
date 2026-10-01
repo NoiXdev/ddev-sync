@@ -94,6 +94,20 @@ def test_no_rules_at_all_is_an_empty_list(tmp_path: Path) -> None:
     assert parse_rules(make_context(FakeCommandRunner(), tmp_path)) == []
 
 
+def test_sql_itself_is_placeholder_expanded(tmp_path: Path) -> None:
+    # `sql:` used to bypass expand_value entirely - only the extra `params`
+    # dict was expanded (see `_parse_rule`'s `expand_value(raw_params, ...)`),
+    # so a placeholder written directly into raw SQL (needed for
+    # ${WP_TABLE_PREFIX} in profiles/wordpress.yaml) would have been sent to
+    # the database literally, as the text "${...}", instead of the real
+    # table name.
+    config = {
+        "sanitize": {"rules": [{"name": "x", "sql": "UPDATE ${DDEV_SITENAME}_users SET a=1"}]}
+    }
+    rule = parse_rules(make_context(FakeCommandRunner(), tmp_path, **config))[0]
+    assert rule.sql == "UPDATE acme_users SET a=1"
+
+
 def sql_runner(count: int) -> FakeCommandRunner:
     runner = FakeCommandRunner()
     for _ in range(count):
@@ -205,6 +219,45 @@ def test_tolerate_missing_table_on_an_operation_rule_is_rejected(tmp_path: Path)
     message = str(caught.value)
     assert "x" in message
     assert "tolerate_missing_table" in message
+
+
+def test_requires_table_defaults_to_none(tmp_path: Path) -> None:
+    rule = parse_rules(make_context(FakeCommandRunner(), tmp_path, **RULES))[0]
+    assert rule.requires_table is None
+
+
+def test_requires_table_is_recorded(tmp_path: Path) -> None:
+    config = {
+        "sanitize": {"rules": [{"name": "x", "sql": "TRUNCATE TABLE t", "requires_table": "t"}]}
+    }
+    rule = parse_rules(make_context(FakeCommandRunner(), tmp_path, **config))[0]
+    assert rule.requires_table == "t"
+
+
+def test_requires_table_is_placeholder_expanded(tmp_path: Path) -> None:
+    config = {
+        "sanitize": {
+            "rules": [{"name": "x", "sql": "SELECT 1", "requires_table": "${DDEV_SITENAME}_users"}]
+        }
+    }
+    rule = parse_rules(make_context(FakeCommandRunner(), tmp_path, **config))[0]
+    assert rule.requires_table == "acme_users"
+
+
+def test_requires_table_on_an_operation_rule_is_rejected(tmp_path: Path) -> None:
+    # Symmetric with tolerate_missing_table's own rejection just below: an
+    # 'operation' rule with a 'table' param already declares its table
+    # implicitly (Part 3's preflight probe reads both forms), so
+    # 'requires_table' here would either be redundant or - worse - silently
+    # ignored while a reader assumes it did something.
+    config = {
+        "sanitize": {"rules": [{"name": "x", "operation": "flush_cache", "requires_table": "t"}]}
+    }
+    with pytest.raises(OperationError) as caught:
+        parse_rules(make_context(FakeCommandRunner(), tmp_path, **config))
+    message = str(caught.value)
+    assert "x" in message
+    assert "requires_table" in message
 
 
 def test_an_unknown_operation_lists_what_is_available(tmp_path: Path) -> None:

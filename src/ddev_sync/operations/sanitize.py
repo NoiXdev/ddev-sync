@@ -49,6 +49,13 @@ class SanitizeRule:
     # `tx_scheduler_task` on a TYPO3 project that never required
     # `typo3/cms-scheduler` (a separate, optional Composer package).
     tolerate_missing_table: bool = False
+    # The table this rule needs, for the Part 3 preflight probe to check
+    # before the dump even starts. Only meaningful (and only accepted) on a
+    # `sql` rule: an `operation` rule that takes a `table` param (e.g.
+    # `reset_passwords`) already declares its table through that param, so
+    # `requires_table` would be redundant there and, if ever read by mistake
+    # instead of `params["table"]`, silently wrong.
+    requires_table: str | None = None
 
 
 class SanitizeOperationHandler(Protocol):
@@ -60,7 +67,7 @@ class SanitizeOperationHandler(Protocol):
 
 SANITIZE_OPERATIONS: dict[str, SanitizeOperationHandler] = {}
 
-_RESERVED = {"name", "sql", "operation", "tolerate_missing_table"}
+_RESERVED = {"name", "sql", "operation", "tolerate_missing_table", "requires_table"}
 
 
 def parse_rules(context: ExecutionContext) -> list[SanitizeRule]:
@@ -85,10 +92,22 @@ def _parse_rule(entry: Mapping[str, Any], context: ExecutionContext) -> Sanitize
             "it only means anything for a SQL rule that might target a table that "
             "does not exist"
         )
+    requires_table = entry.get("requires_table")
+    if requires_table is not None and sql is None:
+        raise OperationError(
+            f"sanitize rule {name!r} sets 'requires_table' but has no 'sql'; an "
+            "'operation' rule already declares its table through its own 'table' "
+            "parameter"
+        )
     raw_params = {key: value for key, value in entry.items() if key not in _RESERVED}
     return SanitizeRule(
         name=str(name),
-        sql=None if sql is None else str(sql),
+        # `sql` is expanded exactly like every other parameter below - it
+        # used to bypass expand_value entirely (only `raw_params` went
+        # through it), which would have left a placeholder written directly
+        # into raw SQL (${WP_TABLE_PREFIX}, needed for profiles/wordpress.yaml)
+        # as the literal text "${WP_TABLE_PREFIX}" sent to the database.
+        sql=None if sql is None else str(expand_value(str(sql), context)),
         operation=None if operation is None else str(operation),
         # Every rule parameter is expanded here, at parse time, rather than
         # inside each `SanitizeOperationHandler` - a sixth operation reading
@@ -99,6 +118,9 @@ def _parse_rule(entry: Mapping[str, Any], context: ExecutionContext) -> Sanitize
         # env-rewrite path, never on sanitize rule parameters.
         params=expand_value(raw_params, context),
         tolerate_missing_table=tolerate_missing_table,
+        requires_table=None
+        if requires_table is None
+        else str(expand_value(str(requires_table), context)),
     )
 
 

@@ -21,8 +21,16 @@ def context_for(tmp_path: Path) -> ExecutionContext:
     """A real `ExecutionContext` around the wordpress profile, so sanitize
     rule parameters go through `${...}` expansion the same way a real run
     does - unlike `rules()` above, which reads the raw, unexpanded YAML.
+
+    `parse_rules` expands every configured rule, not just the one a given
+    test is looking at, so the profile's `${WP_TABLE_PREFIX}` rules
+    (anonymize-users, reset-user-passwords) make this resolve the prefix via
+    `wp config get table_prefix` on every call here - scripted once,
+    regardless of which rule a test actually asserts on.
     """
     profile = REGISTRY.resolve("wordpress", None)
+    runner = FakeCommandRunner()
+    runner.script_prefix(["wp", "config", "get", "table_prefix"], stdout="wp_\n")
     return ExecutionContext(
         project=DdevProject(name="acme", type="wordpress", docroot="public", root=tmp_path),
         target=ResolvedTarget(
@@ -34,7 +42,7 @@ def context_for(tmp_path: Path) -> ExecutionContext:
             stage=Stage.PRODUCTION,
         ),
         merged=merge_layers([LayerDoc("profile:wordpress", profile.data)]),
-        runner=FakeCommandRunner(),
+        runner=runner,
         downloads_dir=tmp_path / ".ddev" / ".downloads",
         assume_yes=True,
     )
@@ -66,6 +74,23 @@ def test_the_url_rewrite_expands_ddev_sitename(tmp_path: Path) -> None:
     rule = next(entry for entry in parsed if entry.name == "rewrite-site-url")
     assert rule.params["to"] == "https://acme.ddev.site"
     assert "${DDEV_SITENAME}" not in rule.params["to"]
+
+
+def test_anonymize_users_targets_the_resolved_table_prefix(tmp_path: Path) -> None:
+    # Pins the Part 1/2 fix: profiles/wordpress.yaml used to hardcode
+    # `wp_users`, which is wrong on any site with a non-default
+    # `$table_prefix`. Both the raw sql and the declared `requires_table`
+    # must carry the *resolved* prefix, not the literal placeholder text.
+    parsed = parse_rules(context_for(tmp_path))
+    rule = next(entry for entry in parsed if entry.name == "anonymize-users")
+    assert rule.sql == "UPDATE wp_users SET user_email = CONCAT('user', ID, '@example.invalid')"
+    assert rule.requires_table == "wp_users"
+
+
+def test_reset_user_passwords_targets_the_resolved_table_prefix(tmp_path: Path) -> None:
+    parsed = parse_rules(context_for(tmp_path))
+    rule = next(entry for entry in parsed if entry.name == "reset-user-passwords")
+    assert rule.params["table"] == "wp_users"
 
 
 def test_the_admin_is_created_through_wp_cli() -> None:

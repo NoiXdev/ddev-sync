@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -32,6 +32,15 @@ class ExecutionContext:
     downloads_dir: Path
     assume_yes: bool = False
     keep_dump: bool = False
+    # Mutable on purpose, despite the surrounding frozen dataclass: `frozen`
+    # only blocks reassigning a field, not mutating what it points to, and
+    # this needs exactly one dict that lives as long as `context` does.
+    # `operations/placeholders.py` uses it to memoise a placeholder resolver
+    # that shells out (e.g. `${WP_TABLE_PREFIX}`'s `wp config get`) so it runs
+    # at most once per sync even though dozens of sanitize rules each expand
+    # independently. `compare=False` keeps two otherwise-identical contexts
+    # equal regardless of what either has resolved and cached so far.
+    placeholder_cache: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
 
     def config(self, path: str, *, default: str) -> str:
         """Read a dotted path from the merged config, or return `default`."""
