@@ -49,6 +49,33 @@ def test_a_corrupt_lockfile_does_not_match_and_does_not_raise(tmp_path: Path, co
     assert matches({"composer_package": "x/y"}, project_at(tmp_path)) is False
 
 
+def test_npm_script_matches_when_the_script_key_is_present(tmp_path: Path) -> None:
+    write_package_json(tmp_path, scripts={"build": "vite build"})
+    assert matches({"npm_script": "build"}, project_at(tmp_path)) is True
+
+
+def test_npm_script_does_not_match_a_different_script_name(tmp_path: Path) -> None:
+    write_package_json(tmp_path, scripts={"dev": "vite"})
+    assert matches({"npm_script": "build"}, project_at(tmp_path)) is False
+
+
+def test_npm_script_does_not_match_when_scripts_section_is_absent(tmp_path: Path) -> None:
+    write_package_json(tmp_path, dependencies={"vue": "^3.0"})
+    assert matches({"npm_script": "build"}, project_at(tmp_path)) is False
+
+
+def test_npm_script_with_no_package_json_does_not_match(tmp_path: Path) -> None:
+    assert matches({"npm_script": "build"}, project_at(tmp_path)) is False
+
+
+@pytest.mark.parametrize("content", ["not json", "[]", "null", '"a string"'])
+def test_a_corrupt_package_json_does_not_match_npm_script_and_does_not_raise(
+    tmp_path: Path, content: str
+) -> None:
+    (tmp_path / "package.json").write_text(content, encoding="utf-8")
+    assert matches({"npm_script": "build"}, project_at(tmp_path)) is False
+
+
 def test_npm_package_matches_in_dependencies(tmp_path: Path) -> None:
     write_package_json(tmp_path, dependencies={"@inertiajs/vue3": "^1.0"})
     assert matches({"npm_package": "@inertiajs/vue3"}, project_at(tmp_path)) is True
@@ -173,10 +200,11 @@ def test_a_malformed_predicate_is_rejected_by_shape(
     assert expected in str(caught.value)
 
 
-def test_the_vocabulary_is_exactly_five_predicates() -> None:
+def test_the_vocabulary_is_exactly_six_predicates() -> None:
     assert {
         "composer_package",
         "npm_package",
+        "npm_script",
         "file_exists",
         "any_of",
         "all_of",

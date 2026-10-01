@@ -1,10 +1,33 @@
 # Profile-agnostic on purpose: TYPO3, Shopware and Laravel all build frontends.
 # The predecessor hardcoded Grunt and Webpack; this reads the project instead.
+#
+# Detection requires BOTH a package.json and a literal `build` script in it.
+# A package.json alone used to be enough and that was a bug: Laravel Mix
+# projects commonly name their scripts `dev`/`production` instead of `build`,
+# many WordPress/TYPO3 theme setups differ, and some package.json files hold
+# only dev tooling with no build script at all. Detecting on any of those
+# activated the feature and then ran `${PM_RUN} build`, which exits non-zero
+# with no `allow_failure`, aborting the rest of setup after the database was
+# already imported.
+#
+# The check below is deliberately literal: it looks for the `build` script by
+# name, even though the `script` setting lets a project run something else
+# entirely (e.g. `script: build:prod`). That asymmetry is intentional - a
+# project overriding `script` is expressing intent and knows its own
+# package.json, so it is not detection's job to validate that choice.
+#
+# An *explicit* request (`--features=node-build` / `features: [node-build]`)
+# bypasses this detect block entirely, exactly as every feature's detect
+# block does for an explicit request (spec §3.1/§3.4) - so it still fails
+# loudly at the actual command if the project truly has no build script.
+# Only automatic detection goes quiet.
 name: node-build
 description: Install frontend dependencies and run the build.
 
 detect:
-  file_exists: package.json
+  all_of:
+    - file_exists: package.json
+    - npm_script: build
 
 settings:
   script:

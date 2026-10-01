@@ -1,8 +1,10 @@
 """The closed vocabulary a feature may use to detect itself.
 
 Small and closed in the spirit of the sanitize catalog: a feature
-parameterises what exists. A sixth predicate is a decision with its own
-review, not something added in passing.
+parameterises what exists. Each predicate here is a decision with its own
+review, not something added in passing - `npm_script` is the sixth, added so
+`node-build` can require a real build script rather than merely a
+package.json (see node-build.yaml for the bug this closed).
 """
 
 import json
@@ -14,7 +16,9 @@ from ddev_sync.composer import read_packages
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.errors import FeatureError
 
-PREDICATES = frozenset({"composer_package", "npm_package", "file_exists", "any_of", "all_of"})
+PREDICATES = frozenset(
+    {"composer_package", "npm_package", "npm_script", "file_exists", "any_of", "all_of"}
+)
 
 
 def matches(predicate: Mapping[str, Any], project: DdevProject) -> bool:
@@ -24,6 +28,8 @@ def matches(predicate: Mapping[str, Any], project: DdevProject) -> bool:
         return _composer_has(project.root / "composer.lock", str(value))
     if key == "npm_package":
         return _npm_has(project.root / "package.json", str(value))
+    if key == "npm_script":
+        return _npm_script_has(project.root / "package.json", str(value))
     if key == "file_exists":
         return _within_root(project, str(value)).exists()
     nested = _nested(key, value)
@@ -109,6 +115,14 @@ def _npm_has(package_json: Path, package: str) -> bool:
         if isinstance(entries, dict) and package in entries:
             return True
     return False
+
+
+def _npm_script_has(package_json: Path, script: str) -> bool:
+    document = _read_json(package_json)
+    if not isinstance(document, dict):
+        return False
+    scripts = document.get("scripts")
+    return isinstance(scripts, dict) and script in scripts
 
 
 def _read_json(path: Path) -> Any:

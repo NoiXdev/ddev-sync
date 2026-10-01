@@ -17,6 +17,21 @@ def test_node_build_is_profile_agnostic() -> None:
     assert REGISTRY.load("node-build").applies_to == ()
 
 
+def test_node_build_detect_requires_both_a_package_json_and_a_build_script() -> None:
+    # Pinned explicitly: `file_exists: package.json` alone used to be enough,
+    # which activated the feature on projects with no `build` script (Laravel
+    # Mix's `dev`/`production`, tooling-only package.json files) and then
+    # failed non-zero with no allow_failure, after the database was already
+    # imported. A regression back to the single predicate must fail here even
+    # if nothing else happens to exercise the gap.
+    assert REGISTRY.load("node-build").detect == {
+        "all_of": [
+            {"file_exists": "package.json"},
+            {"npm_script": "build"},
+        ]
+    }
+
+
 def test_node_build_uses_the_derived_package_manager_not_a_hardcoded_one() -> None:
     joined = " ".join(commands("node-build"))
     assert "${PM_INSTALL}" in joined
