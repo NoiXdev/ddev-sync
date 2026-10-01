@@ -37,16 +37,24 @@ SYMFONY_USER_TABLE_CONFIG_KEY = "database.symfony_user_table"
 # rejected once, here, at the single place both placeholders resolve, rather
 # than risked as a baffling SQL error or worse at the point the statement
 # finally runs.
-_SAFE_SQL_IDENTIFIER = re.compile(r"[A-Za-z0-9_]*")
+_SAFE_SQL_IDENTIFIER = re.compile(r"[A-Za-z0-9_]+")
 
 
-def _validated_identifier(value: str, *, source: str) -> str:
-    """Reject `value` unless it is safe to splice into unquoted SQL."""
+def _validated_identifier(value: str, *, source: str, remedy: str | None = None) -> str:
+    """Reject `value` unless it is safe to splice into unquoted SQL.
+
+    One-or-more, not zero-or-more: `context.config` returns an explicit ""
+    verbatim rather than falling back to its default (only a missing key
+    does that), so `database.symfony_user_table: ""` would otherwise pass
+    straight through and produce "UPDATE  SET ..." - a real SQL error,
+    not a safety net.
+    """
     if _SAFE_SQL_IDENTIFIER.fullmatch(value) is None:
+        hint = f" Set {remedy} to override it." if remedy else ""
         raise OperationError(
             f"{source} resolved to {value!r}, which is not a safe SQL identifier "
             "(only letters, digits and underscores are allowed); refusing to "
-            "use it in a sanitize rule's SQL"
+            f"use it in a sanitize rule's SQL.{hint}"
         )
     return value
 
@@ -107,7 +115,9 @@ def _resolve_wp_table_prefix(context: ExecutionContext) -> str:
     credentials = read_remote_credentials(context)
     if credentials.table_prefix:
         return _validated_identifier(
-            credentials.table_prefix, source="production's wp-config.php table_prefix"
+            credentials.table_prefix,
+            source="production's wp-config.php table_prefix",
+            remedy=f"'{WP_TABLE_PREFIX_CONFIG_KEY}' in .ddev/ddev-sync.yaml",
         )
     source = context.config("database.remote_credentials", default="env")
     raise OperationError(

@@ -218,6 +218,10 @@ def test_wp_table_prefix_from_production_rejects_an_unsafe_identifier(tmp_path: 
         expand_value("${WP_TABLE_PREFIX}users", context)
     message = str(caught.value)
     assert "wp'_" in message
+    # The production case is the one a user can least easily diagnose - it
+    # is not a value they wrote in config.yaml - so its error message must
+    # still name the override, exactly like the config-override case above.
+    assert "database.wp_table_prefix" in message
 
 
 def test_symfony_user_table_rejects_an_unsafe_identifier(tmp_path: Path) -> None:
@@ -228,6 +232,19 @@ def test_symfony_user_table_rejects_an_unsafe_identifier(tmp_path: Path) -> None
         expand_value("${SYMFONY_USER_TABLE}", context)
     message = str(caught.value)
     assert "database.symfony_user_table" in message
+
+
+def test_symfony_user_table_rejects_an_empty_string(tmp_path: Path) -> None:
+    # `context.config` returns an explicit "" verbatim rather than falling
+    # back to the "user" default (only a missing key does that) - so
+    # `database.symfony_user_table: ""` reaches the validator as a literal
+    # empty string. `[A-Za-z0-9_]*` (zero-or-more) would have accepted it,
+    # producing "UPDATE  SET ..." - a real SQL syntax error, not a safety
+    # net. The pattern must require at least one character.
+    context = make_context(FakeCommandRunner(), tmp_path, database={"symfony_user_table": ""})
+    with pytest.raises(OperationError) as caught:
+        expand_value("${SYMFONY_USER_TABLE}", context)
+    assert "database.symfony_user_table" in str(caught.value)
 
 
 def test_a_value_with_no_wp_placeholder_never_reads_remote_credentials(tmp_path: Path) -> None:
