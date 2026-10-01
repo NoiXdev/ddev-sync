@@ -150,6 +150,41 @@ def test_wp_table_prefix_resolves_only_once_per_context_across_many_expansions(
     assert len(runner.calls) == 1
 
 
+def test_wp_table_prefix_config_override_rejects_an_unsafe_identifier(tmp_path: Path) -> None:
+    # The prefix is spliced directly into unquoted raw SQL (see
+    # profiles/wordpress.yaml's `sql:` rules) - a backtick, quote or space
+    # here is a config mistake, not something to accommodate.
+    context = make_context(FakeCommandRunner(), tmp_path, database={"wp_table_prefix": "wp`_"})
+    with pytest.raises(OperationError) as caught:
+        expand_value("${WP_TABLE_PREFIX}users", context)
+    message = str(caught.value)
+    assert "database.wp_table_prefix" in message
+    assert "wp`_" in message
+
+
+def test_wp_table_prefix_from_production_rejects_an_unsafe_identifier(tmp_path: Path) -> None:
+    # Production's wp-config.php is not config the user wrote by hand, but
+    # it is still their own server - the same guard must still catch it,
+    # since a bad prefix there is just as capable of producing a baffling
+    # SQL error or worse.
+    runner = wp_cli_runner("wp'_")
+    context = make_context(runner, tmp_path, **WP_CLI_SOURCE)
+    with pytest.raises(OperationError) as caught:
+        expand_value("${WP_TABLE_PREFIX}users", context)
+    message = str(caught.value)
+    assert "wp'_" in message
+
+
+def test_symfony_user_table_rejects_an_unsafe_identifier(tmp_path: Path) -> None:
+    context = make_context(
+        FakeCommandRunner(), tmp_path, database={"symfony_user_table": "user; DROP TABLE x"}
+    )
+    with pytest.raises(OperationError) as caught:
+        expand_value("${SYMFONY_USER_TABLE}", context)
+    message = str(caught.value)
+    assert "database.symfony_user_table" in message
+
+
 def test_a_value_with_no_wp_placeholder_never_reads_remote_credentials(tmp_path: Path) -> None:
     # The laziness guarantee this whole module exists for: a TYPO3 (or any
     # other non-WordPress) profile's sql/params never mention

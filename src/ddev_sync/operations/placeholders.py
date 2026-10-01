@@ -16,6 +16,7 @@ enough that wrapping it in a thunk changes nothing observable, but keeps
 every placeholder in `_substitutions` the same shape.
 """
 
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -24,6 +25,30 @@ from ddev_sync.operations.database import read_remote_credentials
 
 WP_TABLE_PREFIX_CONFIG_KEY = "database.wp_table_prefix"
 SYMFONY_USER_TABLE_CONFIG_KEY = "database.symfony_user_table"
+
+# `${WP_TABLE_PREFIX}` and `${SYMFONY_USER_TABLE}` are spliced directly into
+# *unquoted* raw SQL (see profiles/wordpress.yaml's and profiles/symfony.yaml's
+# `sql:` rules, e.g. `"UPDATE ${WP_TABLE_PREFIX}users SET ..."`) - there are no
+# surrounding backticks here for `operations/catalog.py::_identifier`'s style
+# of escaping to apply to. Validation, not escaping, is the right guard: a
+# table prefix or user-table name containing a backtick, quote, space or
+# semicolon is not a value anyone intends to use - it is a mistake, in config
+# or (for the WordPress prefix) in production's wp-config.php - so it is
+# rejected once, here, at the single place both placeholders resolve, rather
+# than risked as a baffling SQL error or worse at the point the statement
+# finally runs.
+_SAFE_SQL_IDENTIFIER = re.compile(r"[A-Za-z0-9_]*")
+
+
+def _validated_identifier(value: str, *, source: str) -> str:
+    """Reject `value` unless it is safe to splice into unquoted SQL."""
+    if _SAFE_SQL_IDENTIFIER.fullmatch(value) is None:
+        raise OperationError(
+            f"{source} resolved to {value!r}, which is not a safe SQL identifier "
+            "(only letters, digits and underscores are allowed); refusing to "
+            "use it in a sanitize rule's SQL"
+        )
+    return value
 
 
 def _cached(context: ExecutionContext, key: str, resolve: Callable[[], str]) -> str:
@@ -56,10 +81,12 @@ def _resolve_wp_table_prefix(context: ExecutionContext) -> str:
     """
     configured = context.config(WP_TABLE_PREFIX_CONFIG_KEY, default="")
     if configured:
-        return configured
+        return _validated_identifier(configured, source=WP_TABLE_PREFIX_CONFIG_KEY)
     credentials = read_remote_credentials(context)
     if credentials.table_prefix:
-        return credentials.table_prefix
+        return _validated_identifier(
+            credentials.table_prefix, source="production's wp-config.php table_prefix"
+        )
     source = context.config("database.remote_credentials", default="env")
     raise OperationError(
         f"could not resolve ${{WP_TABLE_PREFIX}}: 'database.remote_credentials' is "
@@ -83,8 +110,9 @@ def _substitutions(context: ExecutionContext) -> dict[str, Callable[[], str]]:
         # enough here: unlike ${WP_TABLE_PREFIX} there is nothing to shell
         # out to, just a default to read, so it needs neither a thunk that
         # does real work nor the memoisation that exists to bound that work.
-        "${SYMFONY_USER_TABLE}": lambda: context.config(
-            SYMFONY_USER_TABLE_CONFIG_KEY, default="user"
+        "${SYMFONY_USER_TABLE}": lambda: _validated_identifier(
+            context.config(SYMFONY_USER_TABLE_CONFIG_KEY, default="user"),
+            source=SYMFONY_USER_TABLE_CONFIG_KEY,
         ),
     }
 
