@@ -58,9 +58,11 @@ def rclone_env(remote: S3Endpoint, local: S3Endpoint) -> dict[str, str]:
         # manner of project-specific `PATH` entries by the time this runs,
         # and none of that should leak into what `rclone` can execute.
         # Alpine - what slim containers typically use - puts
-        # /usr/local/sbin, /usr/sbin and /sbin on the default PATH
-        # alongside the bin dirs, and some tooling lives only there; this
-        # used to omit all three.
+        # /usr/local/sbin, /usr/sbin and /sbin on the default PATH alongside
+        # the bin dirs; this used to omit all three. Listed here for parity
+        # with that conventional default, in its usual order, for the same
+        # defence-against-an-inherited-PATH reason given above - not because
+        # rclone itself shells out to anything there.
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     }
 
