@@ -8,6 +8,7 @@ from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.plan import Plan, PlannedStep, PostSyncEntry, build_plan
 from ddev_sync.engine.steps import StepKind, steps_for_selection
+from ddev_sync.features.activation import Request
 from ddev_sync.features.registry import Feature, FeatureRegistry
 from ddev_sync.features.resolver import ActivatedFeature, resolve_features
 from ddev_sync.operations.preflight import PreflightReport
@@ -380,6 +381,54 @@ def golden_plan_with_features(tmp_path: Path) -> Plan:
 
 def test_golden_laravel_with_features(tmp_path: Path) -> None:
     write_or_compare("laravel-with-features.txt", render_plan(golden_plan_with_features(tmp_path)))
+
+
+def golden_plan_typo3_with_explicit_feature(tmp_path: Path) -> Plan:
+    """A TYPO3 project that explicitly enables `typo3-processedfiles` via
+    (a stand-in for) `.ddev/ddev-sync.yaml`, pinning the `from <source>`
+    provenance string that an explicit request produces.
+
+    `typo3-processedfiles` has no `detect` block by design (see the real
+    file's comment: whether stale processed images are worth clearing is a
+    judgement, not a property of the project), so it can only ever be
+    activated this way - it is never the `detected: ...` kind. That also
+    means this golden cannot show both reason strings in one render: once a
+    project supplies `features:` (here, `requests` is not `None`), detection
+    is replaced outright for the whole resolution, never merged with it
+    (`features/resolver.py::resolve_features`). So "alongside a detected
+    one" is satisfied across the two golden files together -
+    `laravel-with-features.txt` already pins `detected: ...`, and this one
+    pins `from ...` - rather than within a single one.
+    """
+    project = DdevProject(name="acme", type="typo3", docroot="public", root=tmp_path)
+    profile = ProfileRegistry(PROFILE_ROOT).resolve("typo3", None)
+    requests = [Request("typo3-processedfiles", {}, ".ddev/ddev-sync.yaml")]
+    resolution = resolve_features(
+        FeatureRegistry(FEATURE_ROOT), project, profile.name, requests, True
+    )
+    assert [a.reason for a in resolution.activated] == ["from .ddev/ddev-sync.yaml"]
+    return build_plan(
+        target=ResolvedTarget(
+            name="production",
+            host="web01.example",
+            user="deploy",
+            port=22,
+            path="/srv/app/",
+            stage=Stage.PRODUCTION,
+        ),
+        project=project,
+        profile=profile,
+        merged=merge_layers([*profile.layers, *resolution.layers]),
+        steps=steps_for_selection(["sanitize", "setup"]),
+        features=resolution,
+    )
+
+
+def test_golden_typo3_with_explicit_feature(tmp_path: Path) -> None:
+    write_or_compare(
+        "typo3-with-explicit-feature.txt",
+        render_plan(golden_plan_typo3_with_explicit_feature(tmp_path)),
+    )
 
 
 def test_a_feature_contributing_only_a_hook_still_reaches_the_legend(tmp_path: Path) -> None:

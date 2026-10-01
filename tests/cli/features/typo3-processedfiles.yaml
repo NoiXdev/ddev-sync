@@ -1,0 +1,9 @@
+name: typo3-processedfiles
+applies_to: [typo3]
+sanitize:
+  rules:
+    - name: clear-processed-files
+      sql: "TRUNCATE TABLE sys_file_processedfile"
+setup:
+  commands:
+    - { run: "rm -rf public/fileadmin/_processed_", allow_failure: true }
