@@ -40,6 +40,14 @@ sanitize:
   rules:
     - name: anonymize-users
       sql: "UPDATE user SET email = CONCAT('user', id, '@example.invalid')"
+    # Unverified: table/column name assumed from Symfony's conventional
+    # `user` entity (same table the anonymize rule above already targets);
+    # see profiles/VERIFIED.md.
+    - name: reset-user-passwords
+      operation: reset_passwords
+      table: user
+      column: password
+      value: "$argon2i$disabled"
     - name: clear-messenger
       sql: "TRUNCATE TABLE messenger_messages"
 

@@ -51,6 +51,17 @@ sanitize:
       table: fe_users
       column: password
       value: "$argon2i$disabled"
+    # fe_users (frontend/website visitors) had both an anonymise and a reset
+    # rule; be_users (backend/editor accounts) had neither, so a sync left
+    # every real editor's email and password hash on the laptop untouched
+    # while reporting "sanitize OK". Same treatment, same table shape.
+    - name: anonymize-be-users
+      sql: "UPDATE be_users SET email = CONCAT('be', uid, '@example.invalid')"
+    - name: reset-be-passwords
+      operation: reset_passwords
+      table: be_users
+      column: password
+      value: "$argon2i$disabled"
     - name: local-admin
       operation: create_admin
       driver: typo3

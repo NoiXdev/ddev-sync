@@ -13,6 +13,13 @@ sanitize:
         table: fe_users
         column: password
         value: "$argon2i$disabled"
+      - name: anonymize-be-users
+        sql: "UPDATE be_users SET email = CONCAT('be', uid, '@example.invalid')"
+      - name: reset-be-passwords
+        operation: reset_passwords
+        table: be_users
+        column: password
+        value: "$argon2i$disabled"
       - { name: local-admin, operation: create_admin, driver: console, user: ddev }
       - name: flush-cache
         operation: flush_cache

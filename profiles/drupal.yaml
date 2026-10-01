@@ -25,6 +25,15 @@ sanitize:
       sql: "TRUNCATE TABLE watchdog"
     - name: anonymize-users
       sql: "UPDATE users_field_data SET mail = CONCAT('user', uid, '@example.invalid') WHERE uid > 0"
+    # Unverified: table/column name assumed from Drupal core's conventional
+    # `users_field_data.pass` (same table the anonymize rule above already
+    # targets); see profiles/VERIFIED.md. No `uid > 0` guard here - resetting
+    # uid 0's unused password hash alongside everyone else's is harmless.
+    - name: reset-user-passwords
+      operation: reset_passwords
+      table: users_field_data
+      column: pass
+      value: "$argon2i$disabled"
     - name: local-admin
       operation: create_admin
       driver: drush

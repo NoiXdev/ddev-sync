@@ -91,6 +91,10 @@ def test_sanitizing_removes_the_real_email_addresses(project: Path, tmp_path: Pa
     emails = local_query("SELECT GROUP_CONCAT(email) FROM fe_users")
     assert "customer.example" not in emails
     assert "example.invalid" in emails
+    be_user_emails = local_query("SELECT GROUP_CONCAT(email) FROM be_users")
+    assert "customer.example" not in be_user_emails
+    assert "example.invalid" in be_user_emails
+    assert local_query("SELECT password FROM be_users WHERE uid = 1") == "$argon2i$disabled"
     assert local_query("SELECT COUNT(*) FROM be_sessions") == "0"
     assert local_query("SELECT COUNT(*) FROM sys_log") == "0"
 
