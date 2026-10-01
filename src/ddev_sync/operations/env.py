@@ -73,13 +73,29 @@ def confirm_env_change(diff: str) -> bool:
 
     Module-level, like `confirm_destructive`, so tests replace it by dotted
     string rather than constructing a console.
+
+    `input()` raises `EOFError` when stdin is closed, which is exactly what a
+    non-interactive invocation (a script, a cron job, CI) looks like. Left
+    uncaught, this is the worst place for that traceback to surface: by the
+    time this prompt runs, `db.dump` has already pulled the entire production
+    dump down, and the one question that exists to stop it from landing on
+    top of a live local app dies with a stack trace instead of an answer.
+    Mirrors `confirm_destructive` (operations/database.py) exactly, down to
+    the message, so the two read as one decision applied twice.
     """
     print(diff)
     print(
         "Check this before continuing - a local app still pointed at production "
         "is the failure this prompt exists to prevent."
     )
-    return input("Apply these changes? [y/N] ").strip().lower() in {"y", "yes"}
+    try:
+        answer = input("Apply these changes? [y/N] ").strip().lower()
+    except EOFError as error:
+        raise OperationError(
+            "cannot confirm the env file change: no input is available "
+            "(stdin is closed). Pass --yes to skip the confirmation prompt."
+        ) from error
+    return answer in {"y", "yes"}
 
 
 class EnvRewriteOperation:
