@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
-from ddev_sync.config.models import ResolvedTarget, Stage
+from ddev_sync.config.models import Layout, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.plan import Plan, build_plan
 from ddev_sync.engine.steps import StepKind, steps_for_selection
@@ -12,7 +12,7 @@ from ddev_sync.errors import ConfigError
 from ddev_sync.profiles.registry import ResolvedProfile
 
 
-def target() -> ResolvedTarget:
+def target(layout: Layout = Layout.PLAIN) -> ResolvedTarget:
     return ResolvedTarget(
         name="production",
         host="web01.example",
@@ -20,6 +20,7 @@ def target() -> ResolvedTarget:
         port=22,
         path="/srv/app/",
         stage=Stage.PRODUCTION,
+        layout=layout,
     )
 
 
@@ -29,7 +30,7 @@ def project() -> DdevProject:
 
 PROFILE_DATA: dict[str, Any] = {
     "database": {"env_map": {"name": "TYPO3_DB_NAME"}},
-    "files": {"paths": [{"remote": "shared/public/fileadmin/", "local": "public/fileadmin/"}]},
+    "files": {"paths": [{"remote": "public/fileadmin/", "local": "public/fileadmin/"}]},
     "sanitize": {"rules": [{"name": "clear-sessions", "sql": "TRUNCATE TABLE be_sessions"}]},
     "setup": {"commands": [{"run": "composer install --no-interaction"}]},
 }
@@ -40,6 +41,7 @@ def plan_for(
     *,
     user_layers: list[LayerDoc] | None = None,
     notice: str | None = None,
+    target_layout: Layout = Layout.PLAIN,
 ) -> Plan:
     profile = ResolvedProfile(
         name="typo3",
@@ -50,7 +52,7 @@ def plan_for(
     )
     layers = [LayerDoc("profile:typo3@12", PROFILE_DATA), *(user_layers or [])]
     return build_plan(
-        target=target(),
+        target=target(target_layout),
         project=project(),
         profile=profile,
         merged=merge_layers(layers),
@@ -73,6 +75,19 @@ def test_a_database_only_plan_has_preflight_dump_download_import() -> None:
     assert all(not step.is_hook for step in plan.steps)
 
 
+def test_db_download_does_not_render_an_scp_that_never_runs() -> None:
+    """The dump is streamed straight into the local file by db.dump
+    (DbDumpOperation); no dump.sql is ever written on the remote, so a
+    rendered `scp ... dump.sql` line would describe a transfer and a file
+    that do not exist. The step must stay visible - the plan promised it -
+    but must not claim an scp happens.
+    """
+    plan = plan_for(["db"])
+    step = next(entry for entry in plan.steps if entry.kind is StepKind.DB_DOWNLOAD)
+    assert "scp" not in step.detail
+    assert step.where != "scp"
+
+
 def test_steps_are_numbered_from_one_in_order() -> None:
     plan = plan_for(["db", "files"])
     assert [step.index for step in plan.steps] == list(range(1, len(plan.steps) + 1))
@@ -81,7 +96,7 @@ def test_steps_are_numbered_from_one_in_order() -> None:
 def test_one_files_step_is_emitted_per_configured_path() -> None:
     extra = LayerDoc(
         ".ddev/ddev-sync.yaml",
-        {"files": {"paths": [{"remote": "shared/public/uploads/", "local": "public/uploads/"}]}},
+        {"files": {"paths": [{"remote": "public/uploads/", "local": "public/uploads/"}]}},
     )
     plan = plan_for(["files"], user_layers=[extra])
     file_steps = [step for step in plan.steps if step.kind is StepKind.FILES_SYNC]
@@ -94,8 +109,21 @@ def test_a_files_step_shows_the_real_rsync_endpoints() -> None:
     plan = plan_for(["files"])
     step = next(entry for entry in plan.steps if entry.kind is StepKind.FILES_SYNC)
     assert step.where == "rsync"
-    assert "/srv/app/shared/public/fileadmin/" in step.detail
+    assert "/srv/app/public/fileadmin/" in step.detail
     assert "/var/www/html/public/fileadmin/" in step.detail
+
+
+def test_a_files_steps_remote_path_is_derived_from_a_plain_targets_data_root() -> None:
+    plan = plan_for(["files"], target_layout=Layout.PLAIN)
+    step = next(entry for entry in plan.steps if entry.kind is StepKind.FILES_SYNC)
+    assert "/srv/app/public/fileadmin/" in step.detail
+    assert "/srv/app/shared/" not in step.detail
+
+
+def test_a_files_steps_remote_path_is_derived_from_a_deployer_targets_data_root() -> None:
+    plan = plan_for(["files"], target_layout=Layout.DEPLOYER)
+    step = next(entry for entry in plan.steps if entry.kind is StepKind.FILES_SYNC)
+    assert "/srv/app/shared/public/fileadmin/" in step.detail
 
 
 def test_sanitize_summarises_its_rules_by_name() -> None:
@@ -398,7 +426,7 @@ def test_a_files_entry_missing_remote_names_the_entry_instead_of_crashing() -> N
 
 
 def test_a_files_entry_missing_local_names_the_entry_instead_of_crashing() -> None:
-    extra = LayerDoc(".ddev/ddev-sync.yaml", {"files": {"paths": [{"remote": "shared/x/"}]}})
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"files": {"paths": [{"remote": "x/"}]}})
     with pytest.raises(ConfigError) as caught:
         plan_for(["files"], user_layers=[extra])
     assert "local" in str(caught.value)
@@ -478,7 +506,7 @@ def test_every_planned_step_carries_params() -> None:
 def test_a_files_sync_step_carries_the_raw_mapping_as_params() -> None:
     plan = plan_for(["files"])
     step = next(entry for entry in plan.steps if entry.kind is StepKind.FILES_SYNC)
-    assert step.params == {"remote": "shared/public/fileadmin/", "local": "public/fileadmin/"}
+    assert step.params == {"remote": "public/fileadmin/", "local": "public/fileadmin/"}
 
 
 def test_a_hook_step_carries_its_command_entry_as_params() -> None:
@@ -512,5 +540,5 @@ def test_a_target_path_without_a_trailing_slash_still_joins_correctly() -> None:
         steps=steps_for_selection(["db", "files"]),
     )
     details = " ".join(step.detail for step in plan.steps)
-    assert "/srv/app/shared/public/fileadmin/" in details
-    assert "/srv/appshared" not in details
+    assert "/srv/app/public/fileadmin/" in details
+    assert "/srv/apppublic" not in details

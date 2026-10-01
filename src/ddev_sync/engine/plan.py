@@ -15,7 +15,7 @@ from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.steps import StepKind, hook_name
 from ddev_sync.errors import ConfigError
 from ddev_sync.profiles.registry import ResolvedProfile
-from ddev_sync.transport.ssh import rsync_pull_command, scp_download_command, ssh_command
+from ddev_sync.transport.ssh import rsync_pull_command, ssh_command
 
 DUMP_FILENAME = "dump.sql"
 DOWNLOAD_DIR = ".ddev/.downloads"
@@ -175,12 +175,15 @@ class _Builder:
         ]
 
     def _db_download(self) -> list[_Entry]:
-        remote = f"{self._target.path}{DUMP_FILENAME}"
-        local = f"{DOWNLOAD_DIR}/{DUMP_FILENAME}"
-        detail = " ".join(scp_download_command(self._target, remote, local))
+        # db.dump streams mysqldump straight into the local file over the
+        # same ssh connection (DbDumpOperation), so there is no remote
+        # dump.sql to fetch and no separate transfer ever runs here. The
+        # step stays visible because the plan promised it; it just stops
+        # pretending an scp happens.
+        detail = f"streamed as part of db.dump into {DOWNLOAD_DIR}/{DUMP_FILENAME}"
         return [
             _Entry(
-                kind=StepKind.DB_DOWNLOAD, where="scp", detail=detail, source="built-in", params={}
+                kind=StepKind.DB_DOWNLOAD, where="-", detail=detail, source="built-in", params={}
             )
         ]
 
@@ -201,7 +204,7 @@ class _Builder:
         for position, mapping in enumerate(paths):
             remote_suffix = _require_key(mapping, "remote")
             local_suffix = _require_key(mapping, "local")
-            remote = f"{self._target.path}{remote_suffix}"
+            remote = f"{self._target.data_root}{remote_suffix}"
             local = f"{self._project.root}/{local_suffix}"
             delete = bool(mapping.get("delete", False))
             detail = " ".join(rsync_pull_command(self._target, remote, local, delete=delete))

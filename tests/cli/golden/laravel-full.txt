@@ -4,9 +4,9 @@
 
    1  preflight     remote  ssh -p 22 deploy@web01.example   [built-in]
    2  db.dump       remote  mysqldump --single-transaction $DB_DATABASE   [profile:laravel]
-   3  db.download   scp     scp -P 22 deploy@web01.example:/srv/app/dump.sql .ddev/.downloads/dump.sql   [built-in]
+   3  db.download   -       streamed as part of db.dump into .ddev/.downloads/dump.sql   [built-in]
    4  db.import     local   mysql -h ddev-acme-db db < .ddev/.downloads/dump.sql   [built-in]
-   5  files.sync    rsync   rsync -a --info=progress2 -e ssh -p 22 deploy@web01.example:/srv/app/shared/storage/app/public/ /var/www/html/storage/app/public/   [profile:laravel]
+   5  files.sync    rsync   rsync -a --info=progress2 -e ssh -p 22 deploy@web01.example:/srv/app/storage/app/public/ /var/www/html/storage/app/public/   [profile:laravel]
    6  sanitize      sql     5 rules: clear-sessions, clear-jobs, clear-failed-jobs, anonymize-users, reset-user-passwords   [profile:laravel]
    7  setup         local   composer install --no-interaction   [profile:laravel]
    8  setup         local   php artisan migrate --force  (allow_failure)   [profile:laravel]
