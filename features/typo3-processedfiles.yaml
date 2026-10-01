@@ -10,6 +10,18 @@ sanitize:
     - name: clear-processed-files
       sql: "TRUNCATE TABLE sys_file_processedfile"
 
+# `${DDEV_DOCROOT}` (operations/placeholders.py), not a hardcoded "public/":
+# a project whose web root is not named "public" would otherwise have its
+# `sys_file_processedfile` table truncated above while the stale files on
+# disk were left untouched - a silent half-job, since the truncate has no
+# way to know it disagreed with the rm.
+#
+# No `allow_failure` here, unlike most of this profile/feature set's other
+# optional commands: `rm -rf` already exits 0 when the directory is simply
+# missing (the ordinary fresh-checkout case, before the first import), so
+# `allow_failure` was never covering that case - it was only silently
+# swallowing some OTHER failure (permission denied, a read-only filesystem)
+# with nothing ever reported. Removing it makes that failure visible again.
 setup:
   commands:
-    - { run: "rm -rf public/fileadmin/_processed_", allow_failure: true }
+    - { run: "rm -rf ${DDEV_DOCROOT}/fileadmin/_processed_" }

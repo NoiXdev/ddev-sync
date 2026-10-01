@@ -2,7 +2,13 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ddev_sync.config.merge import LayerDoc, merge_layers
+from ddev_sync.config.models import ResolvedTarget, Stage
+from ddev_sync.ddev.project import DdevProject
 from ddev_sync.features.registry import FeatureRegistry
+from ddev_sync.operations.base import ExecutionContext
+from ddev_sync.operations.exec import ExecOperation
+from ddev_sync.transport.fake import FakeCommandRunner
 
 FEATURE_ROOT = Path(__file__).parent.parent.parent / "features"
 REGISTRY = FeatureRegistry(FEATURE_ROOT)
@@ -50,15 +56,68 @@ def test_the_only_destructive_filesystem_command_is_relative_and_unredirected() 
     assert "workdir" not in entry
 
 
-def test_the_destructive_command_tolerates_failure() -> None:
-    # The directory may already be absent (a fresh checkout before the first
-    # import); that must not abort a sync whose database import succeeded.
+def test_the_destructive_command_path_is_derived_from_the_docroot(tmp_path: Path) -> None:
+    # A project whose docroot is not "public/" (the historical hardcoded
+    # value) must still have its *actual* processed-files directory removed,
+    # not some other project's directory that happens to share the name
+    # "public". ${DDEV_DOCROOT} (operations/placeholders.py) is resolved
+    # from the real `.ddev/config.yaml` at run time; this only pins that the
+    # feature asks for it rather than a literal "public/...".
     entry = next(
         e
         for e in REGISTRY.load("typo3-processedfiles").data["setup"]["commands"]
         if "rm -rf" in str(e.get("run", ""))
     )
-    assert entry.get("allow_failure") is True
+    assert "${DDEV_DOCROOT}/fileadmin/_processed_" in str(entry["run"])
+    assert "public/" not in str(entry["run"])
+
+
+def test_the_destructive_command_actually_targets_a_non_default_docroot(tmp_path: Path) -> None:
+    """End-to-end: the feature's command, run through the same
+    `run_command_entry` the executor uses, targets a project's real docroot
+    - not "public/" - once `${DDEV_DOCROOT}` is expanded against an
+    `ExecutionContext`. Proves the feature file and the placeholder's
+    resolution agree, rather than asserting each in isolation.
+    """
+    entry = next(
+        e
+        for e in REGISTRY.load("typo3-processedfiles").data["setup"]["commands"]
+        if "rm -rf" in str(e.get("run", ""))
+    )
+    runner = FakeCommandRunner()
+    runner.script_prefix(["sh"], stdout="")
+    context = ExecutionContext(
+        project=DdevProject(name="acme", type="typo3", docroot="httpdocs", root=tmp_path),
+        target=ResolvedTarget(
+            name="production",
+            host="web01.example",
+            user="deploy",
+            port=22,
+            path="/srv/app/",
+            stage=Stage.PRODUCTION,
+        ),
+        merged=merge_layers([LayerDoc("profile", {})]),
+        runner=runner,
+        downloads_dir=tmp_path / ".ddev" / ".downloads",
+    )
+    ExecOperation().execute(context, entry)
+    assert runner.calls[0] == ("sh", "-c", "rm -rf httpdocs/fileadmin/_processed_")
+
+
+def test_the_destructive_command_does_not_set_allow_failure() -> None:
+    # `rm -rf` already exits 0 on a missing path (the fresh-checkout case,
+    # before the first import, that `allow_failure` used to be justified
+    # by) - so `allow_failure` here was never protecting against a missing
+    # directory, only silently swallowing whatever OTHER failure occurred
+    # (permission denied, a read-only filesystem, ...) with nothing ever
+    # reported. Removing it makes a genuine failure here visible again,
+    # same as every other command this profile/feature set runs.
+    entry = next(
+        e
+        for e in REGISTRY.load("typo3-processedfiles").data["setup"]["commands"]
+        if "rm -rf" in str(e.get("run", ""))
+    )
+    assert "allow_failure" not in entry
 
 
 def test_no_feature_other_than_processedfiles_removes_anything() -> None:

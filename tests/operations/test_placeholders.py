@@ -11,9 +11,11 @@ from ddev_sync.operations.placeholders import expand_placeholders, expand_value
 from ddev_sync.transport.fake import FakeCommandRunner
 
 
-def make_context(runner: FakeCommandRunner, root: Path, **config: Any) -> ExecutionContext:
+def make_context(
+    runner: FakeCommandRunner, root: Path, *, docroot: str = "public", **config: Any
+) -> ExecutionContext:
     return ExecutionContext(
-        project=DdevProject(name="acme", type="wordpress", docroot="public", root=root),
+        project=DdevProject(name="acme", type="wordpress", docroot=docroot, root=root),
         target=ResolvedTarget(
             name="production",
             host="web01.example",
@@ -61,6 +63,23 @@ def test_a_list_and_a_dict_are_expanded_recursively(tmp_path: Path) -> None:
 def test_an_unknown_placeholder_is_left_alone(tmp_path: Path) -> None:
     context = make_context(FakeCommandRunner(), tmp_path)
     assert expand_value("${NOT_A_PLACEHOLDER}", context) == "${NOT_A_PLACEHOLDER}"
+
+
+def test_ddev_docroot_expands_to_the_configured_docroot(tmp_path: Path) -> None:
+    context = make_context(FakeCommandRunner(), tmp_path, docroot="httpdocs")
+    assert expand_value("${DDEV_DOCROOT}/fileadmin", context) == "httpdocs/fileadmin"
+
+
+def test_ddev_docroot_expands_to_a_dot_when_the_docroot_is_the_project_root(
+    tmp_path: Path,
+) -> None:
+    # `DdevProject.docroot` is "" when `.ddev/config.yaml` has no docroot (the
+    # project root itself is the web root). A naive `f"{docroot}/x"` would
+    # then produce "/x" - an absolute path at the filesystem root, not a
+    # relative one under the project - so the empty case must resolve to "."
+    # instead.
+    context = make_context(FakeCommandRunner(), tmp_path, docroot="")
+    assert expand_value("${DDEV_DOCROOT}/fileadmin", context) == "./fileadmin"
 
 
 # --- ${WP_TABLE_PREFIX} -----------------------------------------------------

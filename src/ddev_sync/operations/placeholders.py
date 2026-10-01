@@ -99,6 +99,15 @@ def _resolve_wp_table_prefix(context: ExecutionContext) -> str:
 def _substitutions(context: ExecutionContext) -> dict[str, Callable[[], str]]:
     return {
         "${DDEV_SITENAME}": lambda: context.project.name,
+        # `DdevProject.docroot` is "" when `.ddev/config.yaml` sets none - the
+        # project root itself is then the web root. A feature or profile
+        # writing "${DDEV_DOCROOT}/fileadmin" needs that case to produce a
+        # relative "./fileadmin", not an absolute "/fileadmin": the latter
+        # would point at the filesystem root instead of the project, in the
+        # one kind of setup command (`rm -rf`, see
+        # features/typo3-processedfiles.yaml) where that distinction is
+        # destructive rather than merely wrong.
+        "${DDEV_DOCROOT}": lambda: context.project.docroot or ".",
         "${SYNC_TARGET_DATABASE}": lambda: context.config("database.target_database", default="db"),
         "${WP_TABLE_PREFIX}": lambda: _cached(
             context, "${WP_TABLE_PREFIX}", lambda: _resolve_wp_table_prefix(context)
