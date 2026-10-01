@@ -19,16 +19,22 @@ def test_node_build_is_profile_agnostic() -> None:
 
 def test_node_build_uses_the_derived_package_manager_not_a_hardcoded_one() -> None:
     joined = " ".join(commands("node-build"))
-    assert "${PM}" in joined
+    assert "${PM_INSTALL}" in joined
     assert "${PM_RUN}" in joined
     for hardcoded in ("npm ", "yarn ", "pnpm "):
         assert hardcoded not in joined
+    # Not a per-project setting (see package_manager.py): a project cannot
+    # override the install verb, only which script `${PM_RUN}` runs.
+    assert "${install}" not in joined
 
 
-def test_node_build_exposes_install_and_script_as_settings() -> None:
+def test_node_build_exposes_only_script_as_a_setting() -> None:
+    # `install` is not here: which verb installs from a lockfile exactly is a
+    # fact about the package manager (see features/package_manager.py), not
+    # a per-project choice - that was the bug (`install: ci` rendered as the
+    # non-existent `pnpm ci` / `yarn ci` on those projects).
     settings = REGISTRY.load("node-build").settings
-    assert sorted(settings) == ["install", "script"]
-    assert settings["install"].default == "ci"
+    assert sorted(settings) == ["script"]
     assert settings["script"].default == "build"
 
 

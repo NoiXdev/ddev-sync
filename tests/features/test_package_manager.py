@@ -16,21 +16,43 @@ def project_at(root: Path) -> DdevProject:
 
 
 @pytest.mark.parametrize(
-    ("lockfile", "expected_name", "expected_run"),
+    ("lockfile", "expected_name", "expected_run", "expected_install"),
     [
-        ("package-lock.json", "npm", "npm run"),
-        ("yarn.lock", "yarn", "yarn"),
-        ("pnpm-lock.yaml", "pnpm", "pnpm run"),
+        ("package-lock.json", "npm", "npm run", "npm ci"),
+        ("yarn.lock", "yarn", "yarn", "yarn install --frozen-lockfile"),
+        ("pnpm-lock.yaml", "pnpm", "pnpm run", "pnpm install --frozen-lockfile"),
     ],
 )
 def test_each_lockfile_selects_its_manager(
-    tmp_path: Path, lockfile: str, expected_name: str, expected_run: str
+    tmp_path: Path,
+    lockfile: str,
+    expected_name: str,
+    expected_run: str,
+    expected_install: str,
 ) -> None:
     (tmp_path / lockfile).write_text("", encoding="utf-8")
     manager = detect_package_manager(project_at(tmp_path))
     assert manager is not None
     assert manager.name == expected_name
     assert manager.run == expected_run
+    assert manager.install == expected_install
+
+
+def test_install_verbs_are_each_tools_own_lockfile_exact_command() -> None:
+    """Pinned explicitly, not derived, so a regression back to the npm-only
+    `ci` default - the bug this guards against - fails here even if a caller
+    never exercises the broken rendering.
+
+    `yarn ci` and `pnpm ci` are not real commands; `npm ci` is npm's
+    documented clean-install verb, and yarn/pnpm instead spell the same
+    guarantee as `--frozen-lockfile` on their ordinary `install` subcommand.
+    """
+    installs = {name: manager.install for name, manager in LOCKFILES}
+    assert installs == {
+        "package-lock.json": "npm ci",
+        "yarn.lock": "yarn install --frozen-lockfile",
+        "pnpm-lock.yaml": "pnpm install --frozen-lockfile",
+    }
 
 
 def test_yarn_does_not_use_run_because_yarn_build_is_the_idiom(tmp_path: Path) -> None:

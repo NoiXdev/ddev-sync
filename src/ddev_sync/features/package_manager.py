@@ -19,23 +19,44 @@ from ddev_sync.errors import FeatureError
 
 @dataclass(frozen=True)
 class PackageManager:
-    """The binary, and the form that runs a package.json script.
+    """The binary, the form that runs a package.json script, and the form
+    that installs from the lockfile exactly.
 
     `run` is separate rather than `f"{name} run"` because yarn differs:
-    `yarn build` is the idiom, while npm and pnpm need `run`.
+    `yarn build` is the idiom, while npm and pnpm need `run`. `install` is
+    separate for the same reason a sixth operation is not invented for a
+    one-line difference: `npm ci` is npm's own lockfile-exact install verb,
+    while yarn and pnpm spell the identical guarantee as a flag on their
+    ordinary `install` subcommand - `yarn ci` and `pnpm ci` are not commands
+    either tool has. This was a real bug: an earlier version of this feature
+    exposed `install` as a per-project *setting* defaulting to the npm-only
+    verb `ci`, which rendered as `pnpm ci` / `yarn ci` on those projects -
+    neither a real command - and failed after the production database was
+    already imported. The install verb is a fact about which package manager
+    is in use, not a choice a project makes, so it lives here beside `name`
+    and `run` instead.
     """
 
     name: str
     run: str
+    install: str
 
 
 # Ordered tuple rather than a dict to ensure deterministic resolution when
 # a project has multiple lockfiles (which happens after incomplete migrations).
 # The order here defines the priority: npm, yarn, pnpm.
+#
+# Install verbs, verified against each tool's own documentation rather than
+# assumed: `npm ci` is npm's documented clean-install command (installs
+# exactly what package-lock.json specifies, deleting node_modules first).
+# `yarn install --frozen-lockfile` and `pnpm install --frozen-lockfile` are
+# each tool's own `install` subcommand with the flag that refuses to proceed
+# if the lockfile would need to change - yarn and pnpm have no separate `ci`
+# subcommand; `yarn ci` and `pnpm ci` are not real commands.
 LOCKFILES: tuple[tuple[str, PackageManager], ...] = (
-    ("package-lock.json", PackageManager("npm", "npm run")),
-    ("yarn.lock", PackageManager("yarn", "yarn")),
-    ("pnpm-lock.yaml", PackageManager("pnpm", "pnpm run")),
+    ("package-lock.json", PackageManager("npm", "npm run", "npm ci")),
+    ("yarn.lock", PackageManager("yarn", "yarn", "yarn install --frozen-lockfile")),
+    ("pnpm-lock.yaml", PackageManager("pnpm", "pnpm run", "pnpm install --frozen-lockfile")),
 )
 
 

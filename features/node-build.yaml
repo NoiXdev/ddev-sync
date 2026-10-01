@@ -7,14 +7,11 @@ detect:
   file_exists: package.json
 
 settings:
-  install:
-    default: "ci"
-    description: "install subcommand — ci for a lockfile-exact install, install to update"
   script:
     default: "build"
     description: "the package.json script to run"
 
 setup:
   commands:
-    - run: "${PM} ${install}"
+    - run: "${PM_INSTALL}"
     - run: "${PM_RUN} ${script}"

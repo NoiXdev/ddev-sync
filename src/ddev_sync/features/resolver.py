@@ -171,6 +171,7 @@ def _layer(entry: ActivatedFeature, project: DdevProject, *, explicit: bool) -> 
             return None
         substitutions["${PM}"] = manager.name
         substitutions["${PM_RUN}"] = manager.run
+        substitutions["${PM_INSTALL}"] = manager.install
     return LayerDoc(
         label=f"feature:{entry.feature.name}",
         data=_expand(entry.feature.data, substitutions),
@@ -178,7 +179,8 @@ def _layer(entry: ActivatedFeature, project: DdevProject, *, explicit: bool) -> 
 
 
 def _uses_package_manager(value: Any) -> bool:
-    """Walk the structure looking for a literal ${PM} or ${PM_RUN} string.
+    """Walk the structure looking for a literal ${PM}, ${PM_RUN} or
+    ${PM_INSTALL} string.
 
     Walking properly (rather than `"${PM}" in repr(data)`) avoids a false
     positive on a feature that merely mentions the string in, say, a
@@ -188,7 +190,7 @@ def _uses_package_manager(value: Any) -> bool:
     than writing a third one.
     """
     if isinstance(value, str):
-        return "${PM}" in value or "${PM_RUN}" in value
+        return "${PM}" in value or "${PM_RUN}" in value or "${PM_INSTALL}" in value
     if isinstance(value, dict):
         return any(_uses_package_manager(item) for item in value.values())
     if isinstance(value, list):

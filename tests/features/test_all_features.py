@@ -176,16 +176,17 @@ def test_every_placeholder_resolves_to_a_known_name(name: str) -> None:
     raw = yaml.safe_load((FEATURE_ROOT / f"{name}.yaml").read_text(encoding="utf-8"))
     known = (
         {f"${{{key}}}" for key in feature.settings}
-        | {"${PM}", "${PM_RUN}"}
+        | {"${PM}", "${PM_RUN}", "${PM_INSTALL}"}
         | _supported_operation_placeholders()
     )
     used = _placeholders_in(raw)
     unknown = used - known
     assert unknown == set(), (
         f"{name} uses placeholder(s) {sorted(unknown)} that resolve to nothing: not a "
-        f"setting it declares ({sorted(feature.settings)}), not ${{PM}}/${{PM_RUN}}, and "
-        "not one operations/placeholders.py supports. This is exactly how a typo like "
-        "${scrpit} would land as a literal string in a shell command."
+        f"setting it declares ({sorted(feature.settings)}), not "
+        "${PM}/${PM_RUN}/${PM_INSTALL}, and not one operations/placeholders.py supports. "
+        "This is exactly how a typo like ${scrpit} would land as a literal string in a "
+        "shell command."
     )
 
 
