@@ -16,6 +16,7 @@ from ddev_sync.operations.database import (
     LOCAL_DB_PORT,
     LOCAL_DB_USER,
 )
+from ddev_sync.operations.placeholders import expand_value
 
 
 @dataclass(frozen=True)
@@ -42,10 +43,10 @@ _RESERVED = {"name", "sql", "operation"}
 
 def parse_rules(context: ExecutionContext) -> list[SanitizeRule]:
     """Read and validate `sanitize.rules` from the merged configuration."""
-    return [_parse_rule(entry) for entry in context.config_list("sanitize.rules")]
+    return [_parse_rule(entry, context) for entry in context.config_list("sanitize.rules")]
 
 
-def _parse_rule(entry: Mapping[str, Any]) -> SanitizeRule:
+def _parse_rule(entry: Mapping[str, Any], context: ExecutionContext) -> SanitizeRule:
     name = entry.get("name")
     if not name:
         raise OperationError(f"a sanitize rule is missing 'name': {dict(entry)}")
@@ -55,11 +56,19 @@ def _parse_rule(entry: Mapping[str, Any]) -> SanitizeRule:
         raise OperationError(f"sanitize rule {name!r} has neither 'sql' nor 'operation'")
     if sql is not None and operation is not None:
         raise OperationError(f"sanitize rule {name!r} has both 'sql' and 'operation'; pick one")
+    raw_params = {key: value for key, value in entry.items() if key not in _RESERVED}
     return SanitizeRule(
         name=str(name),
         sql=None if sql is None else str(sql),
         operation=None if operation is None else str(operation),
-        params={key: value for key, value in entry.items() if key not in _RESERVED},
+        # Every rule parameter is expanded here, at parse time, rather than
+        # inside each `SanitizeOperationHandler` - a sixth operation reading
+        # a new parameter name gets the substitution for free instead of
+        # having to remember to call it. This is what closes the gap that let
+        # `SearchReplace` write the literal string "${DDEV_SITENAME}" into
+        # the database: `expand_placeholders` used to run only on the (dead)
+        # env-rewrite path, never on sanitize rule parameters.
+        params=expand_value(raw_params, context),
     )
 
 

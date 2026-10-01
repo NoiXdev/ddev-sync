@@ -14,6 +14,13 @@ from typing import Any
 
 from ddev_sync.operations.base import ExecutionContext, OperationError
 
+# Re-exported (not just used internally) so `tests/operations/test_env.py`'s
+# existing `from ddev_sync.operations.env import expand_placeholders` keeps
+# working: the substitution logic itself now lives in `placeholders.py`,
+# which both this module and `sanitize.py` depend on, rather than either of
+# them depending on the other.
+from ddev_sync.operations.placeholders import expand_placeholders as expand_placeholders
+
 BLOCK_START = "###################### BEGIN DDEV SYNC OVERRIDES ######################"
 BLOCK_END = "####################### END DDEV SYNC OVERRIDES #######################"
 
@@ -59,21 +66,6 @@ def append_block(text: str, values: Mapping[str, str]) -> str:
         return f"{head}{block}{tail}"
     separator = "" if text.endswith("\n") or not text else "\n"
     return f"{text}{separator}\n{block}\n"
-
-
-def expand_placeholders(values: Mapping[str, str], context: ExecutionContext) -> dict[str, str]:
-    """Substitute the placeholders a profile may use in `env.set` values."""
-    substitutions = {
-        "${DDEV_SITENAME}": context.project.name,
-        "${SYNC_TARGET_DATABASE}": context.config("database.target_database", default="db"),
-    }
-    expanded: dict[str, str] = {}
-    for key, value in values.items():
-        text = str(value)
-        for placeholder, replacement in substitutions.items():
-            text = text.replace(placeholder, replacement)
-        expanded[key] = text
-    return expanded
 
 
 def confirm_env_change(diff: str) -> bool:
