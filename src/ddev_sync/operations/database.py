@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.base import ExecutionContext, OperationError, confirm
 from ddev_sync.transport.ssh import ssh_command
 
 DUMP_FILENAME = "dump.sql"
@@ -392,21 +392,7 @@ def confirm_destructive(question: str) -> bool:
 
     A module-level function rather than a method so that tests can replace it
     without constructing a console, and so the interactive layer in Task 13 can
-    swap in a richer prompt.
-
-    `input()` raises `EOFError` when stdin is closed, which is exactly what a
-    non-interactive invocation (a script, a cron job, CI) looks like. Left
-    uncaught, `ddev sync --steps=db` from such a context downloads the entire
-    production dump and only then dies on a traceback, right at the one
-    question that exists to stop a destructive action. Turning it into a
-    clean `OperationError` naming `--yes` makes the fix the same one-line
-    answer as every other "I can't ask, so tell me how to skip asking" case.
+    swap in a richer prompt. Delegates to `operations/base.py::confirm` - see
+    that function for why `EOFError` is handled there rather than here.
     """
-    try:
-        answer = input(f"{question} [y/N] ").strip().lower()
-    except EOFError as error:
-        raise OperationError(
-            "cannot confirm a destructive action: no input is available "
-            "(stdin is closed). Pass --yes to skip the confirmation prompt."
-        ) from error
-    return answer in {"y", "yes"}
+    return confirm(question, subject="a destructive action")

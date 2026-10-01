@@ -21,6 +21,34 @@ class PathEscapesProject(OperationError):
     """A configured local path resolves outside the project root."""
 
 
+def confirm(question: str, *, subject: str) -> bool:
+    """Ask `{question} [y/N]` and return whether the answer was yes.
+
+    Shared by `operations/database.py::confirm_destructive` and
+    `operations/env.py::confirm_env_change`, which used to each catch
+    `EOFError` themselves - a faithful copy, identical in phrasing and
+    structure, which is exactly the shape that drifts the next time one of
+    them changes and the other does not. One function, called twice, cannot
+    drift.
+
+    `input()` raises `EOFError` when stdin is closed, which is exactly what
+    a non-interactive invocation (a script, a cron job, CI) looks like. Left
+    uncaught, that is a raw traceback at the one prompt that exists to stop
+    a destructive action - after whatever already happened first (a
+    downloaded production dump, a diffed env rewrite). `subject` names what
+    could not be confirmed, so each call site's error reads as the same
+    decision applied again, not two unrelated ones.
+    """
+    try:
+        answer = input(f"{question} [y/N] ").strip().lower()
+    except EOFError as error:
+        raise OperationError(
+            f"cannot confirm {subject}: no input is available (stdin is "
+            "closed). Pass --yes to skip the confirmation prompt."
+        ) from error
+    return answer in {"y", "yes"}
+
+
 @dataclass(frozen=True)
 class ExecutionContext:
     """Everything an operation needs, and nothing it does not."""

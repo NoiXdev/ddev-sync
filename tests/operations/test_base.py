@@ -6,7 +6,7 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import Layout, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
-from ddev_sync.operations.base import ExecutionContext, PathEscapesProject
+from ddev_sync.operations.base import ExecutionContext, OperationError, PathEscapesProject, confirm
 from ddev_sync.transport.fake import FakeCommandRunner
 
 
@@ -107,3 +107,33 @@ def test_assume_yes_and_keep_dump_default_to_false() -> None:
     ctx = context()
     assert ctx.assume_yes is False
     assert ctx.keep_dump is False
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [("y", True), ("yes", True), ("Y", True), ("n", False), ("", False), ("maybe", False)],
+)
+def test_confirm_reads_the_answer_from_stdin(
+    monkeypatch: pytest.MonkeyPatch, typed: str, expected: bool
+) -> None:
+    monkeypatch.setattr("builtins.input", lambda _prompt: typed)
+    assert confirm("Continue?", subject="a destructive action") is expected
+
+
+def test_confirm_raises_a_clean_error_naming_the_subject_when_stdin_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `confirm_destructive` (operations/database.py) and `confirm_env_change`
+    # (operations/env.py) both delegate here and only differ in the
+    # `subject` they pass - this is what proves the shared message actually
+    # carries it through, rather than each call site having to repeat the
+    # EOFError handling itself.
+    def closed_stdin(_prompt: str) -> str:
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", closed_stdin)
+    with pytest.raises(OperationError) as caught:
+        confirm("Continue?", subject="a thing only this test names")
+    message = str(caught.value)
+    assert "a thing only this test names" in message
+    assert "--yes" in message
