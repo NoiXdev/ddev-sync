@@ -28,8 +28,12 @@ from typing import Any
 import pytest
 import yaml
 
+from ddev_sync.ddev.project import DdevProject
+from ddev_sync.errors import FeatureError
+from ddev_sync.features.activation import Request
 from ddev_sync.features.detect import PREDICATES
 from ddev_sync.features.registry import FeatureRegistry
+from ddev_sync.features.resolver import resolve_features
 from ddev_sync.operations import placeholders as placeholders_module
 from ddev_sync.operations.sanitize import SANITIZE_OPERATIONS
 from ddev_sync.profiles.registry import ProfileRegistry
@@ -40,6 +44,12 @@ PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
 REGISTRY = FeatureRegistry(FEATURE_ROOT)
 FEATURE_NAMES = REGISTRY.available()
 PROFILE_NAMES = frozenset(ProfileRegistry(PROFILE_ROOT).available_profiles())
+# Enumerated from the same registry every other check in this module uses, so
+# a ninth feature that declares `applies_to` is covered the moment its file
+# lands in `features/` - design doc §7 asks for "an applies_to test per
+# scoped feature"; a hand-typed list of today's six (now seven) would not
+# have been that.
+SCOPED_FEATURE_NAMES = [name for name in FEATURE_NAMES if REGISTRY.load(name).applies_to]
 
 _PLACEHOLDER = re.compile(r"\$\{[^}]*\}")
 
@@ -77,6 +87,39 @@ def test_every_applies_to_entry_names_a_profile_that_exists(name: str) -> None:
         f"{PROFILE_ROOT}. A typo here makes the feature silently never activate - "
         "neither detection nor an explicit request will ever select it, and nothing "
         "raises to say so."
+    )
+
+
+@pytest.mark.parametrize("name", SCOPED_FEATURE_NAMES)
+def test_an_explicit_activation_outside_scope_raises_naming_the_feature_and_the_profile(
+    name: str, tmp_path: Path
+) -> None:
+    # Design doc §7: "an applies_to test per scoped feature, asserting
+    # activation outside its scope raises and names both the feature and the
+    # profile." Before this test, only one generic resolver test
+    # (`tests/features/test_resolver.py`, against a small fixture registry)
+    # exercised this path at all; every shipped scoped feature was asserted
+    # only for the *value* of its `applies_to`, never that the resolver
+    # actually enforces it for that real file. `tmp_path` needs no files on
+    # disk: `_from_request` raises before anything would touch the project.
+    feature = REGISTRY.load(name)
+    out_of_scope_profile = next(
+        profile for profile in sorted(PROFILE_NAMES) if profile not in feature.applies_to
+    )
+    project = DdevProject(name="acme", type=out_of_scope_profile, docroot="public", root=tmp_path)
+    with pytest.raises(FeatureError) as caught:
+        resolve_features(
+            REGISTRY,
+            project,
+            out_of_scope_profile,
+            [Request(name, {}, "test")],
+            True,
+        )
+    message = str(caught.value)
+    assert name in message, f"{name}: error does not name the feature: {message!r}"
+    assert out_of_scope_profile in message, (
+        f"{name}: error does not name the out-of-scope profile {out_of_scope_profile!r}: "
+        f"{message!r}"
     )
 
 
