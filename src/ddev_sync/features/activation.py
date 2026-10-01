@@ -55,7 +55,23 @@ def _request(name: Any, settings: Any, source: str) -> Request:
             f"{source}: settings for feature {name!r} must be a mapping, "
             f"got {type(settings).__name__}"
         )
-    return Request(str(name), {str(k): str(v) for k, v in settings.items()}, source)
+    return Request(
+        str(name),
+        {str(k): _coerce_setting(v) for k, v in settings.items()},
+        source,
+    )
+
+
+def _coerce_setting(value: Any) -> str:
+    """Coerce a setting value to a string, with special handling for booleans.
+
+    Booleans must render as lowercase 'true'/'false' to match command-line
+    conventions (npm, artisan, shell scripts). Python's str(True) would give
+    'True', which is not recognized by these tools.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def resolve_settings(feature: Feature, request: Request) -> dict[str, str]:

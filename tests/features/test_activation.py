@@ -100,3 +100,27 @@ def test_a_setting_on_a_feature_that_accepts_none_says_so() -> None:
     with pytest.raises(FeatureError) as caught:
         resolve_settings(Feature(name="filament"), Request("filament", {"x": "1"}, SOURCE))
     assert "accepts: none" in str(caught.value)
+
+
+def test_a_list_as_settings_is_rejected_and_names_the_feature() -> None:
+    with pytest.raises(FeatureError) as caught:
+        parse_feature_key({"node-build": ["a", "b"]}, SOURCE)
+    message = str(caught.value)
+    assert "node-build" in message
+    assert "mapping" in message
+    assert SOURCE in message
+
+
+def test_boolean_true_renders_as_lowercase_true() -> None:
+    parsed = parse_feature_key({"node-build": {"enabled": True}}, SOURCE)
+    assert parsed == [Request("node-build", {"enabled": "true"}, SOURCE)]
+
+
+def test_boolean_false_renders_as_lowercase_false() -> None:
+    parsed = parse_feature_key({"node-build": {"enabled": False}}, SOURCE)
+    assert parsed == [Request("node-build", {"enabled": "false"}, SOURCE)]
+
+
+def test_numeric_settings_render_as_digits() -> None:
+    parsed = parse_feature_key({"node-build": {"timeout": 30, "retries": 3}}, SOURCE)
+    assert parsed == [Request("node-build", {"timeout": "30", "retries": "3"}, SOURCE)]
