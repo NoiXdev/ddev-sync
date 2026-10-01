@@ -45,6 +45,29 @@ def test_a_run_entry_is_executed_through_sh(tmp_path: Path) -> None:
     assert runner.calls[0] == ("sh", "-c", "composer install")
 
 
+def test_a_run_entrys_placeholders_are_expanded(tmp_path: Path) -> None:
+    # A hook or setup command is documented to share the same ${...}
+    # placeholders sanitize rules get (operations/placeholders.py's module
+    # docstring, features/resolver.py's module docstring): "${DDEV_SITENAME}
+    # ... expanded LATER by operations/placeholders.py". Only sanitize.py
+    # actually called expand_value though - run_command_entry (shared by
+    # setup.commands and every hook) never did, so a command written with a
+    # placeholder silently ran with the literal, unexpanded text.
+    runner = ok_runner()
+    ExecOperation().execute(make_context(runner, tmp_path), {"run": "echo ${DDEV_SITENAME}"})
+    assert runner.calls[0] == ("sh", "-c", "echo acme")
+
+
+def test_an_operation_entrys_placeholders_are_expanded(tmp_path: Path) -> None:
+    runner = ok_runner()
+    config: dict[str, Any] = {"sanitize": {}}
+    context = make_context(runner, tmp_path, **config)
+    run_command_entry(
+        context, {"operation": "ddev-sync:flush-cache", "command": "echo ${DDEV_SITENAME}"}
+    )
+    assert runner.calls[0] == ("sh", "-c", "echo acme")
+
+
 def test_commands_run_in_the_project_root_by_default(tmp_path: Path) -> None:
     runner = ok_runner()
     ExecOperation().execute(make_context(runner, tmp_path), {"run": "true"})

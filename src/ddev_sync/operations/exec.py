@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.placeholders import expand_value
 from ddev_sync.operations.sanitize import SANITIZE_OPERATIONS, SanitizeRule
 
 _PREFIX = "ddev-sync:"
@@ -22,7 +23,17 @@ def resolve_operation_reference(reference: str) -> str:
 
 
 def run_command_entry(context: ExecutionContext, entry: Mapping[str, Any]) -> None:
-    """Run one `{run: ...}` or `{operation: ...}` entry."""
+    """Run one `{run: ...}` or `{operation: ...}` entry.
+
+    `sanitize.py`'s rules expand `${...}` placeholders at parse time; this is
+    the equivalent for `setup.commands` and every hook, both of which share
+    this one function (`ExecOperation` and `Executor._dispatch`'s hook path).
+    Without this, a command written with `${DDEV_SITENAME}` ran with the
+    literal, unexpanded text instead - the same class of gap `sanitize.py`'s
+    own `sql:` fix (see its `_parse_rule` docstring) already closed once for
+    raw SQL.
+    """
+    entry = expand_value(dict(entry), context)
     reference = entry.get("operation")
     if reference is not None:
         _run_operation(context, str(reference), entry)
