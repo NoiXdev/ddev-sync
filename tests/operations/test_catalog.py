@@ -257,6 +257,43 @@ def test_an_existing_admin_is_not_an_error(
     assert "ddev" in out
 
 
+def test_an_existing_wp_cli_admin_is_not_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Verified against wp-cli/entity-command's src/User_Command.php::create()
+    # (main branch, checked 2026-10-01): `username_exists()` is checked first
+    # and fails with exactly this text - WP-CLI's own "duplicate user" never
+    # appears anywhere in that method.
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["wp"], returncode=1, stderr="Error: The 'ddev' username is already registered."
+    )
+    config = rule_config(name="admin", operation="create_admin", driver="wp_cli", user="ddev")
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    out = capsys.readouterr().out
+    assert "ddev" in out
+
+
+def test_an_existing_drush_admin_is_not_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Verified against drush-ops/drush's src/Commands/core/UserCommands.php::
+    # createValidate() (main branch, checked 2026-10-01): the argument
+    # validator hook on `user:create` raises exactly this text when
+    # `user_load_by_name()` finds an existing account - again, never
+    # "duplicate user".
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["vendor/bin/drush"],
+        returncode=1,
+        stderr="There is already a user account with the name ddev",
+    )
+    config = rule_config(name="admin", operation="create_admin", driver="drush", user="ddev")
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    out = capsys.readouterr().out
+    assert "ddev" in out
+
+
 def test_another_create_admin_failure_is_an_error(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["vendor/bin/typo3"], returncode=1, stderr="database is gone")
