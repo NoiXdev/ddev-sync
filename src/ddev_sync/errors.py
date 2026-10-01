@@ -13,6 +13,10 @@ class ProfileError(DdevSyncError):
     """A profile could not be loaded or resolved."""
 
 
+class FeatureError(DdevSyncError):
+    """A feature could not be loaded, resolved or activated."""
+
+
 class TargetError(DdevSyncError):
     """A sync target could not be resolved."""
 
