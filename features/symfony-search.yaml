@@ -1,0 +1,10 @@
+name: symfony-search
+description: Repopulate the Elastica index after an import.
+applies_to: [symfony]
+
+detect:
+  composer_package: friendsofsymfony/elastica-bundle
+
+setup:
+  commands:
+    - { run: "php bin/console fos:elastica:populate", allow_failure: true }

@@ -1,0 +1,15 @@
+# No detect block on purpose: every TYPO3 project has stale processed files
+# after an import, but whether you care is a judgement, not a property of the
+# project. Detecting it would mean activating it everywhere.
+name: typo3-processedfiles
+description: Drop stale processed images so TYPO3 regenerates them locally.
+applies_to: [typo3]
+
+sanitize:
+  rules:
+    - name: clear-processed-files
+      sql: "TRUNCATE TABLE sys_file_processedfile"
+
+setup:
+  commands:
+    - { run: "rm -rf public/fileadmin/_processed_", allow_failure: true }

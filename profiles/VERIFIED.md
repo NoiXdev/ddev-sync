@@ -31,6 +31,9 @@ other's columns would blur what was actually checked.
 | livewire | | | | not yet verified; `livewire:publish --assets` unverified |
 | inertia | | | | not yet verified; detection-only, no commands to verify |
 | horizon | | | | not yet verified; `horizon:clear` unverified, and the horizon_jobs/horizon_supervisors table names are version-dependent (Horizon has changed its schema across major versions) |
+| typo3-processedfiles | | | | not yet verified; `sys_file_processedfile` table name unverified; no detect block by design, see the file's comment |
+| typo3-solr | | | | not yet verified; `vendor/bin/typo3 solr:initializesolrconnections` command name unverified across apache-solr-for-typo3 versions |
+| symfony-search | | | | not yet verified; `fos:elastica:populate` command name unverified |
 
 ## Known limitations
 
