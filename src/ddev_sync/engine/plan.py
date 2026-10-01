@@ -108,7 +108,7 @@ def build_plan(
     is dropped only if it belongs to the SETUP step and was not contributed
     by a feature layer.
     """
-    builder = _Builder(target=target, project=project, merged=merged)
+    builder = _Builder(target=target, project=project, merged=merged, steps=steps)
     entries: list[_Entry] = []
     for kind in steps:
         if kind is StepKind.PREFLIGHT:
@@ -185,13 +185,25 @@ class _Builder:
     """Expands one step kind into zero or more plan entries."""
 
     def __init__(
-        self, *, target: ResolvedTarget, project: DdevProject, merged: MergeResult
+        self,
+        *,
+        target: ResolvedTarget,
+        project: DdevProject,
+        merged: MergeResult,
+        steps: Sequence[StepKind],
     ) -> None:
         self._target = target
         self._project = project
         self._data = merged.data
         self._scalar_sources = merged.scalar_sources
         self._list_sources = merged.list_sources
+        # Known up front, before any entry is built - unlike every other
+        # step, PREFLIGHT must know whether SANITIZE was *also* selected for
+        # this run, not just that PREFLIGHT itself always is (StepKind.ALWAYS).
+        # The operation reads this from its own params rather than from the
+        # Plan, which it never sees (engine/executor.py only ever passes a
+        # step's own params to its operation).
+        self._sanitize_selected = StepKind.SANITIZE in steps
 
     def step(self, kind: StepKind) -> list[_Entry]:
         handlers = {
@@ -237,7 +249,11 @@ class _Builder:
         detail = " ".join(preview)
         return [
             _Entry(
-                kind=StepKind.PREFLIGHT, where="remote", detail=detail, source="built-in", params={}
+                kind=StepKind.PREFLIGHT,
+                where="remote",
+                detail=detail,
+                source="built-in",
+                params={"sanitize_selected": self._sanitize_selected},
             )
         ]
 

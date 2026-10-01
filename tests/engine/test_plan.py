@@ -419,6 +419,22 @@ def test_a_sanitize_rule_without_a_name_is_labelled_unnamed() -> None:
     assert "unnamed" in step.detail
 
 
+def test_preflight_params_flag_sanitize_as_selected_when_it_is() -> None:
+    # operations/preflight.py's table probe (Part 3) must only run the extra
+    # database round trip when SANITIZE was actually selected for this run -
+    # PlannedStep.params is how the operation learns that, since it never
+    # sees the whole Plan.
+    plan = plan_for(["sanitize"])
+    preflight = next(entry for entry in plan.steps if entry.kind is StepKind.PREFLIGHT)
+    assert preflight.params == {"sanitize_selected": True}
+
+
+def test_preflight_params_flag_sanitize_as_not_selected_otherwise() -> None:
+    plan = plan_for(["files"])
+    preflight = next(entry for entry in plan.steps if entry.kind is StepKind.PREFLIGHT)
+    assert preflight.params == {"sanitize_selected": False}
+
+
 def test_a_files_entry_missing_remote_names_the_entry_instead_of_crashing() -> None:
     extra = LayerDoc(".ddev/ddev-sync.yaml", {"files": {"paths": [{"local": "public/uploads/"}]}})
     with pytest.raises(ConfigError) as caught:

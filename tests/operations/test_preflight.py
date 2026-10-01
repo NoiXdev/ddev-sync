@@ -34,6 +34,26 @@ def healthy_runner() -> FakeCommandRunner:
     return runner
 
 
+def context_with_rules(
+    runner: FakeCommandRunner, root: Path, rules: list[dict[str, Any]]
+) -> ExecutionContext:
+    return make_context(
+        runner,
+        root,
+        database={
+            "remote_credentials": "explicit",
+            "credentials": {
+                "name": "db",
+                "user": "u",
+                "password": "p",
+                "host": "db.internal",
+                "port": "3306",
+            },
+        },
+        sanitize={"rules": rules},
+    )
+
+
 def test_a_healthy_remote_passes_without_raising(tmp_path: Path) -> None:
     PreflightOperation().execute(make_context(healthy_runner(), tmp_path), {})
 
@@ -107,3 +127,169 @@ def test_low_disk_space_is_refused_with_the_numbers(
     message = str(caught.value)
     assert "0 MB free" in message
     assert "2 GB" in message
+
+
+# --- Part 3: the sanitize-table probe ---------------------------------------
+
+
+def test_sanitize_not_selected_skips_the_table_probe_entirely(tmp_path: Path) -> None:
+    # The critical cost guarantee: a files-only sync (`--steps=files`) must
+    # not pay for a database round trip, and must not be able to fail on a
+    # database it never touches. `sanitize_selected` defaults to False.
+    runner = healthy_runner()
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [{"name": "x", "sql": "TRUNCATE TABLE missing", "requires_table": "missing"}],
+    )
+    PreflightOperation().execute(context, {})
+    assert len(runner.calls) == 1  # only the initial ssh probe
+
+
+def test_sanitize_selected_with_no_rules_skips_the_table_probe(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    context = context_with_rules(runner, tmp_path, [])
+    PreflightOperation().execute(context, {"sanitize_selected": True})
+    assert len(runner.calls) == 1  # no SHOW TABLES round trip when nothing requires a table
+
+
+def test_sanitize_selected_passes_when_every_required_table_exists(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="be_sessions\nsys_log\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [
+            {"name": "clear-log", "sql": "TRUNCATE TABLE sys_log", "requires_table": "sys_log"},
+            # An operation rule with no 'table' param (nothing to check here)
+            # must not be mistaken for one that names no table at all.
+            {"name": "local-admin", "operation": "create_admin", "user": "ddev"},
+        ],
+    )
+    PreflightOperation().execute(context, {"sanitize_selected": True})
+
+
+def test_sanitize_selected_aborts_before_the_dump_when_a_required_table_is_missing(
+    tmp_path: Path,
+) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="wp_options\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [
+            {
+                "name": "anonymize-users",
+                "sql": "UPDATE wp_users SET x=1",
+                "requires_table": "wp_users",
+            }
+        ],
+    )
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    message = str(caught.value)
+    assert "wp_users" in message
+    assert "anonymize-users" in message
+    assert "tolerate_missing_table" in message
+    # Nothing was downloaded or imported: only the two ssh round trips (the
+    # connectivity probe, then SHOW TABLES) happened.
+    assert len(runner.calls) == 2
+
+
+def test_a_tolerated_rule_is_exempt_from_the_table_probe(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="\n")  # no tables at all on the remote
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [
+            {
+                "name": "clear-scheduler-tasks",
+                "sql": "TRUNCATE TABLE tx_scheduler_task",
+                "tolerate_missing_table": True,
+            }
+        ],
+    )
+    PreflightOperation().execute(context, {"sanitize_selected": True})
+
+
+def test_an_operation_rules_table_param_is_checked_too(tmp_path: Path) -> None:
+    # 'operation' rules declare their table implicitly through their 'table'
+    # param (e.g. reset_passwords) rather than 'requires_table' - the probe
+    # must read both forms uniformly.
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="other_table\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [
+            {
+                "name": "reset-user-passwords",
+                "operation": "reset_passwords",
+                "table": "users",
+                "column": "password",
+                "value": "x",
+            }
+        ],
+    )
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    message = str(caught.value)
+    assert "users" in message
+    assert "reset-user-passwords" in message
+
+
+def test_a_placeholder_table_name_is_resolved_before_comparing(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["wp", "config", "get", "table_prefix"], stdout="wptest_\n")
+    runner.script_prefix(["ssh"], stdout="wptest_users\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [
+            {
+                "name": "anonymize-users",
+                "sql": "UPDATE x SET y=1",
+                "requires_table": "${WP_TABLE_PREFIX}users",
+            }
+        ],
+    )
+    PreflightOperation().execute(context, {"sanitize_selected": True})
+
+
+def test_a_failed_table_listing_raises_with_the_remote_stderr(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], returncode=1, stderr="Access denied for user 'u'@'h'")
+    context = context_with_rules(
+        runner, tmp_path, [{"name": "x", "sql": "TRUNCATE TABLE t", "requires_table": "t"}]
+    )
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    assert "Access denied" in str(caught.value)
+
+
+def test_the_remote_credentials_password_is_redacted_from_a_table_listing_failure(
+    tmp_path: Path,
+) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], returncode=1, stderr="auth failed with secret hunter2")
+    context = make_context(
+        runner,
+        tmp_path,
+        database={
+            "remote_credentials": "explicit",
+            "credentials": {
+                "name": "db",
+                "user": "u",
+                "password": "hunter2",
+                "host": "h",
+                "port": "3306",
+            },
+        },
+        sanitize={"rules": [{"name": "x", "sql": "TRUNCATE TABLE t", "requires_table": "t"}]},
+    )
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    message = str(caught.value)
+    assert "hunter2" not in message
+    assert "REDACTED" in message
