@@ -13,8 +13,15 @@ import yaml
 
 from ddev_sync.errors import FeatureError
 from ddev_sync.features.schema import CONTRIBUTION_KEYS, validate_feature
+from ddev_sync.paths import existing_or_fallback
 
-DEFAULT_FEATURE_ROOT = Path("/opt/ddev-sync/features")
+INSTALLED_FEATURE_ROOT = Path("/opt/ddev-sync/features")
+# See `profiles/registry.py`'s identical pair of constants for the full
+# reasoning (same shape deliberately - this module's own docstring already
+# says knowing one of this pair means knowing the other). `parents[3]` from
+# this file (src/ddev_sync/features/registry.py) is the repository root.
+DEV_CHECKOUT_FEATURE_ROOT = Path(__file__).resolve().parents[3] / "features"
+DEFAULT_FEATURE_ROOT = existing_or_fallback(INSTALLED_FEATURE_ROOT, DEV_CHECKOUT_FEATURE_ROOT)
 
 _FILENAME = re.compile(r"^(?P<name>[a-z0-9_-]+)\.yaml$")
 

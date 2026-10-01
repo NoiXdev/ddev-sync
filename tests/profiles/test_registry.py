@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 
 from ddev_sync.errors import ProfileError
-from ddev_sync.profiles.registry import ProfileRegistry
+from ddev_sync.profiles.registry import (
+    DEFAULT_PROFILE_ROOT,
+    DEV_CHECKOUT_PROFILE_ROOT,
+    INSTALLED_PROFILE_ROOT,
+    ProfileRegistry,
+)
 
 
 def write_profile(root: Path, filename: str, body: str) -> None:
@@ -162,3 +167,25 @@ def test_a_major_older_than_every_variant_uses_the_base_with_a_notice(root: Path
     assert "older than every variant" in resolved.notice
     assert "9, 12" in resolved.notice
     assert resolved.data["setup"]["commands"] == [{"run": "composer install"}]
+
+
+# --- DEFAULT_PROFILE_ROOT's dev-checkout fallback ---------------------------
+
+
+def test_the_dev_checkout_root_resolves_to_this_repositorys_own_profiles_directory() -> None:
+    # Proves the `parents[3]` arithmetic genuinely lands on the repository's
+    # real profiles/ directory - the one this test file's own ProfileRegistry
+    # fixtures are modelled after - rather than merely existing somewhere.
+    assert DEV_CHECKOUT_PROFILE_ROOT.is_dir()
+    assert (DEV_CHECKOUT_PROFILE_ROOT / "generic.yaml").is_file()
+
+
+def test_the_installed_root_is_the_opt_path() -> None:
+    assert Path("/opt/ddev-sync/profiles") == INSTALLED_PROFILE_ROOT
+
+
+def test_the_default_root_is_one_of_the_two_known_candidates() -> None:
+    # Which one depends on whether /opt/ddev-sync/profiles exists on the
+    # machine running this test - not asserted here, since that would make
+    # the test's own result depend on the host. Either candidate is correct.
+    assert DEFAULT_PROFILE_ROOT in {INSTALLED_PROFILE_ROOT, DEV_CHECKOUT_PROFILE_ROOT}

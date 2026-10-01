@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 
 from ddev_sync.errors import FeatureError
-from ddev_sync.features.registry import FeatureRegistry
+from ddev_sync.features.registry import (
+    DEFAULT_FEATURE_ROOT,
+    DEV_CHECKOUT_FEATURE_ROOT,
+    INSTALLED_FEATURE_ROOT,
+    FeatureRegistry,
+)
 
 
 def write(root: Path, filename: str, body: str) -> None:
@@ -115,3 +120,19 @@ def test_a_scoped_feature_carries_the_profiles_it_applies_to(root: Path) -> None
 
 def test_an_unscoped_feature_applies_anywhere(root: Path) -> None:
     assert FeatureRegistry(root).load("node-build").applies_to == ()
+
+
+# --- DEFAULT_FEATURE_ROOT's dev-checkout fallback ---------------------------
+
+
+def test_the_dev_checkout_root_resolves_to_this_repositorys_own_features_directory() -> None:
+    assert DEV_CHECKOUT_FEATURE_ROOT.is_dir()
+    assert (DEV_CHECKOUT_FEATURE_ROOT / "horizon.yaml").is_file()
+
+
+def test_the_installed_root_is_the_opt_path() -> None:
+    assert Path("/opt/ddev-sync/features") == INSTALLED_FEATURE_ROOT
+
+
+def test_the_default_root_is_one_of_the_two_known_candidates() -> None:
+    assert DEFAULT_FEATURE_ROOT in {INSTALLED_FEATURE_ROOT, DEV_CHECKOUT_FEATURE_ROOT}

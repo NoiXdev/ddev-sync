@@ -14,9 +14,24 @@ import yaml
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.errors import ProfileError
+from ddev_sync.paths import existing_or_fallback
 from ddev_sync.profiles.schema import validate_profile
 
-DEFAULT_PROFILE_ROOT = Path("/opt/ddev-sync/profiles")
+INSTALLED_PROFILE_ROOT = Path("/opt/ddev-sync/profiles")
+# `parents[3]` from this file (src/ddev_sync/profiles/registry.py) is the
+# repository root - `profiles/` sits there as a sibling of `src/`, not under
+# it. Located from `__file__`, not the current working directory: a
+# CWD-based guess would depend on wherever `ddev-sync` happens to be
+# invoked from, and could silently pick up an unrelated `profiles/`
+# directory sitting near the caller's shell by coincidence.
+DEV_CHECKOUT_PROFILE_ROOT = Path(__file__).resolve().parents[3] / "profiles"
+# `INSTALLED_PROFILE_ROOT` always wins when it exists, so a built container -
+# where it genuinely is present - never silently prefers a stray development
+# checkout that happens to sit at the fallback path instead. Only a
+# development checkout, where the installed path does not exist at all,
+# falls back to the repository's own profiles/ - which is what lets the CLI
+# run directly from a clone without `--profile-root` on every invocation.
+DEFAULT_PROFILE_ROOT = existing_or_fallback(INSTALLED_PROFILE_ROOT, DEV_CHECKOUT_PROFILE_ROOT)
 
 _VARIANT_FILENAME = re.compile(r"^(?P<name>[a-z0-9_-]+)@(?P<major>\d+)\.yaml$")
 _BASE_FILENAME = re.compile(r"^(?P<name>[a-z0-9_-]+)\.yaml$")
