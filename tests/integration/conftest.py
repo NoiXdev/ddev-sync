@@ -72,9 +72,10 @@ def gnu_rsync_on_path() -> Iterator[None]:
         yield
         return
     rsync_bin_dir = _brew_bin_dir("rsync")
-    if rsync_bin_dir is None or _run(
-        [str(rsync_bin_dir / "rsync"), "--info=progress2", "--version"]
-    ).returncode != 0:
+    if (
+        rsync_bin_dir is None
+        or _run([str(rsync_bin_dir / "rsync"), "--info=progress2", "--version"]).returncode != 0
+    ):
         yield
         return
     previous_path = os.environ.get("PATH", "")
@@ -255,9 +256,7 @@ def remote_layout() -> Path:
 
     deployer = root / "deployer"
     (deployer / "shared" / "public" / "fileadmin").mkdir(parents=True, exist_ok=True)
-    (deployer / "shared" / "public" / "fileadmin" / "brochure.pdf").write_bytes(
-        b"%PDF-1.4 fake\n"
-    )
+    (deployer / "shared" / "public" / "fileadmin" / "brochure.pdf").write_bytes(b"%PDF-1.4 fake\n")
     (deployer / "shared" / "public" / "uploads").mkdir(parents=True, exist_ok=True)
     (deployer / "shared" / ".env").write_text(ENV_BODY, encoding="utf-8")
     (deployer / "current").mkdir(parents=True, exist_ok=True)

@@ -39,7 +39,7 @@ def project(tmp_path: Path, ssh_key: Path) -> Path:
     # runs the right argv; it is not the TYPO3 CLI's job to re-verify here.
     (root / "vendor" / "bin").mkdir(parents=True)
     stub = root / "vendor" / "bin" / "typo3"
-    stub.write_text("#!/bin/sh\necho \"stub typo3: $*\"\nexit 0\n", encoding="utf-8")
+    stub.write_text('#!/bin/sh\necho "stub typo3: $*"\nexit 0\n', encoding="utf-8")
     stub.chmod(0o755)
     return root
 
@@ -49,9 +49,20 @@ def local_query(sql: str) -> str:
     # there is no `mysql` compatibility symlink in this image.
     result = subprocess.run(
         [
-            "docker", "compose", "-f", str(HERE / "docker-compose.yaml"),
-            "exec", "-T", "local-db",
-            "mariadb", "--user=db", "--password=db", "db", "-N", "-e", sql,
+            "docker",
+            "compose",
+            "-f",
+            str(HERE / "docker-compose.yaml"),
+            "exec",
+            "-T",
+            "local-db",
+            "mariadb",
+            "--user=db",
+            "--password=db",
+            "db",
+            "-N",
+            "-e",
+            sql,
         ],
         capture_output=True,
         text=True,
@@ -63,11 +74,16 @@ def local_query(sql: str) -> str:
 def test_a_full_pull_moves_the_database_and_the_files(project: Path, tmp_path: Path) -> None:
     code = main(
         [
-            "--project-root", str(project),
-            "--home", str(tmp_path / "home"),
-            "--profile-root", str(PROFILE_ROOT),
-            "--target", "production",
-            "--steps", "db,files",
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--target",
+            "production",
+            "--steps",
+            "db,files",
             "--yes",
         ]
     )
@@ -79,11 +95,16 @@ def test_a_full_pull_moves_the_database_and_the_files(project: Path, tmp_path: P
 def test_sanitizing_removes_the_real_email_addresses(project: Path, tmp_path: Path) -> None:
     code = main(
         [
-            "--project-root", str(project),
-            "--home", str(tmp_path / "home"),
-            "--profile-root", str(PROFILE_ROOT),
-            "--target", "production",
-            "--steps", "db,sanitize",
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--target",
+            "production",
+            "--steps",
+            "db,sanitize",
             "--yes",
         ]
     )
@@ -102,10 +123,17 @@ def test_sanitizing_removes_the_real_email_addresses(project: Path, tmp_path: Pa
 def test_the_dump_is_removed_after_the_import(project: Path, tmp_path: Path) -> None:
     main(
         [
-            "--project-root", str(project),
-            "--home", str(tmp_path / "home"),
-            "--profile-root", str(PROFILE_ROOT),
-            "--target", "production", "--steps", "db", "--yes",
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--target",
+            "production",
+            "--steps",
+            "db",
+            "--yes",
         ]
     )
     assert not (project / ".ddev" / ".downloads" / "dump.sql").exists()
@@ -118,10 +146,14 @@ def test_doctor_passes_against_the_real_remote(project: Path, tmp_path: Path) ->
     # token on the line.
     code = main(
         [
-            "--project-root", str(project),
-            "--home", str(tmp_path / "home"),
-            "--profile-root", str(PROFILE_ROOT),
-            "--target", "production",
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--target",
+            "production",
             "doctor",
         ]
     )
@@ -142,10 +174,17 @@ def test_an_unreachable_target_fails_cleanly(project: Path, tmp_path: Path) -> N
     )
     code = main(
         [
-            "--project-root", str(project),
-            "--home", str(tmp_path / "home"),
-            "--profile-root", str(PROFILE_ROOT),
-            "--target", "broken", "--steps", "db", "--yes",
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--target",
+            "broken",
+            "--steps",
+            "db",
+            "--yes",
         ]
     )
     assert code == 1
@@ -185,11 +224,16 @@ def test_a_pull_from_a_deployer_layout_target_finds_the_files_under_shared(
 ) -> None:
     code = main(
         [
-            "--project-root", str(deployer_project),
-            "--home", str(tmp_path / "home"),
-            "--profile-root", str(PROFILE_ROOT),
-            "--target", "production",
-            "--steps", "files",
+            "--project-root",
+            str(deployer_project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--target",
+            "production",
+            "--steps",
+            "files",
             "--yes",
         ]
     )

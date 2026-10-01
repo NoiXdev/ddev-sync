@@ -680,9 +680,7 @@ def test_post_sync_as_a_bare_list_is_resolved_too() -> None:
 
 
 def test_post_sync_as_a_bare_string_operation_reference_is_resolved_too() -> None:
-    extra = LayerDoc(
-        ".ddev/ddev-sync.yaml", {"hooks": {"post_sync": ["ddev-sync:flush-cache"]}}
-    )
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"hooks": {"post_sync": ["ddev-sync:flush-cache"]}})
     plan = plan_for(["db"], user_layers=[extra])
     assert [entry.detail for entry in plan.post_sync] == ["ddev-sync:flush-cache"]
 
