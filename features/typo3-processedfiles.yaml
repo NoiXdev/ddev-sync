@@ -13,8 +13,13 @@ sanitize:
 # `${DDEV_DOCROOT}` (operations/placeholders.py), not a hardcoded "public/":
 # a project whose web root is not named "public" would otherwise have its
 # `sys_file_processedfile` table truncated above while the stale files on
-# disk were left untouched - a silent half-job, since the truncate has no
-# way to know it disagreed with the rm.
+# disk were left untouched entirely - a silent half-job, since the truncate
+# has no way to know it disagreed with the rm. This narrows that gap, it
+# does not close it: TYPO3's processing folder is configurable per
+# `sys_file_storage` (the `processingfolder` setting), so a storage that
+# overrides the default still keeps its processed files somewhere this
+# fixed `fileadmin/_processed_` path does not reach. Pre-existing, and not
+# something a single hardcoded (or single-placeholder) path can fix.
 #
 # No `allow_failure` here, unlike most of this profile/feature set's other
 # optional commands: `rm -rf` already exits 0 when the directory is simply
