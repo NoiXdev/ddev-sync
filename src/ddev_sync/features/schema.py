@@ -15,7 +15,7 @@ FEATURE_TOP_LEVEL = frozenset(
         "name",
         "description",
         "applies_to",
-        "detect",
+        "detect",  # Vocabulary validated in Task 2; accepted as any mapping here.
         "settings",
         "env",
         "database",
@@ -62,7 +62,7 @@ def _validate_settings(name: str, settings: Any) -> None:
     for key, spec in settings.items():
         if not isinstance(spec, dict) or "default" not in spec:
             raise FeatureError(
-                f"feature {name!r}: settings entry {key!r} must be a mapping with a 'default'"
+                f"feature {name!r}: setting {key!r} must be a mapping with a 'default'"
             )
 
 

@@ -44,7 +44,7 @@ def test_an_empty_applies_to_is_valid_and_means_any_profile() -> None:
 def test_a_settings_entry_must_be_a_mapping_carrying_a_default(bad: Any) -> None:
     with pytest.raises(FeatureError) as caught:
         validate_feature({**MINIMAL, "settings": bad})
-    assert "settings" in str(caught.value)
+    assert "setting" in str(caught.value)
 
 
 def test_a_well_formed_settings_block_passes() -> None:
