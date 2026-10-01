@@ -18,14 +18,18 @@ silently resolve `--target` two different ways, one of them wrong, with no
 error. One source per value removes the ambiguity instead of documenting
 around it - and it has to be *every* option, not just the ones a bug report
 happened to name, or the CLI's own options disagree with each other about
-where they belong. `--dry-run`, `--steps` and `--yes` have no meaning past
-the point the interactive run itself is bypassed, so they are read directly
-out of the group callback's own parameters instead of being threaded into
-`_Options` - nothing past the group needs them.
+where they belong. `--steps` has no meaning past the point the interactive
+run itself is bypassed, so it is read directly out of the group callback's
+own parameters instead of being threaded into `_Options` - nothing past the
+group needs it. `--dry-run` and `--yes` used to be the same way, but `ddev
+sync build` (an alias for `--steps=setup --features=node-build`, implemented
+by `build_cmd` below) is a second place that needs to run the interactive
+sync, so both now travel through `_Options` too, exactly like every other
+value a subcommand might consult.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import version as package_version
 from pathlib import Path
 
@@ -53,18 +57,19 @@ class _Options:
     project_root: Path
     home: Path
     profile_root: Path
-    # No `--feature-root` option exists yet - Task 7 adds it, plus
-    # `--features` and `--no-features`, as options feeding `build_context`'s
-    # other two new parameters. This field is wired ahead of the flag so
-    # that build_context's call site does not need touching again then.
     feature_root: Path
     target_name: str | None
     type_flag: str | None
     framework_version_flag: str | None
+    features_flag: str | None
+    no_features: bool
+    dry_run: bool
+    assume_yes: bool
 
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--profile-root", type=click.Path(path_type=Path), default=DEFAULT_PROFILE_ROOT)
+@click.option("--feature-root", type=click.Path(path_type=Path), default=DEFAULT_FEATURE_ROOT)
 @click.option("--home", type=click.Path(path_type=Path), default=None)
 @click.option("--project-root", type=click.Path(path_type=Path), default=DEFAULT_PROJECT_ROOT)
 @click.option(
@@ -82,6 +87,17 @@ class _Options:
 )
 @click.option("--type", "type_flag", default=None, help="Override the detected project type.")
 @click.option("--target", "target_name", default=None, help="Which sync target to use.")
+@click.option(
+    "--features",
+    "features_flag",
+    default=None,
+    help="Comma-separated feature names; replaces detection for this run.",
+)
+@click.option(
+    "--no-features",
+    is_flag=True,
+    help="Disable feature detection for this run.",
+)
 @click.version_option(package_version("ddev-sync"), "--version", prog_name="ddev-sync")
 @click.pass_context
 def cli(
@@ -89,28 +105,35 @@ def cli(
     target_name: str | None,
     type_flag: str | None,
     framework_version_flag: str | None,
+    features_flag: str | None,
+    no_features: bool,
     steps: str | None,
     dry_run: bool,
     assume_yes: bool,
     project_root: Path,
     home: Path | None,
     profile_root: Path,
+    feature_root: Path,
 ) -> int | None:
     """Pull remote database, files and setup into this DDEV project."""
+    if features_flag is not None and no_features:
+        raise click.UsageError("--features and --no-features cannot be used together")
     ctx.obj = _Options(
         project_root=project_root,
         home=home if home is not None else Path.home(),
         profile_root=profile_root,
-        feature_root=DEFAULT_FEATURE_ROOT,
+        feature_root=feature_root,
         target_name=target_name,
         type_flag=type_flag,
         framework_version_flag=framework_version_flag,
+        features_flag=features_flag,
+        no_features=no_features,
+        dry_run=dry_run,
+        assume_yes=assume_yes,
     )
     if ctx.invoked_subcommand is not None:
         return None
-    context = _build_run_context(ctx.obj)
-    selection = resolve_selection(steps, assume_yes)
-    return run_command(context, selection, dry_run=dry_run, assume_yes=assume_yes, echo=click.echo)
+    return _run(ctx.obj, steps=steps, dry_run=dry_run, assume_yes=assume_yes)
 
 
 @cli.command("targets")
@@ -126,6 +149,37 @@ def doctor_cmd(options: _Options) -> int:
     """Run the preflight checks against a target and print a checklist."""
     context = _build_run_context(options)
     return doctor_command(context, click.echo)
+
+
+# `build` means exactly `--steps=setup --features=node-build` - nothing more.
+# These two constants are the single place that equivalence is spelled out;
+# `build_cmd` below reads them instead of writing the strings out a second
+# time, so the alias cannot quietly drift from the thing it is shorthand for.
+_BUILD_STEPS = "setup"
+_BUILD_FEATURES = "node-build"
+
+
+@cli.command("build")
+@click.pass_obj
+def build_cmd(options: _Options) -> int:
+    """Alias for `--steps=setup --features=node-build`.
+
+    Any `--features`/`--no-features` supplied before `build` on the command
+    line are overridden here, not combined with it: `build` is shorthand for
+    one specific selection, not a modifier on top of whatever the group
+    parsed. Routing through `_run` - the same function the bare `ddev-sync`
+    invocation calls - is what keeps this an alias rather than a second
+    implementation that could drift from the long form.
+    """
+    forced = replace(options, features_flag=_BUILD_FEATURES, no_features=False)
+    return _run(forced, steps=_BUILD_STEPS, dry_run=options.dry_run, assume_yes=options.assume_yes)
+
+
+def _run(options: _Options, *, steps: str | None, dry_run: bool, assume_yes: bool) -> int:
+    """Plan (and maybe execute) a sync; the one code path both `cli` and `build_cmd` call."""
+    context = _build_run_context(options)
+    selection = resolve_selection(steps, assume_yes)
+    return run_command(context, selection, dry_run=dry_run, assume_yes=assume_yes, echo=click.echo)
 
 
 def _build_run_context(options: _Options) -> RunContext:
@@ -149,6 +203,8 @@ def _build_run_context(options: _Options) -> RunContext:
             framework_version_flag=options.framework_version_flag,
             profile_root=options.profile_root,
             feature_root=options.feature_root,
+            features_flag=options.features_flag,
+            no_features=options.no_features,
         )
 
     if options.target_name is not None:

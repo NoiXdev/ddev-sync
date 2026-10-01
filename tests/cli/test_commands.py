@@ -327,12 +327,13 @@ def test_a_real_feature_contributes_a_step_to_the_plan(
     feature subsystem's resolution into the plan it builds) has no other
     test that would fail if it were deleted or replaced with an empty
     resolution: `invoke()`'s `project` fixture is a plain `php` project with
-    no `composer.lock`/`package.json`, and there is no `--feature-root` CLI
-    flag yet (Task 7 adds it) to point a CLI-level run at a fixture
-    directory that has anything to detect. `build_context` is called
-    directly instead - exactly what this module's own docstring says the
-    split from `main.py` is for - against a project whose `composer.lock`
-    genuinely activates `filament`.
+    no `composer.lock`/`package.json`. Task 7 later added a `--feature-root`
+    CLI flag that a test could use to point a CLI-level run at a fixture
+    directory with something to detect (see `test_main.py`'s feature tests),
+    but this one predates that and still exercises the wiring more directly:
+    `build_context` is called directly here - exactly what this module's own
+    docstring says the split from `main.py` is for - against a project whose
+    `composer.lock` genuinely activates `filament`.
 
     Asserting on the "Features" block, specifically, matters: the setup step
     and its `[feature:filament]` source label come from `context.merged`

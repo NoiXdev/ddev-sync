@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,7 @@ import pytest
 from ddev_sync.cli.main import main
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
+FEATURE_ROOT = Path(__file__).parent / "features"
 
 
 @pytest.fixture
@@ -156,3 +158,180 @@ def test_the_framework_version_flag_overrides_detection(
     code = invoke(project, tmp_path, "--dry-run", "--framework-version", "12", "--steps", "db")
     assert code == 0
     assert "db.dump" in capsys.readouterr().out
+
+
+def _write_filament(project: Path) -> None:
+    (project / "composer.lock").write_text(
+        json.dumps({"packages": [{"name": "filament/filament", "version": "v3.2.0"}]}),
+        encoding="utf-8",
+    )
+
+
+def _write_node_build(project: Path) -> None:
+    (project / "package.json").write_text("{}", encoding="utf-8")
+    (project / "package-lock.json").write_text("{}", encoding="utf-8")
+
+
+def test_no_features_suppresses_the_feature_block(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--no-features` turns detection off, so `filament` never activates.
+
+    It does not, however, make the "Features" heading disappear outright:
+    `render.render_features` (shipped before Task 7, and still covered by
+    `test_render.py::test_render_plan_shows_the_detection_disabled_notice_above_the_steps`)
+    deliberately prints a one-line notice whenever
+    `Plan.features_detection_enabled` is `False`, precisely so a user who
+    expected a feature to show up learns that detection was off rather than
+    concluding their project was not recognised. `--no-features` and the
+    `defaults.detect_features: false` kill switch both set that same flag,
+    so both render that same notice. The brief's own sketch of this test
+    ("asserts 'Features' does not appear in the output") cannot hold given
+    that shipped behaviour - the notice line starts with the literal word
+    "Features" - so this asserts the more precise thing that is actually
+    true: the per-feature line for `filament` is gone, replaced by the
+    disabled notice.
+    """
+    _write_filament(project)
+    code = invoke(
+        project,
+        tmp_path,
+        "--feature-root",
+        str(FEATURE_ROOT),
+        "--type",
+        "laravel",
+        "--no-features",
+        "--dry-run",
+        "--yes",
+    )
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "filament" not in output
+    assert "detection disabled" in output
+
+
+def test_features_flag_restricts_to_the_named_ones(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_filament(project)
+    _write_node_build(project)
+    code = invoke(
+        project,
+        tmp_path,
+        "--feature-root",
+        str(FEATURE_ROOT),
+        "--type",
+        "laravel",
+        "--features",
+        "node-build",
+        "--dry-run",
+        "--yes",
+    )
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "node-build" in output
+    assert "filament" not in output
+
+
+def test_an_unknown_feature_name_lists_the_available_ones(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = invoke(
+        project,
+        tmp_path,
+        "--feature-root",
+        str(FEATURE_ROOT),
+        "--type",
+        "laravel",
+        "--features",
+        "flamingo",
+        "--dry-run",
+    )
+    assert code == 1
+    error = capsys.readouterr().err
+    assert "flamingo" in error
+    assert "filament" in error
+    assert "node-build" in error
+
+
+def test_an_empty_features_value_means_no_features_without_disabling_detection(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--features=` means "none, and I mean it" - not a mistake, not `--no-features`.
+
+    It carries the same meaning `features: []` already has in project config
+    (`features/activation.py::parse_feature_key`'s docstring). The
+    distinction from `--no-features` is observable: unlike `--no-features`,
+    this does not flip `features_detection_enabled`, so the plan shows no
+    "Features" block at all rather than the "detection disabled" notice.
+    """
+    _write_filament(project)
+    code = invoke(
+        project,
+        tmp_path,
+        "--feature-root",
+        str(FEATURE_ROOT),
+        "--type",
+        "laravel",
+        "--features",
+        "",
+        "--dry-run",
+        "--yes",
+    )
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "filament" not in output
+    assert "Features" not in output
+
+
+def test_features_and_no_features_together_is_a_usage_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(
+        [
+            "--features",
+            "node-build",
+            "--no-features",
+            "--dry-run",
+        ]
+    )
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "--features" in error
+    assert "--no-features" in error
+
+
+def test_build_is_equivalent_to_the_long_form(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`build` must produce exactly the plan `--steps=setup --features=node-build` does.
+
+    Writing this as a byte-for-byte comparison of the two dry-run renders -
+    rather than, say, asserting each output separately contains "node-build" -
+    is what would catch a future change applied to one path and not the other.
+    """
+    _write_node_build(project)
+    base = [
+        "--project-root",
+        str(project),
+        "--home",
+        str(tmp_path / "home"),
+        "--profile-root",
+        str(PROFILE_ROOT),
+        "--feature-root",
+        str(FEATURE_ROOT),
+        "--type",
+        "laravel",
+        "--dry-run",
+        "--yes",
+    ]
+    long_form_code = main([*base, "--steps", "setup", "--features", "node-build"])
+    long_form_output = capsys.readouterr().out
+    assert long_form_code == 0
+
+    alias_code = main([*base, "build"])
+    alias_output = capsys.readouterr().out
+    assert alias_code == 0
+
+    assert alias_output == long_form_output
+    assert "node-build" in alias_output
