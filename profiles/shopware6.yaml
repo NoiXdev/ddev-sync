@@ -1,0 +1,72 @@
+# Shopware 6. Every rule below was a hardcoded branch in the tool this replaces;
+# as declarations they are visible, overridable and testable.
+name: shopware6
+
+detect:
+  version_from:
+    composer_package: shopware/core
+
+env:
+  file: [.env.local, .env]
+  strategy: patch_keys
+  set:
+    APP_ENV: dev
+    APP_DEBUG: "1"
+    APP_URL: "https://${DDEV_SITENAME}.ddev.site"
+    DATABASE_NAME: "${SYNC_TARGET_DATABASE}"
+    DATABASE_USER: db
+    DATABASE_PASSWORD: db
+    DATABASE_HOST: "ddev-${DDEV_SITENAME}-db"
+    DATABASE_PORT: "3306"
+    DATABASE_URL: "mysql://db:db@ddev-${DDEV_SITENAME}-db:3306/${SYNC_TARGET_DATABASE}"
+    MAILER_DSN: "smtp://localhost:1025"
+
+database:
+  remote_credentials: env
+  env_map:
+    name: DATABASE_NAME
+    user: DATABASE_USER
+    password: DATABASE_PASSWORD
+    host: DATABASE_HOST
+    port: DATABASE_PORT
+
+files:
+  paths:
+    - { remote: "shared/public/media/", local: "public/media/" }
+    - { remote: "shared/public/thumbnail/", local: "public/thumbnail/" }
+
+sanitize:
+  rules:
+    - name: clear-mailer
+      operation: clear_mail_config
+      table: system_config
+      key_column: configuration_key
+      keys:
+        - core.mailerSettings.emailAgent
+        - core.mailerSettings.deliveryAddress
+        - core.mailerSettings.port
+        - core.mailerSettings.username
+        - core.mailerSettings.encryption
+        - core.mailerSettings.host
+        - core.mailerSettings.password
+        - core.mailerSettings.senderAddress
+    # No `from:` here on purpose: it rewrites every row. That is what you
+    # want locally, and it is strictly better than the predecessor's "guess
+    # the production domain, then ask the user to confirm". A shop with
+    # several sales channels adds a `from:` in its own project config.
+    - name: local-domain
+      operation: search_replace
+      table: sales_channel_domain
+      column: url
+      to: "https://${DDEV_SITENAME}.ddev.site"
+    - name: clear-plugins
+      sql: "TRUNCATE TABLE plugin"
+    - name: clear-sessions
+      sql: "TRUNCATE TABLE sales_channel_api_context"
+
+setup:
+  commands:
+    - run: "composer install --no-interaction"
+    - { run: "bin/console system:config:set core.mailerSettings.emailAgent local", allow_failure: true }
+    - { run: "bin/console cache:clear", allow_failure: true }
+    - { run: "bin/console plugin:refresh", allow_failure: true }

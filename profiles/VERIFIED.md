@@ -14,3 +14,5 @@ An unverified variant still works - it is just not yet known to be correct.
 | laravel | | | | not yet verified |
 | symfony | | | | not yet verified |
 | wordpress | | | | not yet verified; requires per-project `sanitize.rules` override for the production URL |
+| shopware6 | | | | not yet verified |
+| drupal | | | | not yet verified; needs explicit database.credentials per project |

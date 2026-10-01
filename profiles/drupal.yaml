@@ -1,0 +1,40 @@
+# Drupal. Credentials come from settings.php rather than an env file in most
+# installs, so projects usually set database.credentials explicitly or add a
+# settings.ddev.php; drush handles the rest.
+name: drupal
+
+detect:
+  version_from:
+    composer_package: drupal/core
+
+env:
+  strategy: none
+
+database:
+  remote_credentials: explicit
+
+files:
+  paths:
+    - { remote: "shared/web/sites/default/files/", local: "web/sites/default/files/" }
+
+sanitize:
+  rules:
+    - name: clear-sessions
+      sql: "TRUNCATE TABLE sessions"
+    - name: clear-watchdog
+      sql: "TRUNCATE TABLE watchdog"
+    - name: anonymize-users
+      sql: "UPDATE users_field_data SET mail = CONCAT('user', uid, '@example.invalid') WHERE uid > 0"
+    - name: local-admin
+      operation: create_admin
+      driver: drush
+      user: ddev
+    - name: flush-cache
+      operation: flush_cache
+      command: "vendor/bin/drush cache:rebuild"
+
+setup:
+  commands:
+    - run: "composer install --no-interaction"
+    - { run: "vendor/bin/drush updatedb --yes", allow_failure: true }
+    - run: "vendor/bin/drush cache:rebuild"
