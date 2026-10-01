@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
-from ddev_sync.config.models import ResolvedTarget, Stage
+from ddev_sync.config.models import Layout, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import (
@@ -41,7 +41,11 @@ REMOTE_ENV = (
 
 
 def make_context(
-    runner: FakeCommandRunner, root: Path, config: dict[str, Any] | None = None
+    runner: FakeCommandRunner,
+    root: Path,
+    config: dict[str, Any] | None = None,
+    *,
+    layout: Layout = Layout.PLAIN,
 ) -> ExecutionContext:
     return ExecutionContext(
         project=DdevProject(name="acme", type="typo3", docroot="public", root=root),
@@ -52,6 +56,7 @@ def make_context(
             port=22,
             path="/srv/app/",
             stage=Stage.PRODUCTION,
+            layout=layout,
         ),
         merged=merge_layers([LayerDoc("profile", config if config is not None else ENV_PROFILE)]),
         runner=runner,
@@ -61,7 +66,7 @@ def make_context(
 
 def env_runner() -> FakeCommandRunner:
     runner = FakeCommandRunner()
-    runner.script_prefix(["ssh"], stdout=f"/srv/app/shared/.env.local\n{REMOTE_ENV}")
+    runner.script_prefix(["ssh"], stdout=f"/srv/app/.env.local\n{REMOTE_ENV}")
     return runner
 
 
@@ -82,7 +87,27 @@ def test_the_env_candidates_are_probed_in_order(tmp_path: Path) -> None:
     runner = env_runner()
     read_remote_credentials(make_context(runner, tmp_path))
     probe = runner.calls[0][-1]
-    assert probe.index("shared/.env.local") < probe.index('shared/.env"')
+    assert probe.index("/srv/app/.env.local") < probe.index('/srv/app/.env"')
+
+
+def test_the_env_candidates_are_probed_under_the_data_root_of_a_plain_target(
+    tmp_path: Path,
+) -> None:
+    runner = env_runner()
+    read_remote_credentials(make_context(runner, tmp_path))
+    probe = runner.calls[0][-1]
+    assert "/srv/app/.env.local" in probe
+    assert "/srv/app/shared/" not in probe
+
+
+def test_the_env_candidates_are_probed_under_the_data_root_of_a_deployer_target(
+    tmp_path: Path,
+) -> None:
+    runner = env_runner()
+    read_remote_credentials(make_context(runner, tmp_path, layout=Layout.DEPLOYER))
+    probe = runner.calls[0][-1]
+    assert "/srv/app/shared/.env.local" in probe
+    assert '/srv/app/shared/.env"' in probe
 
 
 def test_a_quoted_value_is_unquoted(tmp_path: Path) -> None:
@@ -90,7 +115,7 @@ def test_a_quoted_value_is_unquoted(tmp_path: Path) -> None:
     runner.script_prefix(
         ["ssh"],
         stdout=(
-            "/srv/app/shared/.env\n"
+            "/srv/app/.env\n"
             'TYPO3_DB_NAME="acme_prod"\n'
             "TYPO3_DB_USER='acme'\n"
             "TYPO3_DB_PASSWORD=s3cret\n"
@@ -105,12 +130,12 @@ def test_a_quoted_value_is_unquoted(tmp_path: Path) -> None:
 
 def test_a_missing_key_names_the_variable_and_the_file(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["ssh"], stdout="/srv/app/shared/.env\nTYPO3_DB_NAME=acme_prod\n")
+    runner.script_prefix(["ssh"], stdout="/srv/app/.env\nTYPO3_DB_NAME=acme_prod\n")
     with pytest.raises(OperationError) as caught:
         read_remote_credentials(make_context(runner, tmp_path))
     message = str(caught.value)
     assert "TYPO3_DB_USER" in message
-    assert "/srv/app/shared/.env" in message
+    assert "/srv/app/.env" in message
 
 
 def test_a_key_present_but_empty_names_the_variable_and_the_file(tmp_path: Path) -> None:
@@ -118,7 +143,7 @@ def test_a_key_present_but_empty_names_the_variable_and_the_file(tmp_path: Path)
     runner.script_prefix(
         ["ssh"],
         stdout=(
-            "/srv/app/shared/.env\n"
+            "/srv/app/.env\n"
             "TYPO3_DB_NAME=acme_prod\n"
             "TYPO3_DB_USER=acme\n"
             "TYPO3_DB_PASSWORD=\n"
@@ -130,7 +155,7 @@ def test_a_key_present_but_empty_names_the_variable_and_the_file(tmp_path: Path)
         read_remote_credentials(make_context(runner, tmp_path))
     message = str(caught.value)
     assert "TYPO3_DB_PASSWORD" in message
-    assert "/srv/app/shared/.env" in message
+    assert "/srv/app/.env" in message
 
 
 def test_explicit_credentials_come_from_the_config_without_ssh(tmp_path: Path) -> None:
@@ -186,7 +211,7 @@ def test_blank_and_comment_lines_are_skipped_while_parsing_the_env_file(
         )
         + "\n"
     )
-    runner.script_prefix(["ssh"], stdout=f"/srv/app/shared/.env.local\n{spaced}")
+    runner.script_prefix(["ssh"], stdout=f"/srv/app/.env.local\n{spaced}")
     credentials = read_remote_credentials(make_context(runner, tmp_path))
     assert credentials.name == "acme_prod"
 
@@ -198,8 +223,8 @@ def test_no_environment_file_is_found_on_the_remote(tmp_path: Path) -> None:
         read_remote_credentials(make_context(runner, tmp_path))
     message = str(caught.value)
     assert "no environment file found" in message
-    assert "shared/.env.local" in message
-    assert "shared/.env" in message
+    assert "/srv/app/.env.local" in message
+    assert "/srv/app/.env" in message
 
 
 def test_a_single_configured_env_file_is_treated_as_one_candidate(tmp_path: Path) -> None:
@@ -208,7 +233,7 @@ def test_a_single_configured_env_file_is_treated_as_one_candidate(tmp_path: Path
         "env": {"file": ".env"},
     }
     runner = FakeCommandRunner()
-    runner.script_prefix(["ssh"], stdout=f"/srv/app/shared/.env\n{REMOTE_ENV}")
+    runner.script_prefix(["ssh"], stdout=f"/srv/app/.env\n{REMOTE_ENV}")
     credentials = read_remote_credentials(make_context(runner, tmp_path, config))
     assert credentials.name == "acme_prod"
 
@@ -219,8 +244,8 @@ def test_missing_env_file_configuration_falls_back_to_defaults(tmp_path: Path) -
     credentials = read_remote_credentials(make_context(runner, tmp_path, config))
     assert credentials.name == "acme_prod"
     probe = runner.calls[0][-1]
-    assert "shared/.env.local" in probe
-    assert "shared/.env" in probe
+    assert "/srv/app/.env.local" in probe
+    assert "/srv/app/.env" in probe
 
 
 def test_a_non_dict_env_section_falls_back_to_default_candidates(tmp_path: Path) -> None:
@@ -229,8 +254,8 @@ def test_a_non_dict_env_section_falls_back_to_default_candidates(tmp_path: Path)
     credentials = read_remote_credentials(make_context(runner, tmp_path, config))
     assert credentials.name == "acme_prod"
     probe = runner.calls[0][-1]
-    assert "shared/.env.local" in probe
-    assert "shared/.env" in probe
+    assert "/srv/app/.env.local" in probe
+    assert "/srv/app/.env" in probe
 
 
 COMPLETE_DUMP = "CREATE TABLE a (id int);\n-- Dump completed on 2026-09-30\n"
@@ -238,7 +263,7 @@ COMPLETE_DUMP = "CREATE TABLE a (id int);\n-- Dump completed on 2026-09-30\n"
 
 def dump_runner(dump: str = COMPLETE_DUMP) -> FakeCommandRunner:
     runner = FakeCommandRunner()
-    runner.script_prefix(["ssh"], stdout=f"/srv/app/shared/.env.local\n{REMOTE_ENV}")
+    runner.script_prefix(["ssh"], stdout=f"/srv/app/.env.local\n{REMOTE_ENV}")
     runner.script_prefix(["ssh"], stdout=dump)
     return runner
 
@@ -276,7 +301,7 @@ def test_no_temporary_file_is_created_on_the_remote(tmp_path: Path) -> None:
 
 def test_a_failing_dump_reports_the_remote_error(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["ssh"], stdout=f"/srv/app/shared/.env.local\n{REMOTE_ENV}")
+    runner.script_prefix(["ssh"], stdout=f"/srv/app/.env.local\n{REMOTE_ENV}")
     runner.script_prefix(["ssh"], returncode=2, stderr="Access denied for user")
     with pytest.raises(OperationError) as caught:
         DbDumpOperation().execute(make_context(runner, tmp_path), {})
@@ -285,7 +310,7 @@ def test_a_failing_dump_reports_the_remote_error(tmp_path: Path) -> None:
 
 def test_a_failing_dump_does_not_leave_a_partial_file_behind(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["ssh"], stdout=f"/srv/app/shared/.env.local\n{REMOTE_ENV}")
+    runner.script_prefix(["ssh"], stdout=f"/srv/app/.env.local\n{REMOTE_ENV}")
     runner.script_prefix(["ssh"], returncode=2, stdout="partial", stderr="boom")
     context = make_context(runner, tmp_path)
     with pytest.raises(OperationError):
@@ -295,7 +320,7 @@ def test_a_failing_dump_does_not_leave_a_partial_file_behind(tmp_path: Path) -> 
 
 def test_the_password_never_appears_in_an_error_message(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["ssh"], stdout=f"/srv/app/shared/.env.local\n{REMOTE_ENV}")
+    runner.script_prefix(["ssh"], stdout=f"/srv/app/.env.local\n{REMOTE_ENV}")
     runner.script_prefix(["ssh"], returncode=2, stderr="something failed")
     with pytest.raises(OperationError) as caught:
         DbDumpOperation().execute(make_context(runner, tmp_path), {})

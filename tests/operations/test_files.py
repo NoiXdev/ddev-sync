@@ -4,14 +4,16 @@ from typing import Any
 import pytest
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
-from ddev_sync.config.models import ResolvedTarget, Stage
+from ddev_sync.config.models import Layout, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations.base import ExecutionContext, OperationError, PathEscapesProject
 from ddev_sync.operations.files import FilePair, FilesRsyncOperation, validate_path_pairs
 from ddev_sync.transport.fake import FakeCommandRunner
 
 
-def make_context(runner: FakeCommandRunner, root: Path, **config: Any) -> ExecutionContext:
+def make_context(
+    runner: FakeCommandRunner, root: Path, *, layout: Layout = Layout.PLAIN, **config: Any
+) -> ExecutionContext:
     return ExecutionContext(
         project=DdevProject(name="acme", type="typo3", docroot="public", root=root),
         target=ResolvedTarget(
@@ -21,6 +23,7 @@ def make_context(runner: FakeCommandRunner, root: Path, **config: Any) -> Execut
             port=22,
             path="/srv/app/",
             stage=Stage.PRODUCTION,
+            layout=layout,
         ),
         merged=merge_layers([LayerDoc("profile", config)]),
         runner=runner,
@@ -39,20 +42,38 @@ def test_rsync_is_invoked_with_the_resolved_endpoints(tmp_path: Path) -> None:
     runner = ok_runner()
     context = make_context(runner, tmp_path)
     FilesRsyncOperation().execute(
-        context, {"remote": "shared/public/fileadmin/", "local": "public/fileadmin/"}
+        context, {"remote": "public/fileadmin/", "local": "public/fileadmin/"}
     )
     argv = runner.calls[0]
     assert argv[0] == "rsync"
-    assert "deploy@web01.example:/srv/app/shared/public/fileadmin/" in argv
+    assert "deploy@web01.example:/srv/app/public/fileadmin/" in argv
     assert argv[-1] == f"{tmp_path / 'public' / 'fileadmin'}/"
 
 
 def test_the_local_directory_is_created_before_the_transfer(tmp_path: Path) -> None:
     context = make_context(ok_runner(), tmp_path)
     FilesRsyncOperation().execute(
-        context, {"remote": "shared/public/uploads/", "local": "public/uploads/"}
+        context, {"remote": "public/uploads/", "local": "public/uploads/"}
     )
     assert (tmp_path / "public" / "uploads").is_dir()
+
+
+def test_a_plain_targets_remote_has_no_deployer_prefix(tmp_path: Path) -> None:
+    runner = ok_runner()
+    FilesRsyncOperation().execute(
+        make_context(runner, tmp_path, layout=Layout.PLAIN),
+        {"remote": "public/fileadmin/", "local": "public/fileadmin/"},
+    )
+    assert "deploy@web01.example:/srv/app/public/fileadmin/" in runner.calls[0]
+
+
+def test_a_deployer_targets_remote_is_rooted_under_shared(tmp_path: Path) -> None:
+    runner = ok_runner()
+    FilesRsyncOperation().execute(
+        make_context(runner, tmp_path, layout=Layout.DEPLOYER),
+        {"remote": "public/fileadmin/", "local": "public/fileadmin/"},
+    )
+    assert "deploy@web01.example:/srv/app/shared/public/fileadmin/" in runner.calls[0]
 
 
 def test_delete_is_off_unless_asked_for(tmp_path: Path) -> None:
@@ -99,20 +120,20 @@ def test_validate_returns_every_configured_pair(tmp_path: Path) -> None:
         tmp_path,
         files={
             "paths": [
-                {"remote": "shared/public/fileadmin/", "local": "public/fileadmin/"},
-                {"remote": "shared/public/uploads/", "local": "public/uploads/", "delete": True},
+                {"remote": "public/fileadmin/", "local": "public/fileadmin/"},
+                {"remote": "public/uploads/", "local": "public/uploads/", "delete": True},
             ]
         },
     )
     pairs = validate_path_pairs(context)
     assert pairs == [
         FilePair(
-            remote="/srv/app/shared/public/fileadmin/",
+            remote="/srv/app/public/fileadmin/",
             local=(tmp_path / "public" / "fileadmin").resolve(),
             delete=False,
         ),
         FilePair(
-            remote="/srv/app/shared/public/uploads/",
+            remote="/srv/app/public/uploads/",
             local=(tmp_path / "public" / "uploads").resolve(),
             delete=True,
         ),

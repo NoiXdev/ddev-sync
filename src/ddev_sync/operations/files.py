@@ -36,7 +36,7 @@ def _pair(context: ExecutionContext, entry: Mapping[str, Any]) -> FilePair:
     if local is None:
         raise OperationError(f"a files.paths entry is missing 'local': {dict(entry)}")
     return FilePair(
-        remote=context.remote(str(remote)),
+        remote=context.remote_data(str(remote)),
         local=context.local(str(local)),
         delete=bool(entry.get("delete", False)),
     )

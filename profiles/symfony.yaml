@@ -34,7 +34,7 @@ database:
 
 files:
   paths:
-    - { remote: "shared/public/uploads/", local: "public/uploads/" }
+    - { remote: "public/uploads/", local: "public/uploads/" }
 
 sanitize:
   rules:

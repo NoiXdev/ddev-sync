@@ -4,18 +4,18 @@ from typing import Any
 import pytest
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
-from ddev_sync.config.models import ResolvedTarget, Stage
+from ddev_sync.config.models import Layout, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import read_remote_credentials
 from ddev_sync.transport.fake import FakeCommandRunner
 
-WP_PROFILE: dict[str, Any] = {
-    "database": {"remote_credentials": "wp_cli", "remote_docroot": "current/public"}
-}
+WP_PROFILE: dict[str, Any] = {"database": {"remote_credentials": "wp_cli"}}
 
 
-def make_context(runner: FakeCommandRunner, root: Path, **config: Any) -> ExecutionContext:
+def make_context(
+    runner: FakeCommandRunner, root: Path, *, layout: Layout = Layout.PLAIN, **config: Any
+) -> ExecutionContext:
     return ExecutionContext(
         project=DdevProject(name="acme", type="wordpress", docroot="web", root=root),
         target=ResolvedTarget(
@@ -25,6 +25,7 @@ def make_context(runner: FakeCommandRunner, root: Path, **config: Any) -> Execut
             port=22,
             path="/srv/app/",
             stage=Stage.PRODUCTION,
+            layout=layout,
         ),
         merged=merge_layers([LayerDoc("profile", config)]),
         runner=runner,
@@ -61,19 +62,20 @@ def test_a_host_without_a_port_defaults_to_3306(tmp_path: Path) -> None:
     assert credentials.port == "3306"
 
 
-def test_the_commands_run_in_the_configured_remote_docroot(tmp_path: Path) -> None:
+def test_wp_config_get_runs_under_the_code_root_of_a_plain_target(tmp_path: Path) -> None:
     runner = wp_runner()
-    read_remote_credentials(make_context(runner, tmp_path, **WP_PROFILE))
+    read_remote_credentials(make_context(runner, tmp_path, layout=Layout.PLAIN, **WP_PROFILE))
     remote = runner.calls[0][-1]
-    assert "/srv/app/current/public" in remote
+    assert "cd /srv/app/ &&" in remote
     assert "wp config get DB_NAME" in remote
 
 
-def test_the_remote_docroot_defaults_to_current(tmp_path: Path) -> None:
+def test_wp_config_get_runs_under_the_code_root_of_a_deployer_target(tmp_path: Path) -> None:
     runner = wp_runner()
-    config = {"database": {"remote_credentials": "wp_cli"}}
-    read_remote_credentials(make_context(runner, tmp_path, **config))
-    assert "/srv/app/current" in runner.calls[0][-1]
+    read_remote_credentials(make_context(runner, tmp_path, layout=Layout.DEPLOYER, **WP_PROFILE))
+    remote = runner.calls[0][-1]
+    assert "cd /srv/app/current/ &&" in remote
+    assert "wp config get DB_NAME" in remote
 
 
 def test_a_failing_wp_config_get_explains_itself(tmp_path: Path) -> None:

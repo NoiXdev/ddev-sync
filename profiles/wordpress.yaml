@@ -10,11 +10,10 @@ env:
 
 database:
   remote_credentials: wp_cli
-  remote_docroot: current
 
 files:
   paths:
-    - { remote: "shared/wp-content/uploads/", local: "wp-content/uploads/" }
+    - { remote: "wp-content/uploads/", local: "wp-content/uploads/" }
 
 sanitize:
   rules:

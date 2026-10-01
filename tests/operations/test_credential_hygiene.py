@@ -32,7 +32,7 @@ def context(tmp_path: Path) -> ExecutionContext:
     runner.script_prefix(
         ["ssh"],
         stdout=(
-            "/srv/app/shared/.env\n"
+            "/srv/app/.env\n"
             "DB_NAME=acme\nDB_USER=acme\n"
             f"DB_PASSWORD={HOSTILE}\n"
             "DB_HOST=127.0.0.1\nDB_PORT=3306\n"

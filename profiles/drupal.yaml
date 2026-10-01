@@ -15,7 +15,7 @@ database:
 
 files:
   paths:
-    - { remote: "shared/web/sites/default/files/", local: "web/sites/default/files/" }
+    - { remote: "web/sites/default/files/", local: "web/sites/default/files/" }
 
 sanitize:
   rules:

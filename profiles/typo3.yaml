@@ -33,8 +33,8 @@ database:
 
 files:
   paths:
-    - { remote: "shared/public/fileadmin/", local: "public/fileadmin/" }
-    - { remote: "shared/public/uploads/", local: "public/uploads/" }
+    - { remote: "public/fileadmin/", local: "public/fileadmin/" }
+    - { remote: "public/uploads/", local: "public/uploads/" }
 
 sanitize:
   rules:

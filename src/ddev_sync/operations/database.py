@@ -103,16 +103,14 @@ def _env_candidates(context: ExecutionContext) -> list[str]:
 
 
 def _fetch_first_env_file(context: ExecutionContext, candidates: list[str]) -> tuple[str, str]:
-    shared = context.remote("shared")
+    paths = [context.remote_data(name) for name in candidates]
     tests = " ".join(
-        f'if [ -f "{shared}/{name}" ]; then echo "{shared}/{name}"; '
-        f'cat "{shared}/{name}"; exit 0; fi'
-        for name in candidates
+        f'if [ -f "{path}" ]; then echo "{path}"; cat "{path}"; exit 0; fi' for path in paths
     )
     script = f"{tests} exit 9"
     result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]))
     if not result.ok:
-        looked = ", ".join(f"{shared}/{name}" for name in candidates)
+        looked = ", ".join(paths)
         raise OperationError(
             f"no environment file found on {context.target.host}; looked at: {looked}"
         )
@@ -142,8 +140,7 @@ _WP_KEYS = ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST")
 
 def _from_wp_cli(context: ExecutionContext) -> RemoteCredentials:
     """Read credentials with `wp config get`, in one ssh round trip."""
-    docroot = context.config("database.remote_docroot", default="current")
-    remote_root = context.remote(docroot)
+    remote_root = context.remote_code("")
     gets = " && ".join(f"wp config get {key}" for key in _WP_KEYS)
     script = f"cd {remote_root} && {gets}"
     result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]))

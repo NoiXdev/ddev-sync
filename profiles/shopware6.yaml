@@ -32,8 +32,8 @@ database:
 
 files:
   paths:
-    - { remote: "shared/public/media/", local: "public/media/" }
-    - { remote: "shared/public/thumbnail/", local: "public/thumbnail/" }
+    - { remote: "public/media/", local: "public/media/" }
+    - { remote: "public/thumbnail/", local: "public/thumbnail/" }
 
 sanitize:
   rules:

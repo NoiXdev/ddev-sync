@@ -48,6 +48,11 @@ def _validate_database(database: Any) -> None:
         return
     if not isinstance(database, dict):
         raise ProfileError("'database' must be a mapping")
+    if "remote_docroot" in database:
+        raise ProfileError(
+            "'database.remote_docroot' is no longer a valid key; code and data roots "
+            "are now derived from the target's 'layout' (plain or deployer) instead"
+        )
     source = database.get("remote_credentials", "env")
     if source not in CREDENTIAL_SOURCES:
         raise ProfileError(

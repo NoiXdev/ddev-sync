@@ -97,6 +97,14 @@ def test_a_valid_database_config_passes() -> None:
     validate_profile({**MINIMAL, "database": {"remote_credentials": "env"}})
 
 
+def test_database_remote_docroot_is_rejected_and_names_layout() -> None:
+    with pytest.raises(ProfileError) as caught:
+        validate_profile({**MINIMAL, "database": {"remote_docroot": "current"}})
+    message = str(caught.value)
+    assert "remote_docroot" in message
+    assert "layout" in message
+
+
 def test_files_must_be_a_mapping() -> None:
     with pytest.raises(ProfileError) as caught:
         validate_profile({**MINIMAL, "files": "nope"})
