@@ -40,6 +40,7 @@ sanitize:
   rules:
     - name: clear-be-sessions
       sql: "TRUNCATE TABLE be_sessions"
+      requires_table: be_sessions
     # A scheduler task imported from production (e.g. a recurring "send
     # invoice reminders" or "call payment-provider webhook" task) is not
     # stale derived state like a processed image - it is production work
@@ -69,10 +70,13 @@ sanitize:
       tolerate_missing_table: true
     - name: clear-fe-sessions
       sql: "TRUNCATE TABLE fe_sessions"
+      requires_table: fe_sessions
     - name: clear-sys-log
       sql: "TRUNCATE TABLE sys_log"
+      requires_table: sys_log
     - name: anonymize-fe-users
       sql: "UPDATE fe_users SET email = CONCAT('fe', uid, '@example.invalid')"
+      requires_table: fe_users
     - name: reset-fe-passwords
       operation: reset_passwords
       table: fe_users
@@ -84,6 +88,7 @@ sanitize:
     # while reporting "sanitize OK". Same treatment, same table shape.
     - name: anonymize-be-users
       sql: "UPDATE be_users SET email = CONCAT('be', uid, '@example.invalid')"
+      requires_table: be_users
     - name: reset-be-passwords
       operation: reset_passwords
       table: be_users

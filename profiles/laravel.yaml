@@ -69,6 +69,7 @@ sanitize:
       }
     - name: anonymize-users
       sql: "UPDATE users SET email = CONCAT('user', id, '@example.invalid')"
+      requires_table: users
     - name: reset-user-passwords
       operation: reset_passwords
       table: users

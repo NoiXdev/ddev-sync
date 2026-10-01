@@ -3,7 +3,7 @@ sanitize:
   rules:
     mode: replace
     values:
-      - { name: clear-be-sessions, sql: "TRUNCATE TABLE be_sessions" }
+      - { name: clear-be-sessions, sql: "TRUNCATE TABLE be_sessions", requires_table: be_sessions }
       # See typo3.yaml for why this is a base rule, not a feature, and why it
       # carries tolerate_missing_table: EXT:scheduler is its own optional
       # Composer package, so a project without it has no table here, and
@@ -11,10 +11,11 @@ sanitize:
       - name: clear-scheduler-tasks
         sql: "TRUNCATE TABLE tx_scheduler_task"
         tolerate_missing_table: true
-      - { name: clear-fe-sessions, sql: "TRUNCATE TABLE fe_sessions" }
-      - { name: clear-sys-log, sql: "TRUNCATE TABLE sys_log" }
+      - { name: clear-fe-sessions, sql: "TRUNCATE TABLE fe_sessions", requires_table: fe_sessions }
+      - { name: clear-sys-log, sql: "TRUNCATE TABLE sys_log", requires_table: sys_log }
       - name: anonymize-fe-users
         sql: "UPDATE fe_users SET email = CONCAT('fe', uid, '@example.invalid')"
+        requires_table: fe_users
       - name: reset-fe-passwords
         operation: reset_passwords
         table: fe_users
@@ -22,6 +23,7 @@ sanitize:
         value: "$argon2i$disabled"
       - name: anonymize-be-users
         sql: "UPDATE be_users SET email = CONCAT('be', uid, '@example.invalid')"
+        requires_table: be_users
       - name: reset-be-passwords
         operation: reset_passwords
         table: be_users

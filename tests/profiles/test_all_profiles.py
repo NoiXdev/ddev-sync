@@ -184,6 +184,30 @@ def test_rules_touching_an_optional_table_tolerate_its_absence(
 
 
 @pytest.mark.parametrize(("name", "major"), variants())
+def test_every_sql_rule_declares_requires_table_or_tolerates_its_absence(
+    name: str, major: str | None
+) -> None:
+    # Part 2 of the sanitize-table-safety fix: a `sql:` rule's table is a
+    # fact only the author knows - this module cannot parse it out of raw
+    # SQL, which is the whole point of declaring it instead. Forcing a choice
+    # between the two flags here is what makes the preflight probe
+    # (operations/preflight.py) able to check a table's existence before the
+    # dump at all, and what stops a new sql rule from shipping with neither:
+    # silently unverifiable by the probe, and silently intolerant of absence.
+    rules = REGISTRY.resolve(name, major).data.get("sanitize", {}).get("rules", [])
+    for rule in rules:
+        if rule.get("sql") is None:
+            continue
+        declares = bool(rule.get("requires_table")) or bool(rule.get("tolerate_missing_table"))
+        assert declares, (
+            f"{name}@{major}: sql rule {rule.get('name')!r} declares neither "
+            "'requires_table' nor 'tolerate_missing_table'. Add 'requires_table: "
+            "<name>' if the engine must be able to verify the table exists, or "
+            "'tolerate_missing_table: true' if it is allowed to be absent."
+        )
+
+
+@pytest.mark.parametrize(("name", "major"), variants())
 def test_every_profile_declares_an_anonymise_or_reset_rule_unless_opted_out(
     name: str, major: str | None
 ) -> None:
