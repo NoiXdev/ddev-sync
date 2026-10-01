@@ -6,13 +6,15 @@ An unverified variant still works - it is just not yet known to be correct.
 
 | Profile | Verified against | Date | By | Notes |
 |---|---|---|---|---|
-| typo3@9 | | | | not yet verified; be_users anonymize/reset rule (email, password columns) unverified |
-| typo3@10 | | | | not yet verified; be_users anonymize/reset rule (email, password columns) unverified |
+| typo3@9 | | | | not yet verified; be_users anonymize/reset rule (email, password columns) unverified. `tx_scheduler_task` confirmed as EXT:scheduler's task table via docs.typo3.org (TaskStorage guide, and the v9.0 "deleted" column changelog entry #79777 which modifies this same table), so the name is stable at v9; not run against a real v9 install |
+| typo3@10 | | | | not yet verified; be_users anonymize/reset rule (email, password columns) unverified. `tx_scheduler_task` confirmed as above; not run against a real v10 install |
 | typo3@11 | | | | not yet verified; be_users anonymize/reset rule (email, password columns) unverified |
 | typo3@12 | | | | not yet verified; be_users anonymize/reset rule (email, password columns) unverified |
 | typo3@13 | | | | not yet verified; be_users anonymize/reset rule (email, password columns) unverified |
 | laravel | | | | not yet verified |
 | symfony | | | | not yet verified; reset-user-passwords rule (user.password column) unverified |
+| typo3 (base) | | | | `clear-scheduler-tasks` truncates `tx_scheduler_task`, confirmed as EXT:scheduler's task table by docs.typo3.org (TaskStorage guide: "scheduler tasks ... are stored in the database table tx_scheduler_task"); the table name is unchanged from v9 through v14 - only the v14 storage format (serialized PHP to JSON) changed, per the same page. Not run against a real installation of any version |
+| symfony (base) | | | | no separate scheduler table added. Checked: the official `symfony/scheduler` component (core since 6.3) is a Messenger transport, not an independent store - it generates messages that are consumed like any other Messenger message, so its state rides on the Doctrine Messenger transport's own table, which `clear-messenger`'s existing `TRUNCATE TABLE messenger_messages` already covers. (A third-party package, `zenstruck/schedule-bundle` or similar, could add its own table, but that is not something this profile can assume is installed - treat per-project if encountered.) No new rule added because there is no additional table to name |
 | wordpress | | | | not yet verified; requires per-project `sanitize.rules` override for the production URL |
 | shopware6 | | | | not yet verified; anonymize-customers/reset-customer-passwords rules (customer table and its email/first_name/last_name/password columns) unverified |
 | drupal | | | | not yet verified; needs explicit database.credentials per project; reset-user-passwords rule (users_field_data.pass column) unverified |

@@ -48,6 +48,10 @@ sanitize:
       table: user
       column: password
       value: "$argon2i$disabled"
+    # No separate rule for symfony/scheduler: it is a Messenger transport,
+    # not its own store - a schedule's generated messages are consumed like
+    # any other Messenger message, so their state already lives in the table
+    # this rule truncates. See profiles/VERIFIED.md for the check.
     - name: clear-messenger
       sql: "TRUNCATE TABLE messenger_messages"
 
