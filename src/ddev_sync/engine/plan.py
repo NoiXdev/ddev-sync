@@ -28,8 +28,12 @@ class PlannedStep:
 
     `kind` always names the parent step, even for a hook - a `post_db_import`
     hook keeps `kind == StepKind.DB_IMPORT` so callers can still group a hook
-    with the step it hangs off. `is_hook` is what the renderer uses to tell a
-    step from its hooks; the parent's `kind` alone cannot do that.
+    with the step it hangs off. `is_hook` is what tells a step from its
+    hooks, since the parent's `kind` alone cannot: the renderer uses it to
+    label the line "hook" instead of the kind, and `Executor._dispatch` uses
+    it to route a hook's `params` (a command entry) through
+    `run_command_entry` instead of looking `kind` up in `OPERATIONS` - which
+    would otherwise run the *parent's* operation on the hook's params.
     """
 
     index: int
@@ -45,12 +49,15 @@ class PlannedStep:
 class PostSyncEntry:
     """One `hooks.post_sync` command, shown in the dry run.
 
-    Deliberately not a `PlannedStep`: `post_sync` is never walked by the
-    executor's main per-step loop - it always runs once after every step,
-    success or failure, via `Executor._run_post_sync` - so it has no `index`
-    among the numbered steps and no `kind` to group under. Keeping it a
-    separate, smaller shape makes that "always runs, not a step" distinction
-    structural instead of a comment someone has to notice.
+    Deliberately not a `PlannedStep`, even after `Executor._dispatch` learned
+    to run an ordinary hook's command correctly: folding `post_sync` into
+    `plan.steps` would put it under `Executor.run`'s `stopped` logic, which
+    skips every remaining step once one has failed - exactly the one
+    guarantee `post_sync` exists to have (it runs once after every step,
+    success *or* failure, via the separate `Executor._run_post_sync`, which
+    the main loop's stop-on-failure never reaches). It has no `index` among
+    the numbered steps and no `kind` to group under for the same reason: it
+    is not a step in that sequence at all.
     """
 
     detail: str

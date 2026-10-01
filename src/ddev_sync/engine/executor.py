@@ -86,23 +86,37 @@ class Executor:
 
     def _run_step(self, step: PlannedStep, context: ExecutionContext) -> StepOutcome:
         self.reporter.starting(step)
-        operation = self._operations.get(step.kind)
-        if operation is None:
-            outcome = StepOutcome(
-                step=step,
-                status="failed",
-                error=DdevSyncError(f"no operation registered for {step.kind.value}"),
-            )
-            self.reporter.finished(outcome)
-            return outcome
         try:
-            operation.execute(context, step.params)
+            self._dispatch(step, context)
         except DdevSyncError as error:
             outcome = StepOutcome(step=step, status="failed", error=error)
         else:
             outcome = StepOutcome(step=step, status="ok")
         self.reporter.finished(outcome)
         return outcome
+
+    def _dispatch(self, step: PlannedStep, context: ExecutionContext) -> None:
+        """Run one step's work, raising `DdevSyncError` on failure.
+
+        A hook step (`is_hook`) carries a command entry - `{run: ...}` or
+        `{operation: ...}`, the same shape `setup.commands` uses - not a copy
+        of its parent step's params in the parent operation's expected shape.
+        Looking it up in `OPERATIONS` by `step.kind` (every hook's `kind` is
+        its parent's, by design - see `PlannedStep`) dispatched every hook to
+        its *parent's* operation instead of running the hook's own command:
+        a `post_db_import` hook silently re-ran the whole database import,
+        ignoring its own `run:` entirely. `run_command_entry` is the same
+        dispatch `setup.commands` already goes through, so a hook gets
+        `allow_failure` and `workdir` handled identically to a setup command,
+        which is the entire point of sharing the path.
+        """
+        if step.is_hook:
+            run_command_entry(context, step.params)
+            return
+        operation = self._operations.get(step.kind)
+        if operation is None:
+            raise DdevSyncError(f"no operation registered for {step.kind.value}")
+        operation.execute(context, step.params)
 
     def _run_post_sync(self, context: ExecutionContext) -> None:
         """Run `hooks.post_sync` commands whether or not the run succeeded.

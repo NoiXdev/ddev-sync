@@ -264,3 +264,58 @@ def test_a_malformed_post_sync_block_is_ignored(tmp_path: Path, hooks: Any) -> N
     )
     report = executor_with([]).run(plan_of(step(1, StepKind.PREFLIGHT)), context)
     assert report.failed is False
+
+
+class _SpyOperation:
+    """Not a Recorder: every executor test above replaces `OPERATIONS`
+    wholesale with one `Recorder` per `StepKind`, so a hook that dispatches
+    to its *parent's* operation lands on the same object a correctly
+    dispatched hook would have reached - the fake cannot tell the two apart.
+    This spy stands in for exactly one operation (`DB_IMPORT`'s), so a hook
+    reaching it is distinguishable from the hook's own command reaching the
+    real runner.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def execute(self, _context: ExecutionContext, _params: Any) -> None:
+        self.calls += 1
+
+
+def test_a_hook_step_runs_its_own_command_not_its_parent_operation(tmp_path: Path) -> None:
+    """A `post_db_import`-shaped hook step carries `{"run": "..."}`, not a
+    copy of the real db.import step's params - looking it up by `step.kind`
+    in `OPERATIONS` (every hook's `kind` is its parent's, by design) used to
+    dispatch it straight to `DbImportOperation`, which ignores `params`
+    entirely and just re-ran the whole import. The hook's own command must
+    reach `context.runner` instead, and the parent operation must not run a
+    second time for the hook on top of its own real invocation.
+    """
+    spy = _SpyOperation()
+    runner = FakeCommandRunner()
+    runner.script_prefix(["sh"], stdout="")
+    context = ExecutionContext(
+        project=DdevProject(name="acme", type="php", docroot="public", root=tmp_path),
+        target=ResolvedTarget(
+            name="production",
+            host="web01.example",
+            user="deploy",
+            port=22,
+            path="/srv/app/",
+            stage=Stage.PRODUCTION,
+        ),
+        merged=merge_layers([LayerDoc("profile", {})]),
+        runner=runner,
+        downloads_dir=tmp_path / ".ddev" / ".downloads",
+        assume_yes=True,
+    )
+    executor = Executor(reporter=RecordingReporter(), operations={StepKind.DB_IMPORT: spy})
+    plan = plan_of(
+        step(1, StepKind.DB_IMPORT, is_hook=True, params={"run": "echo HOOK-RAN"}),
+        step(2, StepKind.DB_IMPORT),
+    )
+    report = executor.run(plan, context)
+    assert report.failed is False
+    assert runner.calls == [("sh", "-c", "echo HOOK-RAN")]
+    assert spy.calls == 1
