@@ -261,9 +261,9 @@ def test_an_existing_wp_cli_admin_is_not_an_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # Verified against wp-cli/entity-command's src/User_Command.php::create()
-    # (main branch, checked 2026-10-01): `username_exists()` is checked first
-    # and fails with exactly this text - WP-CLI's own "duplicate user" never
-    # appears anywhere in that method.
+    # (default branch `main`, checked 2026-10-01): `username_exists()` is
+    # checked first and fails with exactly this text - WP-CLI's own
+    # "duplicate user" never appears anywhere in that method.
     runner = FakeCommandRunner()
     runner.script_prefix(
         ["wp"], returncode=1, stderr="Error: The 'ddev' username is already registered."
@@ -271,17 +271,17 @@ def test_an_existing_wp_cli_admin_is_not_an_error(
     config = rule_config(name="admin", operation="create_admin", driver="wp_cli", user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     out = capsys.readouterr().out
+    assert "already exists" in out
     assert "ddev" in out
 
 
 def test_an_existing_drush_admin_is_not_an_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Verified against drush-ops/drush's src/Commands/core/UserCommands.php::
-    # createValidate() (main branch, checked 2026-10-01): the argument
-    # validator hook on `user:create` raises exactly this text when
-    # `user_load_by_name()` finds an existing account - again, never
-    # "duplicate user".
+    # Verified against drush-ops/drush's src/Commands/user/UserCreateCommand.
+    # php::doExecute() (default branch `14.x` - drush has no `main`; checked
+    # 2026-10-01): raises exactly this text when `user_load_by_name()` finds
+    # an existing account - again, never "duplicate user".
     runner = FakeCommandRunner()
     runner.script_prefix(
         ["vendor/bin/drush"],
@@ -291,7 +291,23 @@ def test_an_existing_drush_admin_is_not_an_error(
     config = rule_config(name="admin", operation="create_admin", driver="drush", user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     out = capsys.readouterr().out
+    assert "already exists" in out
     assert "ddev" in out
+
+
+def test_a_drivers_tolerate_marker_is_not_honoured_for_a_different_driver(
+    tmp_path: Path,
+) -> None:
+    # Markers are scoped per driver (_ADMIN_DRIVERS already keys by driver):
+    # typo3's "already exists" has never been observed from wp-cli, so
+    # tolerating it there would narrow nothing and risk swallowing a real
+    # wp-cli failure that happens to share the substring.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["wp"], returncode=1, stderr="some unrelated error: already exists")
+    config = rule_config(name="admin", operation="create_admin", driver="wp_cli", user="ddev")
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert "unrelated error" in str(caught.value)
 
 
 def test_another_create_admin_failure_is_an_error(tmp_path: Path) -> None:

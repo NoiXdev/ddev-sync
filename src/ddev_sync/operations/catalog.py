@@ -126,22 +126,30 @@ _ADMIN_DRIVERS: dict[str, list[str]] = {
     "drush": ["vendor/bin/drush", "user:create"],
 }
 
-# Each marker is tied to one real CLI's observed output, not a guess:
+# Each marker is tied to one real CLI's observed output, not a guess, and
+# scoped per driver (`_ADMIN_DRIVERS` already keys by driver, so there is no
+# reason for, say, wp-cli's phrasing to also be tolerated from drush):
 # - "already exists": typo3's `backend:createadmin` (both the `typo3` and
 #   `console` drivers), e.g. "A user with this name already exists".
 # - "is already registered": wp-cli's `user create`, verified against
-#   wp-cli/entity-command's `src/User_Command.php::create()` (main branch,
-#   checked 2026-10-01) - `username_exists()` fails with exactly
+#   wp-cli/entity-command's `src/User_Command.php::create()` (default branch
+#   `main`, checked 2026-10-01) - `username_exists()` fails with exactly
 #   "The '<login>' username is already registered."
 # - "already a user account": drush's `user:create`, verified against
-#   drush-ops/drush's `src/Commands/core/UserCommands.php::createValidate()`
-#   (main branch, checked 2026-10-01) - the argument validator hook raises
-#   "There is already a user account with the name <name>" (or "... with the
-#   email <mail>", not reachable here since this driver never passes --mail).
+#   drush-ops/drush's `src/Commands/user/UserCreateCommand.php::doExecute()`
+#   (default branch `14.x` - drush has no `main`; checked 2026-10-01) -
+#   raises "There is already a user account with the name <name>" (or
+#   "... with the email <mail>", not reachable here since this driver never
+#   passes --mail).
 # The tuple used to also carry "already in use" and "duplicate user" -
 # neither string appears anywhere in either source; they were invented, not
 # observed, and have been replaced with the two verified markers above.
-_ALREADY_EXISTS = ("already exists", "is already registered", "already a user account")
+_ALREADY_EXISTS: dict[str, tuple[str, ...]] = {
+    "typo3": ("already exists",),
+    "console": ("already exists",),
+    "wp_cli": ("is already registered",),
+    "drush": ("already a user account",),
+}
 
 
 class CreateAdmin:
@@ -164,7 +172,7 @@ class CreateAdmin:
             self._announce(user, password)
             return
         combined = f"{result.stdout}{result.stderr}".lower()
-        if any(marker in combined for marker in _ALREADY_EXISTS):
+        if any(marker in combined for marker in _ALREADY_EXISTS[driver]):
             print(f"  local admin already exists - user: {user}")
             return
         raise OperationError(
