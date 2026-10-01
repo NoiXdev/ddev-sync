@@ -3,10 +3,38 @@ from typing import Any, cast
 
 import pytest
 
+from ddev_sync.config.merge import LayerDoc, merge_layers
+from ddev_sync.config.models import ResolvedTarget, Stage
+from ddev_sync.ddev.project import DdevProject
+from ddev_sync.operations.base import ExecutionContext
+from ddev_sync.operations.sanitize import parse_rules
 from ddev_sync.profiles.registry import ProfileRegistry
+from ddev_sync.transport.fake import FakeCommandRunner
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
 REGISTRY = ProfileRegistry(PROFILE_ROOT)
+
+
+def symfony_context(tmp_path: Path, **override: Any) -> ExecutionContext:
+    profile = REGISTRY.resolve("symfony", None)
+    layers = [LayerDoc("profile:symfony", profile.data)]
+    if override:
+        layers.append(LayerDoc(".ddev/ddev-sync.yaml", override))
+    return ExecutionContext(
+        project=DdevProject(name="acme", type="symfony", docroot="public", root=tmp_path),
+        target=ResolvedTarget(
+            name="production",
+            host="web01.example",
+            user="deploy",
+            port=22,
+            path="/srv/app/",
+            stage=Stage.PRODUCTION,
+        ),
+        merged=merge_layers(layers),
+        runner=FakeCommandRunner(),
+        downloads_dir=tmp_path / ".ddev" / ".downloads",
+        assume_yes=True,
+    )
 
 
 def setup_commands(name: str) -> list[str]:
@@ -92,3 +120,25 @@ def test_symfony_clears_the_cache_after_import() -> None:
 @pytest.mark.parametrize("name", ["laravel", "symfony"])
 def test_neither_profile_declares_version_variants_yet(name: str) -> None:
     assert REGISTRY.available_majors(name) == ()
+
+
+def test_symfony_user_table_defaults_to_user(tmp_path: Path) -> None:
+    # Part 4: `user` is Symfony's conventional default, not a guarantee - see
+    # profiles/VERIFIED.md. Unset, both the sql rule and the operation rule's
+    # `table` param must still resolve to the historical default.
+    parsed = parse_rules(symfony_context(tmp_path))
+    anonymize = next(entry for entry in parsed if entry.name == "anonymize-users")
+    reset = next(entry for entry in parsed if entry.name == "reset-user-passwords")
+    assert anonymize.sql == "UPDATE user SET email = CONCAT('user', id, '@example.invalid')"
+    assert anonymize.requires_table == "user"
+    assert reset.params["table"] == "user"
+
+
+def test_symfony_user_table_is_overridable(tmp_path: Path) -> None:
+    context = symfony_context(tmp_path, database={"symfony_user_table": "app_user"})
+    parsed = parse_rules(context)
+    anonymize = next(entry for entry in parsed if entry.name == "anonymize-users")
+    reset = next(entry for entry in parsed if entry.name == "reset-user-passwords")
+    assert anonymize.sql == "UPDATE app_user SET email = CONCAT('user', id, '@example.invalid')"
+    assert anonymize.requires_table == "app_user"
+    assert reset.params["table"] == "app_user"

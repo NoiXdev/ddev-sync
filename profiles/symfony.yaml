@@ -38,14 +38,23 @@ files:
 
 sanitize:
   rules:
+    # `${SYMFONY_USER_TABLE}` (operations/placeholders.py) resolves
+    # `database.symfony_user_table` with a default of `user` - Symfony itself
+    # has no component that creates a `user` table; `user` is only
+    # MakerBundle's conventional default, and MakerBundle itself steers
+    # projects towards `users` or `app_user` because `user` is a reserved
+    # word in PostgreSQL. A project whose entity table differs sets
+    # `database.symfony_user_table` in .ddev/ddev-sync.yaml; see
+    # profiles/VERIFIED.md. `requires_table` on the sql rule lets the Part 3
+    # preflight probe catch a wrong name before the dump - this rule is
+    # first in the list, so a silent failure here used to cost
+    # reset-user-passwords and clear-messenger too, not just itself.
     - name: anonymize-users
-      sql: "UPDATE user SET email = CONCAT('user', id, '@example.invalid')"
-    # Unverified: table/column name assumed from Symfony's conventional
-    # `user` entity (same table the anonymize rule above already targets);
-    # see profiles/VERIFIED.md.
+      sql: "UPDATE ${SYMFONY_USER_TABLE} SET email = CONCAT('user', id, '@example.invalid')"
+      requires_table: "${SYMFONY_USER_TABLE}"
     - name: reset-user-passwords
       operation: reset_passwords
-      table: user
+      table: "${SYMFONY_USER_TABLE}"
       column: password
       value: "$argon2i$disabled"
     # No separate rule for symfony/scheduler: it is a Messenger transport,
