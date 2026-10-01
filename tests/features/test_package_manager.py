@@ -55,6 +55,32 @@ def test_two_lockfiles_resolve_deterministically_in_declared_order(
     assert manager.name == dict(LOCKFILES)[first].name
 
 
+def test_priority_order_npm_before_yarn_hardcoded(tmp_path: Path) -> None:
+    """With both package-lock.json and yarn.lock, npm wins.
+
+    This is a hardcoded assertion (not derived from LOCKFILES) to catch
+    regressions if LOCKFILES is ever reordered without updating all callers.
+    """
+    (tmp_path / "yarn.lock").write_text("", encoding="utf-8")
+    (tmp_path / "package-lock.json").write_text("", encoding="utf-8")
+    manager = detect_package_manager(project_at(tmp_path))
+    assert manager is not None
+    assert manager.name == "npm"
+
+
+def test_lockfile_detection_is_case_sensitive(tmp_path: Path) -> None:
+    """A lockfile with wrong case (e.g., Package-Lock.json) is not detected.
+
+    This test pins case-sensitivity against case-folding filesystems (e.g.,
+    macOS APFS), where a naive .exists() probe would incorrectly match. The
+    implementation uses iterdir() set-membership instead. Do not simplify
+    this away as "redundant on case-sensitive filesystems" — the bug it
+    prevents (silent mismatch on case-folding systems) was real and costly.
+    """
+    (tmp_path / "Package-Lock.json").write_text("", encoding="utf-8")
+    assert detect_package_manager(project_at(tmp_path)) is None
+
+
 def test_require_returns_the_manager_when_one_is_present(tmp_path: Path) -> None:
     (tmp_path / "pnpm-lock.yaml").write_text("", encoding="utf-8")
     assert require_package_manager(project_at(tmp_path)).name == "pnpm"
