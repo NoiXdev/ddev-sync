@@ -33,7 +33,10 @@ packages = ["src/ddev_sync"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=ddev_sync --cov-report=term-missing --cov-fail-under=100 -q"
+addopts = "--cov=ddev_sync --cov-report=term-missing --cov-fail-under=100 -q -m 'not integration'"
+markers = [
+    "integration: runs against real containers; excluded from the coverage gate",
+]
 
 [tool.coverage.run]
 source = ["src/ddev_sync"]

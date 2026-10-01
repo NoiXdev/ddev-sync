@@ -103,11 +103,20 @@ def _env_candidates(context: ExecutionContext) -> list[str]:
 
 
 def _fetch_first_env_file(context: ExecutionContext, candidates: list[str]) -> tuple[str, str]:
+    """Build a remote probe script that tries each candidate path in turn.
+
+    Each `if ... fi` must be terminated with `;` (or a newline) before the
+    next one starts: `fi if` with only a space between them is a shell
+    syntax error on both `sh` and `bash`, not something either parses as two
+    statements. A `FakeCommandRunner` never executes this string, so the
+    bug this leaves behind is invisible to unit tests - only a real shell
+    catches it, which is exactly why the integration suite exists.
+    """
     paths = [context.remote_data(name) for name in candidates]
-    tests = " ".join(
+    tests = "; ".join(
         f'if [ -f "{path}" ]; then echo "{path}"; cat "{path}"; exit 0; fi' for path in paths
     )
-    script = f"{tests} exit 9"
+    script = f"{tests}; exit 9"
     result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]))
     if not result.ok:
         looked = ", ".join(paths)

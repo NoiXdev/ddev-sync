@@ -1,0 +1,76 @@
+# A stand-in production host: an sshd with the project layout the profiles
+# expect, and a database beside it.
+name: ddev-sync-integration
+
+services:
+  remote:
+    image: linuxserver/openssh-server:latest
+    environment:
+      - PUBLIC_KEY_FILE=/keys/id_ed25519.pub
+      - USER_NAME=deploy
+      - SUDO_ACCESS=false
+      - PASSWORD_ACCESS=false
+      # There is no `openssh-server-mysql-client` mod: the linuxserver
+      # docker-mods repository (branches, one per mod) has no such branch.
+      # `universal-package-install` is the generic mod that installs an
+      # arbitrary apk/apt package list at startup; `mariadb-client` is the
+      # Alpine package that provides `mysqldump`, and `rsync` is needed on
+      # this side too - the client-side `rsync` invoked locally connects
+      # over ssh to an `rsync --server` process that has to exist here.
+      - DOCKER_MODS=linuxserver/mods:universal-package-install
+      - INSTALL_PACKAGES=mariadb-client|rsync
+    volumes:
+      - ./.keys:/keys:ro
+      - ./fixtures/remote:/srv/app
+    ports:
+      - "127.0.0.1:22022:2222"
+    # Neither this image nor `mariadb:11` below ships a built-in HEALTHCHECK,
+    # so without one `docker compose up --wait` has nothing to wait on and
+    # reports "healthy" the instant the container starts - well before sshd
+    # is listening or DOCKER_MODS has finished installing the mysql client.
+    # Checking for both the authorized key and the installed client, not
+    # just the port, is what actually proves the mod finished.
+    # `mariadb-client` pulls in enough of its own dependency chain (observed
+    # up to ~70s on a cold apk cache) that the original 30 retries * 2s = 60s
+    # budget intermittently timed out before the mod finished installing,
+    # not before sshd was ready. 60 * 3s = 180s leaves real headroom; an
+    # already-warm cache still finishes in a few seconds either way.
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /config/.ssh/authorized_keys && command -v mysqldump && command -v rsync && nc -z localhost 2222"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+
+  db:
+    image: mariadb:11
+    environment:
+      - MARIADB_ROOT_PASSWORD=root
+      - MARIADB_DATABASE=acme_prod
+      - MARIADB_USER=acme
+      - MARIADB_PASSWORD=s3cret
+    volumes:
+      - ./fixtures/seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  local-db:
+    image: mariadb:11
+    environment:
+      - MARIADB_ROOT_PASSWORD=root
+      - MARIADB_DATABASE=db
+      - MARIADB_USER=db
+      - MARIADB_PASSWORD=db
+    ports:
+      - "127.0.0.1:23306:3306"
+    networks:
+      default:
+        aliases:
+          - ddev-acme-db
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

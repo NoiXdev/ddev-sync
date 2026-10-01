@@ -6,3 +6,6 @@ __pycache__/
 .ruff_cache/
 .venv/
 dist/
+
+tests/integration/.keys/
+tests/integration/fixtures/remote/
