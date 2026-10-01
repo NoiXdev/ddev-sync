@@ -215,21 +215,55 @@ def test_a_feature_using_PM_without_a_lockfile_names_the_lockfiles(
 def test_explicit_features_keep_their_written_order(
     tmp_path: Path, registry: FeatureRegistry
 ) -> None:
+    # Written deliberately reversed from alphabetical ("manual-only" < "node-build")
+    # so a regression that sorted the explicit list instead of preserving
+    # written order would make this assertion fail rather than pass by luck.
     root = with_laravel_project(tmp_path, node=True)
-    requests = [Request("manual-only", {}, SOURCE), Request("node-build", {}, SOURCE)]
+    requests = [Request("node-build", {}, SOURCE), Request("manual-only", {}, SOURCE)]
     resolution = resolve_features(registry, project_at(root), "laravel", requests, True)
-    assert [a.feature.name for a in resolution.activated] == ["manual-only", "node-build"]
+    assert [a.feature.name for a in resolution.activated] == ["node-build", "manual-only"]
 
 
 def test_detected_features_are_alphabetical_so_the_plan_is_stable(
-    tmp_path: Path, registry: FeatureRegistry
+    tmp_path: Path,
 ) -> None:
-    root = with_laravel_project(tmp_path, filament=True, node=True)
-    first = resolve_features(registry, project_at(root), "laravel", None, True)
-    second = resolve_features(registry, project_at(root), "laravel", None, True)
+    # Three features, declared and matched in an order ("zeta", "mike", "alpha")
+    # that is neither alphabetical nor its reverse, so a set-iteration or
+    # dict-ordering bug - or a regression that just reversed the list -
+    # would not pass by accident the way two items can.
+    features = tmp_path / "features"
+    for name in ("zeta", "mike", "alpha"):
+        write(
+            features,
+            f"{name}.yaml",
+            f"name: {name}\n"
+            f"detect:\n  file_exists: {name}.marker\n"
+            f"setup:\n  commands:\n    - run: echo {name}\n",
+        )
+    root = tmp_path / "project"
+    root.mkdir()
+    for name in ("zeta", "mike", "alpha"):
+        (root / f"{name}.marker").write_text("", encoding="utf-8")
+    registry_3 = FeatureRegistry(features)
+    first = resolve_features(registry_3, project_at(root), "laravel", None, True)
+    second = resolve_features(registry_3, project_at(root), "laravel", None, True)
     names = [a.feature.name for a in first.activated]
     assert names == [a.feature.name for a in second.activated]
+    assert names == ["alpha", "mike", "zeta"]
     assert names == sorted(names)
+
+
+def test_a_detected_feature_without_a_package_manager_is_silently_dropped(
+    tmp_path: Path, registry: FeatureRegistry
+) -> None:
+    # package.json exists (so node-build's detect block matches) but no
+    # lockfile does. Detection is a guess, so a guess that ${PM} cannot
+    # fulfil is dropped quietly, exactly like an out-of-scope applies_to
+    # candidate - never an error, never even mentioned.
+    root = with_laravel_project(tmp_path)
+    (root / "package.json").write_text("{}", encoding="utf-8")
+    resolution = resolve_features(registry, project_at(root), "laravel", None, True)
+    assert "node-build" not in [a.feature.name for a in resolution.activated]
 
 
 def test_an_out_of_scope_explicit_request_names_the_feature_and_the_profile(

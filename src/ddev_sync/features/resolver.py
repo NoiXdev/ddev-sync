@@ -56,17 +56,28 @@ def resolve_features(
     `requests` is None when no `features:` key was written, which is the cue
     to detect. An empty sequence means "none, deliberately".
     """
+    candidates: list[tuple[ActivatedFeature, bool]]
     if requests is not None:
-        activated = [_from_request(registry, profile_name, request) for request in requests]
+        candidates = [
+            (_from_request(registry, profile_name, request), True) for request in requests
+        ]
     elif detect_enabled:
-        activated = _detected(registry, project, profile_name)
+        candidates = [(entry, False) for entry in _detected(registry, project, profile_name)]
     else:
-        activated = []
+        candidates = []
 
-    layers = tuple(_layer(entry, project) for entry in activated)
+    activated: list[ActivatedFeature] = []
+    layers: list[LayerDoc] = []
+    for entry, explicit in candidates:
+        layer = _layer(entry, project, explicit=explicit)
+        if layer is None:
+            continue
+        activated.append(entry)
+        layers.append(layer)
+
     return FeatureResolution(
         activated=tuple(activated),
-        layers=layers,
+        layers=tuple(layers),
         detection_enabled=detect_enabled,
     )
 
@@ -100,6 +111,12 @@ def _detected(
     names something impossible and deserves to be told, while detection
     simply never considers a candidate that could not apply, silently.
 
+    The same rule governs the package manager gate in `_layer`: a detected
+    feature that needs `${PM}` but finds no lockfile is dropped exactly like
+    an out-of-scope detected feature, while an explicitly requested one
+    raises. One principle, two applications - `applies_to` and the package
+    manager - so do not read the duplication as two unrelated special cases.
+
     `registry.available()` already returns sorted names, which is where the
     alphabetical ordering of detected features comes from; there is no
     separate sort here so there is exactly one source of the order.
@@ -131,16 +148,29 @@ def _describe(detect: dict[str, Any]) -> str:
     return str(value)
 
 
-def _layer(entry: ActivatedFeature, project: DdevProject) -> LayerDoc:
-    """Expand a feature's contribution into a merge layer."""
+def _layer(entry: ActivatedFeature, project: DdevProject, *, explicit: bool) -> LayerDoc | None:
+    """Expand a feature's contribution into a merge layer, or None to drop it.
+
+    `explicit` carries the activation's origin down from `resolve_features`,
+    which is the only place that still knows whether this entry came from a
+    request or from detection by the time the package manager is resolved.
+    The asymmetry mirrors `applies_to`: an explicit request that needs ${PM}
+    but finds no lockfile is an instruction that cannot be fulfilled, so it
+    raises and names every lockfile searched. A detected feature in the same
+    situation is only a guess - package.json without a lockfile is an
+    ordinary state (a fresh checkout before `npm install`, a repo that
+    gitignores its lockfile) - so it is silently not a candidate, exactly
+    like a detected feature that fails `applies_to`.
+    """
     substitutions = {f"${{{key}}}": value for key, value in entry.settings.items()}
     if _uses_package_manager(entry.feature.data):
         manager = detect_package_manager(project)
         if manager is None:
-            require_package_manager(project)  # raises, naming every lockfile
-        else:
-            substitutions["${PM}"] = manager.name
-            substitutions["${PM_RUN}"] = manager.run
+            if explicit:
+                require_package_manager(project)  # raises, naming every lockfile
+            return None
+        substitutions["${PM}"] = manager.name
+        substitutions["${PM_RUN}"] = manager.run
     return LayerDoc(
         label=f"feature:{entry.feature.name}",
         data=_expand(entry.feature.data, substitutions),
