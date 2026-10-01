@@ -22,6 +22,43 @@ _NO_USER_DATA: frozenset[str] = frozenset(
     }
 )
 
+# Sanitize rules whose table is optional - present only under some project
+# configuration or optional package, not guaranteed by the framework's core -
+# named here, by (profile, rule name), with why. `_run_sql` raises
+# unconditionally and the executor stops at the first failed rule (spec §9),
+# so a rule in this set MUST carry `tolerate_missing_table`: otherwise a
+# project lacking that one optional table never reaches any rule after it,
+# which is exactly how `clear-scheduler-tasks` (profiles/typo3.yaml),
+# `horizon_jobs`/`horizon_supervisors` (features/horizon.yaml, removed) and
+# this profile's own sessions/jobs/failed_jobs rules were each found to abort
+# sanitize right after the database import, with real customer data and
+# password hashes left on the laptop. This is the ratchet asked for by the
+# final whole-branch review's Fix 4: it cannot mechanically prove a table is
+# "optional" (that is a fact about the framework, not the YAML), but it DOES
+# mechanically enforce that every table this review identified as optional
+# carries the one flag that keeps a missing one from taking the rest of the
+# rules down with it - a regression dropping the flag from any of these, or
+# a profile adding a new optional-table rule without it, fails here.
+_OPTIONAL_TABLE_RULES: dict[str, frozenset[str]] = {
+    # `sessions`: only with the `database` session driver (this profile
+    # defaults to `file`). `jobs`/`failed_jobs`: only if the queue:table /
+    # queue:failed-table migrations were run - never true for a Redis- or
+    # SQS-backed queue, e.g. a project using the `horizon` feature.
+    "laravel": frozenset({"clear-sessions", "clear-jobs", "clear-failed-jobs"}),
+    # EXT:scheduler (`typo3/cms-scheduler`) is a separate, non-default
+    # Composer package; a project that never required it has no
+    # `tx_scheduler_task` table. See the long comment in typo3.yaml.
+    "typo3": frozenset({"clear-scheduler-tasks"}),
+    # `watchdog` belongs to Database Logging (dblog), a core module that can
+    # be disabled - and commonly is in production - in favour of `syslog`,
+    # which needs no table at all.
+    "drupal": frozenset({"clear-watchdog"}),
+    # `messenger_messages` is created lazily on first use of the Doctrine
+    # Messenger transport; a project using a different transport (AMQP,
+    # Redis, sync) or `auto_setup: false` has no such table.
+    "symfony": frozenset({"clear-messenger"}),
+}
+
 
 def _declares_anonymise_or_reset_rule(rules: list[dict[str, Any]]) -> bool:
     for rule in rules:
@@ -113,6 +150,33 @@ def test_no_variant_declares_a_duplicate_sanitize_rule_name(name: str, major: st
         "runs twice, which hides a copy-paste mistake exactly like the one this check "
         "exists to catch."
     )
+
+
+@pytest.mark.parametrize(("name", "major"), variants())
+def test_rules_touching_an_optional_table_tolerate_its_absence(
+    name: str, major: str | None
+) -> None:
+    # See `_OPTIONAL_TABLE_RULES` above for why this exists and what it can
+    # and cannot prove.
+    optional = _OPTIONAL_TABLE_RULES.get(name, frozenset())
+    if not optional:
+        return
+    rules = {
+        str(rule["name"]): rule
+        for rule in REGISTRY.resolve(name, major).data.get("sanitize", {}).get("rules", [])
+    }
+    for rule_name in optional:
+        rule = rules.get(rule_name)
+        assert rule is not None, (
+            f"{name}@{major}: _OPTIONAL_TABLE_RULES names a rule {rule_name!r} that this "
+            "variant does not declare - update the allowlist or the profile."
+        )
+        assert rule.get("tolerate_missing_table") is True, (
+            f"{name}@{major}: rule {rule_name!r} touches a table documented as optional "
+            "(see _OPTIONAL_TABLE_RULES) but does not set tolerate_missing_table - a "
+            "project missing that table would abort every sanitize rule after this one, "
+            "with the database already imported."
+        )
 
 
 @pytest.mark.parametrize(("name", "major"), variants())

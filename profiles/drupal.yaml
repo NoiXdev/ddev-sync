@@ -21,8 +21,18 @@ sanitize:
   rules:
     - name: clear-sessions
       sql: "TRUNCATE TABLE sessions"
+    # `watchdog` belongs to Database Logging (dblog), a core module that can
+    # be - and, on many production sites, deliberately is - disabled in
+    # favour of the `syslog` module, which logs to the OS instead of the
+    # database and so needs no table at all (see drupal.org's dblog/syslog
+    # module pages). Without tolerate_missing_table, a project that disabled
+    # dblog would fail this rule and never reach anonymize-users or
+    # reset-user-passwords below, leaving real editor data on the laptop
+    # with the database already imported - the same bug class
+    # profiles/typo3.yaml's clear-scheduler-tasks guards against.
     - name: clear-watchdog
       sql: "TRUNCATE TABLE watchdog"
+      tolerate_missing_table: true
     - name: anonymize-users
       sql: "UPDATE users_field_data SET mail = CONCAT('user', uid, '@example.invalid') WHERE uid > 0"
     # Unverified: table/column name assumed from Drupal core's conventional

@@ -41,14 +41,32 @@ files:
 
 sanitize:
   rules:
-    # These TRUNCATE tables that may not exist depending on project config
-    # (e.g. sessions only exists with the `database` session driver, not
-    # `file`). That is deliberate: a missing table fails loudly with the
-    # rule's own name, and the project removes the rule it does not need
-    # in its own .ddev/ddev-sync.yaml rather than the engine guessing.
-    - { name: clear-sessions, sql: "TRUNCATE TABLE sessions" }
-    - { name: clear-jobs, sql: "TRUNCATE TABLE jobs" }
-    - { name: clear-failed-jobs, sql: "TRUNCATE TABLE failed_jobs" }
+    # These TRUNCATE tables that may not exist depending on project config:
+    # `sessions` only exists with the `database` session driver (not `file`,
+    # the profile's own default - see env.set.SESSION_DRIVER above); `jobs`
+    # and `failed_jobs` only exist if the project ran the `queue:table` /
+    # `queue:failed-table` migrations, which a Redis- or SQS-backed queue
+    # never needs. `_run_sql` raises unconditionally and the executor stops
+    # at the first failed rule (spec §9), so without `tolerate_missing_table`
+    # a project missing any one of these - plausibly all three, on a fresh
+    # Redis-queue install - never reaches `anonymize-users` or
+    # `reset-user-passwords` below: real customer emails and password hashes
+    # would stay on the developer's machine, with the database already
+    # imported. This is the same bug class `tolerate_missing_table` was
+    # added for in profiles/typo3.yaml's `clear-scheduler-tasks` (see that
+    # file's comment) - overruling an earlier version of this comment here,
+    # which argued a missing table should fail loudly. That argument loses
+    # to "a sanitize rule that can run either runs or fails loudly, and a
+    # rule that fails loudly must not also take the rules after it down with
+    # it" - tolerate_missing_table swallows only "table doesn't exist"
+    # (MySQL errno 1146); any other failure here still raises as before.
+    - { name: clear-sessions, sql: "TRUNCATE TABLE sessions", tolerate_missing_table: true }
+    - { name: clear-jobs, sql: "TRUNCATE TABLE jobs", tolerate_missing_table: true }
+    - {
+        name: clear-failed-jobs,
+        sql: "TRUNCATE TABLE failed_jobs",
+        tolerate_missing_table: true,
+      }
     - name: anonymize-users
       sql: "UPDATE users SET email = CONCAT('user', id, '@example.invalid')"
     - name: reset-user-passwords

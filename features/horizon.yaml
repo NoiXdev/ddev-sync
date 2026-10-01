@@ -11,8 +11,17 @@
 # is the one that actually does the job, because the real state is in Redis.
 #
 # Horizon is a feature rather than a base-profile rule because its presence
-# genuinely varies. The BASELINE Laravel queue tables - jobs, failed_jobs -
-# are sanitized by profiles/laravel.yaml, where they cannot be forgotten.
+# genuinely varies. profiles/laravel.yaml's own `jobs`/`failed_jobs` rules
+# are NOT a safety net for Horizon specifically: Horizon is Redis-backed, so
+# a project that actually runs it typically has no `jobs`/`failed_jobs`
+# tables to begin with (that pair only exists for the database queue driver,
+# via the queue:table/queue:failed-table migrations) - truncating them there
+# is at best a no-op on a Horizon project, not an assurance about Horizon's
+# own state. (It is also no longer able to abort the sync if those tables
+# are absent: both rules carry tolerate_missing_table, the same guard this
+# file's own comment above describes for the two Horizon-specific tables
+# that turned out not to exist.) What actually protects a Horizon project is
+# `horizon:clear` below, against Redis, where Horizon's real state lives.
 # See the features design doc §5.1.
 name: horizon
 description: Clear Horizon's Redis-backed queue state so no production job runs locally.

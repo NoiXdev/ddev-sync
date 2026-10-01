@@ -52,8 +52,21 @@ sanitize:
     # not its own store - a schedule's generated messages are consumed like
     # any other Messenger message, so their state already lives in the table
     # this rule truncates. See profiles/VERIFIED.md for the check.
+    #
+    # `messenger_messages` only exists once the Doctrine transport has
+    # actually been used: Symfony creates it lazily on first send/get unless
+    # `auto_setup` is disabled, and a project that routes every message
+    # through a different transport (AMQP, Redis, or the synchronous
+    # transport) or sets `auto_setup: false` has no such table at all. This
+    # rule is last in the list, so a missing table here is otherwise
+    # harmless on its own - but §5.1 of the features design doc is explicit
+    # that Messenger/Scheduler state must always be cleared, not merely
+    # "cleared when the table happens to exist", so the same
+    # tolerate_missing_table used for profiles/typo3.yaml's optional
+    # scheduler table applies here too.
     - name: clear-messenger
       sql: "TRUNCATE TABLE messenger_messages"
+      tolerate_missing_table: true
 
 setup:
   commands:
