@@ -8,6 +8,7 @@ profile's, and two implementations of one rule drift.
 from typing import Any
 
 from ddev_sync.errors import FeatureError
+from ddev_sync.features import detect
 from ddev_sync.profiles import schema as profile_schema
 
 FEATURE_TOP_LEVEL = frozenset(
@@ -15,7 +16,7 @@ FEATURE_TOP_LEVEL = frozenset(
         "name",
         "description",
         "applies_to",
-        "detect",  # Vocabulary validated in Task 2; accepted as any mapping here.
+        "detect",
         "settings",
         "env",
         "database",
@@ -43,6 +44,7 @@ def validate_feature(data: dict[str, Any]) -> None:
         )
 
     _validate_applies_to(str(name), data.get("applies_to"))
+    _validate_detect(str(name), data.get("detect"))
     _validate_settings(str(name), data.get("settings"))
     _validate_contribution(str(name), data)
 
@@ -52,6 +54,12 @@ def _validate_applies_to(name: str, applies_to: Any) -> None:
         return
     if not isinstance(applies_to, list) or not all(isinstance(entry, str) for entry in applies_to):
         raise FeatureError(f"feature {name!r}: 'applies_to' must be a list of profile names")
+
+
+def _validate_detect(name: str, detect_block: Any) -> None:
+    if detect_block is None:
+        return
+    detect.validate_predicate(name, detect_block)
 
 
 def _validate_settings(name: str, settings: Any) -> None:

@@ -60,3 +60,27 @@ def test_a_contribution_is_validated_by_the_profile_rules() -> None:
     with pytest.raises(FeatureError) as caught:
         validate_feature({**MINIMAL, "files": {"paths": [{"remote": "a/"}]}})
     assert "local" in str(caught.value)
+
+
+def test_detect_with_unknown_predicate_is_rejected() -> None:
+    with pytest.raises(FeatureError) as caught:
+        validate_feature({**MINIMAL, "detect": {"unknown_key": "value"}})
+    message = str(caught.value)
+    assert "node-build" in message
+    assert "unknown" in message.lower()
+
+
+def test_detect_with_any_of_not_a_list_is_rejected() -> None:
+    with pytest.raises(FeatureError) as caught:
+        validate_feature({**MINIMAL, "detect": {"any_of": {"nested": "dict"}}})
+    message = str(caught.value)
+    assert "node-build" in message
+
+
+def test_a_valid_detect_block_passes() -> None:
+    validate_feature(
+        {
+            **MINIMAL,
+            "detect": {"composer_package": "laravel/framework"},
+        }
+    )
