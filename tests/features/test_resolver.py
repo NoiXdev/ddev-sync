@@ -75,7 +75,7 @@ def test_detection_reports_why_each_feature_is_active(
 ) -> None:
     root = with_laravel_project(tmp_path, filament=True)
     resolution = resolve_features(registry, project_at(root), "laravel", None, True)
-    assert resolution.activated[0].reason == "detected: filament/filament"
+    assert resolution.activated[0].reason == "detected: composer package filament/filament"
 
 
 def test_a_feature_with_no_detect_block_is_never_auto_activated(
@@ -292,9 +292,12 @@ def test_an_out_of_scope_feature_is_simply_not_detected(
     assert resolution.activated == ()
 
 
-def test_detection_describes_a_combined_predicate_by_its_combinator(
+def test_detection_describes_a_combined_predicate_by_naming_each_nested_one(
     tmp_path: Path,
 ) -> None:
+    # The bare combinator name ("detected: any_of") used to say nothing
+    # about what was actually checked; each nested predicate is now named
+    # too, recursively, the same way a single predicate would be.
     features = tmp_path / "features"
     write(
         features,
@@ -309,7 +312,49 @@ def test_detection_describes_a_combined_predicate_by_its_combinator(
     resolution = resolve_features(
         FeatureRegistry(features), project_at(root), "laravel", None, True
     )
-    assert resolution.activated[0].reason == "detected: any_of"
+    assert (
+        resolution.activated[0].reason == "detected: any of: file package.json, file composer.json"
+    )
+
+
+def test_detection_describes_a_file_exists_predicate(
+    tmp_path: Path, registry: FeatureRegistry
+) -> None:
+    root = with_laravel_project(tmp_path, node=True)
+    resolution = resolve_features(registry, project_at(root), "laravel", None, True)
+    reasons = {a.feature.name: a.reason for a in resolution.activated}
+    assert reasons["node-build"] == "detected: file package.json"
+
+
+def test_detection_describes_an_npm_package_predicate(tmp_path: Path) -> None:
+    features = tmp_path / "features"
+    write(
+        features,
+        "vite.yaml",
+        "name: vite\ndetect:\n  npm_package: vite\nsetup:\n  commands:\n    - run: echo vite\n",
+    )
+    root = tmp_path
+    (root / "package.json").write_text(json.dumps({"dependencies": {"vite": "^5"}}), "utf-8")
+    resolution = resolve_features(
+        FeatureRegistry(features), project_at(root), "laravel", None, True
+    )
+    assert resolution.activated[0].reason == "detected: npm package vite"
+
+
+def test_detection_describes_an_npm_script_predicate(tmp_path: Path) -> None:
+    features = tmp_path / "features"
+    write(
+        features,
+        "has-build-script.yaml",
+        "name: has-build-script\ndetect:\n  npm_script: build\n"
+        "setup:\n  commands:\n    - run: echo build\n",
+    )
+    root = tmp_path
+    (root / "package.json").write_text(json.dumps({"scripts": {"build": "vite build"}}), "utf-8")
+    resolution = resolve_features(
+        FeatureRegistry(features), project_at(root), "laravel", None, True
+    )
+    assert resolution.activated[0].reason == "detected: npm script build"
 
 
 def test_a_non_string_leaf_in_a_feature_contribution_passes_through_unexpanded(

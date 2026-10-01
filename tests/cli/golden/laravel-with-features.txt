@@ -2,8 +2,8 @@
   acme  -  deploy@web01.example:22  /srv/app/
   Nothing will be executed.
 
-  Features  filament    detected: filament/filament
-            node-build  detected: package.json
+  Features  filament    detected: composer package filament/filament
+            node-build  detected: file package.json
 
    1  preflight     remote  ssh -p 22 deploy@web01.example   [built-in]
    2  setup         local   composer install --no-interaction   [profile:laravel]

@@ -411,7 +411,7 @@ def test_a_real_feature_contributes_a_step_to_the_plan(
     assert code == 0
     output = capsys.readouterr().out
     assert "Features  filament" in output
-    assert "detected: filament/filament" in output
+    assert "detected: composer package filament/filament" in output
 
 
 def test_keep_dump_defaults_to_false_without_a_defaults_block() -> None:

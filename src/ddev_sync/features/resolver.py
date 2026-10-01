@@ -149,12 +149,40 @@ def _detected(
     return activated
 
 
+# Every predicate `features/detect.py::PREDICATES` knows about, except
+# `any_of`/`all_of` (handled separately in `_describe` below, since they
+# combine other predicates rather than naming a fact themselves) gets its
+# own label here. A bare `str(value)` cannot tell a reader `composer_package:
+# filament/filament` from `npm_package: filament` - both would render as the
+# identical "detected: filament" - so each predicate says what kind of fact
+# it checked, not just the value.
+_PREDICATE_LABELS: dict[str, str] = {
+    "composer_package": "composer package",
+    "npm_package": "npm package",
+    "npm_script": "npm script",
+    "file_exists": "file",
+}
+
+
 def _describe(detect: dict[str, Any]) -> str:
-    """A short human-readable rendering of what matched."""
+    """A short, human-readable rendering of what matched - specific enough
+    for a user to act on, not just the bare value.
+
+    `composer_package: filament/filament` and `npm_package: vite` used to
+    both render as the bare value ("detected: filament/filament"), reading
+    as the same kind of fact when they are not; `any_of`/`all_of` used to
+    collapse to the literal word "any_of"/"all_of", naming the combinator
+    but nothing about what it combined. This labels every predicate by kind,
+    and recurses into `any_of`/`all_of` so their nested predicates are named
+    too, rather than hidden behind the combinator's own name.
+    """
     key, value = next(iter(detect.items()))
     if key in {"any_of", "all_of"}:
-        return key
-    return str(value)
+        combinator = "any of" if key == "any_of" else "all of"
+        parts = ", ".join(_describe(entry) for entry in value)
+        return f"{combinator}: {parts}"
+    label = _PREDICATE_LABELS.get(key, key)
+    return f"{label} {value}"
 
 
 def _layer(entry: ActivatedFeature, project: DdevProject, *, explicit: bool) -> LayerDoc | None:
