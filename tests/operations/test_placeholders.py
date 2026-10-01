@@ -82,6 +82,32 @@ def test_ddev_docroot_expands_to_a_dot_when_the_docroot_is_the_project_root(
     assert expand_value("${DDEV_DOCROOT}/fileadmin", context) == "./fileadmin"
 
 
+def test_ddev_docroot_rejects_an_absolute_path(tmp_path: Path) -> None:
+    # `DdevProject.docroot` is read verbatim from `.ddev/config.yaml` and
+    # never normalised (`ddev/project.py::read_ddev_project`). ${DDEV_DOCROOT}
+    # ends up directly in a `run:` string (features/typo3-processedfiles.yaml's
+    # `rm -rf`) - unlike `files.paths`, nothing downstream runs a `run:`
+    # string through `context.local()`'s containment check, so an absolute
+    # docroot would otherwise reach the shell exactly as written.
+    context = make_context(FakeCommandRunner(), tmp_path, docroot="/etc")
+    with pytest.raises(OperationError) as caught:
+        expand_value("${DDEV_DOCROOT}/fileadmin", context)
+    message = str(caught.value)
+    assert "docroot" in message
+    assert "/etc" in message
+
+
+def test_ddev_docroot_rejects_a_path_containing_dotdot(tmp_path: Path) -> None:
+    # The dangerous case: "../../etc" turns `rm -rf ${DDEV_DOCROOT}/...` into
+    # `rm -rf ../../etc/...`, executed with cwd at the project root.
+    context = make_context(FakeCommandRunner(), tmp_path, docroot="../../etc")
+    with pytest.raises(OperationError) as caught:
+        expand_value("${DDEV_DOCROOT}/fileadmin", context)
+    message = str(caught.value)
+    assert "docroot" in message
+    assert "../../etc" in message
+
+
 # --- ${WP_TABLE_PREFIX} -----------------------------------------------------
 
 WP_CLI_SOURCE: dict[str, Any] = {"database": {"remote_credentials": "wp_cli"}}

@@ -51,6 +51,28 @@ def _validated_identifier(value: str, *, source: str) -> str:
     return value
 
 
+def _validated_docroot(docroot: str) -> str:
+    """Reject a docroot that could escape the project root once spliced into
+    a shell command.
+
+    `DdevProject.docroot` is read verbatim from `.ddev/config.yaml` and never
+    normalised (`ddev/project.py::read_ddev_project`). ${DDEV_DOCROOT} ends
+    up directly in a `run:` string (features/typo3-processedfiles.yaml's
+    `rm -rf`) - unlike `files.paths`, nothing downstream runs a `run:` string
+    through `context.local()`'s containment check, so a docroot of e.g.
+    "../../etc" would otherwise turn that command into
+    `rm -rf ../../etc/fileadmin/_processed_`, run with cwd at the project
+    root. Rejecting here, where the placeholder resolves, is the one place
+    that can still catch it.
+    """
+    if docroot.startswith("/") or ".." in docroot:
+        raise OperationError(
+            f"docroot {docroot!r} (from .ddev/config.yaml) is not safe to use "
+            "in a shell command - it must be a relative path with no '..' segment"
+        )
+    return docroot
+
+
 def _cached(context: ExecutionContext, key: str, resolve: Callable[[], str]) -> str:
     """Run `resolve` at most once per `context`, keyed by `key`.
 
@@ -107,7 +129,7 @@ def _substitutions(context: ExecutionContext) -> dict[str, Callable[[], str]]:
         # one kind of setup command (`rm -rf`, see
         # features/typo3-processedfiles.yaml) where that distinction is
         # destructive rather than merely wrong.
-        "${DDEV_DOCROOT}": lambda: context.project.docroot or ".",
+        "${DDEV_DOCROOT}": lambda: _validated_docroot(context.project.docroot) or ".",
         "${SYNC_TARGET_DATABASE}": lambda: context.config("database.target_database", default="db"),
         "${WP_TABLE_PREFIX}": lambda: _cached(
             context, "${WP_TABLE_PREFIX}", lambda: _resolve_wp_table_prefix(context)
