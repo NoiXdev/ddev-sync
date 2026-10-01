@@ -193,6 +193,53 @@ def test_a_present_scheduler_table_is_still_truncated(project: Path, tmp_path: P
         remote_db_exec("DROP TABLE IF EXISTS tx_scheduler_task;")
 
 
+def test_the_sanitize_table_probe_aborts_before_the_dump_when_a_table_is_missing(
+    project: Path, tmp_path: Path
+) -> None:
+    """Part 3: operations/preflight.py lists the remote database's tables
+    and checks every non-tolerated `requires_table` before the dump starts.
+    This is the one thing the FakeCommandRunner-based unit tests cannot
+    prove: that the real `SHOW TABLES` invocation (via the dockerized
+    `mysql`/`mariadb-admin` wrapper, over the real ssh connection) actually
+    works against a real server, not just a scripted stand-in.
+    """
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\n"
+        "targets:\n"
+        "  production:\n"
+        "    host: 127.0.0.1\n"
+        "    user: deploy\n"
+        "    port: 22022\n"
+        "    path: /srv/app/plain/\n"
+        "    stage: production\n"
+        "sanitize:\n"
+        "  rules:\n"
+        "    mode: replace\n"
+        "    values:\n"
+        "      - name: anonymize-missing\n"
+        '        sql: "UPDATE no_such_table SET x = 1"\n'
+        "        requires_table: no_such_table\n",
+        encoding="utf-8",
+    )
+    code = main(
+        [
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--target",
+            "production",
+            "--steps",
+            "db,sanitize",
+            "--yes",
+        ]
+    )
+    assert code == 1
+    assert not (project / ".ddev" / ".downloads" / "dump.sql").exists()
+
+
 def test_the_dump_is_removed_after_the_import(project: Path, tmp_path: Path) -> None:
     main(
         [

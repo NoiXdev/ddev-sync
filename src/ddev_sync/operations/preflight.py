@@ -177,7 +177,8 @@ def _show_tables_argv(credentials: RemoteCredentials) -> list[str]:
         f"--port={credentials.port}",
         "--batch",
         "--skip-column-names",
-        "--execute=SHOW TABLES",
+        "--execute",
+        "SHOW TABLES",
         credentials.name,
     ]
 
