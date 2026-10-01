@@ -9,6 +9,7 @@ from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.sanitize import (
     SANITIZE_OPERATIONS,
     SanitizeRule,
+    is_missing_table_error,
     local_mysql_argv,
 )
 
@@ -37,10 +38,19 @@ def _identifier(value: str) -> str:
 
 
 def _run_sql(context: ExecutionContext, rule: SanitizeRule, sql: str) -> None:
+    """Run `sql` for `rule`, honouring `tolerate_missing_table` exactly like
+    `SanitizeOperation._run_sql` does for a plain `sql:` rule - the three
+    operations that reach here (`ClearMailConfig`, `ResetPasswords`,
+    `SearchReplace`'s sql driver) build and run SQL against a named table
+    too, so the identical errno 1146 is just as possible for them.
+    """
     database = context.config("database.target_database", default="db")
     result = context.runner.run(local_mysql_argv(context, database, sql=sql))
-    if not result.ok:
-        raise OperationError(f"sanitize rule {rule.name!r} failed: {result.stderr.strip()}")
+    if result.ok:
+        return
+    if rule.tolerate_missing_table and is_missing_table_error(result.stderr):
+        return
+    raise OperationError(f"sanitize rule {rule.name!r} failed: {result.stderr.strip()}")
 
 
 class ClearMailConfig:

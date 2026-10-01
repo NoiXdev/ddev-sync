@@ -205,20 +205,55 @@ def test_tolerate_missing_table_still_raises_on_a_different_sql_error(tmp_path: 
     assert "Access denied" in message
 
 
-def test_tolerate_missing_table_on_an_operation_rule_is_rejected(tmp_path: Path) -> None:
-    # The flag only means something for a `sql` rule that might target a
-    # table that does not exist; an `operation` rule has nowhere for it to
-    # apply, so it is rejected at parse time rather than silently ignored.
+def test_tolerate_missing_table_is_accepted_on_an_operation_rule(tmp_path: Path) -> None:
+    # Previously rejected at parse time, on the assumption that an
+    # `operation` rule's failure could never be a missing-table error. That
+    # assumption does not hold: `reset_passwords`, `clear_mail_config` and
+    # `search_replace`'s sql driver all build and run SQL against a named
+    # table exactly like a plain `sql:` rule does (operations/catalog.py).
     config = {
         "sanitize": {
-            "rules": [{"name": "x", "operation": "flush_cache", "tolerate_missing_table": True}]
+            "rules": [
+                {
+                    "name": "x",
+                    "operation": "reset_passwords",
+                    "table": "fe_users",
+                    "column": "password",
+                    "value": "disabled",
+                    "tolerate_missing_table": True,
+                }
+            ]
         }
     }
-    with pytest.raises(OperationError) as caught:
-        parse_rules(make_context(FakeCommandRunner(), tmp_path, **config))
-    message = str(caught.value)
-    assert "x" in message
-    assert "tolerate_missing_table" in message
+    rule = parse_rules(make_context(FakeCommandRunner(), tmp_path, **config))[0]
+    assert rule.tolerate_missing_table is True
+
+
+def test_tolerate_missing_table_on_an_operation_rule_actually_swallows_1146(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "sanitize": {
+            "rules": [
+                {
+                    "name": "reset-fe-passwords",
+                    "operation": "reset_passwords",
+                    "table": "fe_users",
+                    "column": "password",
+                    "value": "disabled",
+                    "tolerate_missing_table": True,
+                }
+            ]
+        }
+    }
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["mysql"],
+        returncode=1,
+        stderr="ERROR 1146 (42S02) at line 1: Table 'db.fe_users' doesn't exist",
+    )
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert len(runner.calls) == 1
 
 
 def test_requires_table_defaults_to_none(tmp_path: Path) -> None:

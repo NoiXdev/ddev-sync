@@ -196,6 +196,49 @@ def test_sanitize_selected_aborts_before_the_dump_when_a_required_table_is_missi
     assert len(runner.calls) == 2
 
 
+def test_a_lowercase_declared_table_matching_an_uppercase_remote_one_aborts_naming_both(
+    tmp_path: Path,
+) -> None:
+    # Fix 2: MySQL/MariaDB with lower_case_table_names=1 (default on macOS
+    # and Windows servers) would resolve this rule's SQL fine regardless of
+    # case, so this must not be reported as "does not exist" - but it also
+    # must not pass silently, because on a case-sensitive server (the Linux
+    # default) the rule's literal table reference really will fail. Both
+    # spellings must be named.
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="Users\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [{"name": "anonymize-users", "sql": "UPDATE users SET x=1", "requires_table": "users"}],
+    )
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    message = str(caught.value)
+    assert "'users'" in message
+    assert "'Users'" in message
+    assert "does not exist" not in message
+
+
+def test_an_uppercase_declared_table_matching_a_lowercase_remote_one_aborts_naming_both(
+    tmp_path: Path,
+) -> None:
+    # The other direction: the ratchet in test_all_profiles.py and the error
+    # path above must not have a hidden case-sensitivity assumption baked in.
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="users\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [{"name": "anonymize-users", "sql": "UPDATE Users SET x=1", "requires_table": "Users"}],
+    )
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    message = str(caught.value)
+    assert "'Users'" in message
+    assert "'users'" in message
+
+
 def test_a_tolerated_rule_is_exempt_from_the_table_probe(tmp_path: Path) -> None:
     runner = healthy_runner()
     runner.script_prefix(["ssh"], stdout="\n")  # no tables at all on the remote
@@ -240,21 +283,31 @@ def test_an_operation_rules_table_param_is_checked_too(tmp_path: Path) -> None:
 
 
 def test_a_placeholder_table_name_is_resolved_before_comparing(tmp_path: Path) -> None:
+    # Credentials (incl. table_prefix, for a wp_cli source) are memoised on
+    # `context.cache`, so the ssh round trip that resolves
+    # ${WP_TABLE_PREFIX} and the one `_remote_tables` makes for SHOW TABLES
+    # share a single credentials fetch - three ssh calls total: the
+    # connectivity probe, the (memoised) wp-cli credentials read, and
+    # SHOW TABLES.
     runner = healthy_runner()
-    runner.script_prefix(["wp", "config", "get", "table_prefix"], stdout="wptest_\n")
+    runner.script_prefix(["ssh"], stdout="acme_prod\nacme\nsecret\ndb\nwptest_\n")
     runner.script_prefix(["ssh"], stdout="wptest_users\n")
-    context = context_with_rules(
+    context = make_context(
         runner,
         tmp_path,
-        [
-            {
-                "name": "anonymize-users",
-                "sql": "UPDATE x SET y=1",
-                "requires_table": "${WP_TABLE_PREFIX}users",
-            }
-        ],
+        database={"remote_credentials": "wp_cli"},
+        sanitize={
+            "rules": [
+                {
+                    "name": "anonymize-users",
+                    "sql": "UPDATE x SET y=1",
+                    "requires_table": "${WP_TABLE_PREFIX}users",
+                }
+            ]
+        },
     )
     PreflightOperation().execute(context, {"sanitize_selected": True})
+    assert len(runner.calls) == 3
 
 
 def test_a_failed_table_listing_raises_with_the_remote_stderr(tmp_path: Path) -> None:

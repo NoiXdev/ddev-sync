@@ -34,13 +34,22 @@ class ExecutionContext:
     keep_dump: bool = False
     # Mutable on purpose, despite the surrounding frozen dataclass: `frozen`
     # only blocks reassigning a field, not mutating what it points to, and
-    # this needs exactly one dict that lives as long as `context` does.
-    # `operations/placeholders.py` uses it to memoise a placeholder resolver
-    # that shells out (e.g. `${WP_TABLE_PREFIX}`'s `wp config get`) so it runs
-    # at most once per sync even though dozens of sanitize rules each expand
-    # independently. `compare=False` keeps two otherwise-identical contexts
-    # equal regardless of what either has resolved and cached so far.
-    placeholder_cache: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
+    # this needs exactly one scratch dict that lives as long as `context`
+    # does. Two independent users share it by keying on their own string, not
+    # by splitting it into typed fields:
+    # - `operations/placeholders.py` memoises a placeholder resolver that
+    #   shells out (e.g. `${WP_TABLE_PREFIX}`) so it runs at most once per
+    #   sync even though dozens of sanitize rules each expand independently.
+    # - `operations/database.py`'s `read_remote_credentials` memoises the
+    #   `RemoteCredentials` it reads, since db.dump, the Part 3 preflight
+    #   table probe and (for a `wp_cli` source) the WP_TABLE_PREFIX resolver
+    #   can all ask for it in the same run - without this it would be up to
+    #   three identical ssh round trips, or three wp-cli calls against
+    #   production, for data that cannot change between them.
+    # `Any`, not `str`, because the second use case caches a dataclass
+    # instance, not a string. `compare=False` keeps two otherwise-identical
+    # contexts equal regardless of what either has resolved and cached so far.
+    cache: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def config(self, path: str, *, default: str) -> str:
         """Read a dotted path from the merged config, or return `default`."""

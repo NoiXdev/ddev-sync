@@ -11,16 +11,23 @@ sanitize:
       - name: clear-scheduler-tasks
         sql: "TRUNCATE TABLE tx_scheduler_task"
         tolerate_missing_table: true
-      - { name: clear-fe-sessions, sql: "TRUNCATE TABLE fe_sessions", requires_table: fe_sessions }
+      # fe_sessions/fe_users come from typo3/cms-frontend, not typo3/cms-core
+      # (cms-core does not require cms-frontend) - absent on a backend-only
+      # or API/headless install. See typo3.yaml's comment for the full
+      # explanation; same treatment here.
+      - name: clear-fe-sessions
+        sql: "TRUNCATE TABLE fe_sessions"
+        tolerate_missing_table: true
       - { name: clear-sys-log, sql: "TRUNCATE TABLE sys_log", requires_table: sys_log }
       - name: anonymize-fe-users
         sql: "UPDATE fe_users SET email = CONCAT('fe', uid, '@example.invalid')"
-        requires_table: fe_users
+        tolerate_missing_table: true
       - name: reset-fe-passwords
         operation: reset_passwords
         table: fe_users
         column: password
         value: "$argon2i$disabled"
+        tolerate_missing_table: true
       - name: anonymize-be-users
         sql: "UPDATE be_users SET email = CONCAT('be', uid, '@example.invalid')"
         requires_table: be_users

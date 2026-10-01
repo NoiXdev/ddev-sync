@@ -1,59 +1,71 @@
 """Expand the `${...}` placeholders a profile may use in configured values.
 
-Neutral module: it needs only `ExecutionContext`, nothing else from `env.py`
-or `sanitize.py`. That is what lets both of them depend on it without either
-depending on the other - `env.py` re-exports `expand_placeholders` for
-backward compatibility, but the substitution logic itself lives here exactly
-once, so a sixth place that reads a profile value cannot forget to expand it.
+`env.py` re-exports `expand_placeholders` for backward compatibility, but the
+substitution logic itself lives here exactly once, so a sixth place that
+reads a profile value cannot forget to expand it. This module is no longer
+"neutral" in the sense of depending on nothing but `ExecutionContext`:
+`${WP_TABLE_PREFIX}` needs `operations/database.py`'s `read_remote_credentials`
+(see below), which is a one-directional dependency - `database.py` depends
+on neither this module nor `sanitize.py`, so no cycle results.
 
-Every placeholder is a thunk, not a precomputed string: `${WP_TABLE_PREFIX}`
-shells out to `wp config get table_prefix` when no override is configured,
-and that must not run once per rule, per profile, on every sync regardless of
-whether anything ever asked for it - only when a value being expanded
-actually contains the literal substring. `${DDEV_SITENAME}` and
-`${SYNC_TARGET_DATABASE}` are unaffected: reading `context.project.name` or a
-config default is cheap enough that wrapping it in a thunk changes nothing
-observable, but keeps every placeholder in `_substitutions` the same shape.
+Every placeholder is a thunk, not a precomputed string, and resolving one
+only calls its thunk when a value being expanded actually contains the
+literal substring. `${DDEV_SITENAME}` and `${SYNC_TARGET_DATABASE}` are
+unaffected: reading `context.project.name` or a config default is cheap
+enough that wrapping it in a thunk changes nothing observable, but keeps
+every placeholder in `_substitutions` the same shape.
 """
 
 from collections.abc import Callable, Mapping
 from typing import Any
 
 from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.database import read_remote_credentials
 
 WP_TABLE_PREFIX_CONFIG_KEY = "database.wp_table_prefix"
 SYMFONY_USER_TABLE_CONFIG_KEY = "database.symfony_user_table"
-
-_WP_TABLE_PREFIX_COMMAND = ("wp", "config", "get", "table_prefix")
 
 
 def _cached(context: ExecutionContext, key: str, resolve: Callable[[], str]) -> str:
     """Run `resolve` at most once per `context`, keyed by `key`.
 
-    `context.placeholder_cache` lives as long as `context` does - one whole
-    sync run - so this is what turns "called once per rule" into "run once
-    per run", however many rules or expansions ask for the same placeholder.
+    `context.cache` lives as long as `context` does - one whole sync run -
+    so this is what turns "called once per rule" into "run once per run",
+    however many rules or expansions ask for the same placeholder.
     """
-    cache = context.placeholder_cache
+    cache = context.cache
     if key not in cache:
         cache[key] = resolve()
-    return cache[key]
+    return str(cache[key])
 
 
 def _resolve_wp_table_prefix(context: ExecutionContext) -> str:
+    """Resolve WordPress's table prefix against *production*, not the local
+    checkout.
+
+    The local wp-config.php is the wrong source even when one exists: a
+    WordPress repo conventionally gitignores wp-config.php, and DDEV
+    regenerates one with `$table_prefix = 'wp_'` - reading it locally would
+    silently report the DDEV default instead of production's real prefix on
+    exactly the hardened installs this placeholder exists for. Sanitize runs
+    against the imported dump, so the prefix that matters is production's,
+    read over the same ssh channel `read_remote_credentials` already uses
+    for a `wp_cli` source (see `operations/database.py::_from_wp_cli`) -
+    memoised there, so this costs nothing extra beyond what db.dump and the
+    Part 3 preflight probe already pay for in the same run.
+    """
     configured = context.config(WP_TABLE_PREFIX_CONFIG_KEY, default="")
     if configured:
         return configured
-    command = list(_WP_TABLE_PREFIX_COMMAND)
-    result = context.runner.run(command, cwd=context.project.docroot_path)
-    value = result.stdout.strip()
-    if result.ok and value:
-        return value
-    reason = (result.stderr.strip() or "no error output") if not result.ok else "it printed nothing"
+    credentials = read_remote_credentials(context)
+    if credentials.table_prefix:
+        return credentials.table_prefix
+    source = context.config("database.remote_credentials", default="env")
     raise OperationError(
-        f"could not resolve ${{WP_TABLE_PREFIX}}: '{' '.join(command)}' "
-        f"(run in {context.project.docroot_path}) failed: {reason}. "
-        f"Set '{WP_TABLE_PREFIX_CONFIG_KEY}' in .ddev/ddev-sync.yaml to override."
+        f"could not resolve ${{WP_TABLE_PREFIX}}: 'database.remote_credentials' is "
+        f"{source!r}, which has no table prefix to read - only a 'wp_cli' source "
+        f"reads production's wp-config.php for it. Set '{WP_TABLE_PREFIX_CONFIG_KEY}' "
+        "in .ddev/ddev-sync.yaml to override."
     )
 
 

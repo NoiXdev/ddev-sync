@@ -36,7 +36,7 @@ def make_context(
 
 def wp_runner() -> FakeCommandRunner:
     runner = FakeCommandRunner()
-    runner.script_prefix(["ssh"], stdout="acme_prod\nacme_user\nsecret\nlocalhost:3307\n")
+    runner.script_prefix(["ssh"], stdout="acme_prod\nacme_user\nsecret\nlocalhost:3307\nwp_\n")
     return runner
 
 
@@ -49,6 +49,11 @@ def test_credentials_come_back_in_a_single_round_trip(tmp_path: Path) -> None:
     assert credentials.password == "secret"
 
 
+def test_the_table_prefix_comes_back_in_the_same_round_trip(tmp_path: Path) -> None:
+    credentials = read_remote_credentials(make_context(wp_runner(), tmp_path, **WP_PROFILE))
+    assert credentials.table_prefix == "wp_"
+
+
 def test_a_host_with_a_port_is_split(tmp_path: Path) -> None:
     credentials = read_remote_credentials(make_context(wp_runner(), tmp_path, **WP_PROFILE))
     assert credentials.host == "localhost"
@@ -57,7 +62,7 @@ def test_a_host_with_a_port_is_split(tmp_path: Path) -> None:
 
 def test_a_host_without_a_port_defaults_to_3306(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["ssh"], stdout="n\nu\np\n127.0.0.1\n")
+    runner.script_prefix(["ssh"], stdout="n\nu\np\n127.0.0.1\nwp_\n")
     credentials = read_remote_credentials(make_context(runner, tmp_path, **WP_PROFILE))
     assert credentials.port == "3306"
 
@@ -78,6 +83,17 @@ def test_wp_config_get_runs_under_the_code_root_of_a_deployer_target(tmp_path: P
     assert "wp config get DB_NAME" in remote
 
 
+def test_table_prefix_is_requested_with_type_variable_to_disambiguate(tmp_path: Path) -> None:
+    # WP-CLI's `config get` defaults to `--type=all` and errors ("Found both
+    # a constant and a variable...") if wp-config.php happens to also define
+    # a same-named constant. `table_prefix` is specifically a variable, so
+    # this must be unambiguous.
+    runner = wp_runner()
+    read_remote_credentials(make_context(runner, tmp_path, **WP_PROFILE))
+    remote = runner.calls[0][-1]
+    assert "wp config get table_prefix --type=variable" in remote
+
+
 def test_a_failing_wp_config_get_explains_itself(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["ssh"], returncode=1, stderr="Error: wp not found")
@@ -88,9 +104,21 @@ def test_a_failing_wp_config_get_explains_itself(tmp_path: Path) -> None:
     assert "web01.example" in message
 
 
+def test_a_failing_wp_config_get_names_the_table_prefix_override(tmp_path: Path) -> None:
+    # The common case for an env-based setup (e.g. Bedrock): wp-config.php
+    # has no static literal for wp-cli to read, so this fails outright. The
+    # message must still point at the escape hatch that matters here.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=1, stderr="Error: wp-config.php not found")
+    with pytest.raises(OperationError) as caught:
+        read_remote_credentials(make_context(runner, tmp_path, **WP_PROFILE))
+    assert "database.wp_table_prefix" in str(caught.value)
+
+
 def test_too_few_lines_back_is_reported(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["ssh"], stdout="only_one\n")
     with pytest.raises(OperationError) as caught:
         read_remote_credentials(make_context(runner, tmp_path, **WP_PROFILE))
-    assert "expected 4" in str(caught.value)
+    assert "expected 5" in str(caught.value)
+    assert "table_prefix" in str(caught.value)

@@ -55,33 +55,50 @@ sanitize:
     # `tx_scheduler_task_group` table that holds no executable state, so it
     # is not truncated here.
     #
-    # Unlike its neighbours - `be_sessions`, `fe_sessions`, `sys_log` all come
-    # from typo3/cms-core, always present - EXT:scheduler is its own,
-    # optional Composer package (`typo3/cms-scheduler`, not installed by
-    # default). A project that never required it has no `tx_scheduler_task`
-    # table, and `_run_sql` raises unconditionally on any other SQL error, so
-    # without `tolerate_missing_table` this rule being second in the list
-    # would abort every rule after it - the password resets, admin creation,
-    # cache flush, every setup command - on a database already imported.
-    # `tolerate_missing_table` swallows only "table doesn't exist" (MySQL
-    # errno 1146); any other failure here still raises exactly as before.
+    # Unlike `tx_scheduler_task`, `be_sessions` and `sys_log` (both already
+    # truncated above/below) ARE always present: both are defined in
+    # typo3/sysext/core/ext_tables.sql, part of typo3/cms-core itself, the
+    # one package every TYPO3 install requires. EXT:scheduler is its own,
+    # separate, optional Composer package (`typo3/cms-scheduler`, not
+    # installed by default). A project that never required it has no
+    # `tx_scheduler_task` table, and `_run_sql` raises unconditionally on any
+    # other SQL error, so without `tolerate_missing_table` this rule being
+    # second in the list would abort every rule after it - the password
+    # resets, admin creation, cache flush, every setup command - on a
+    # database already imported. `tolerate_missing_table` swallows only
+    # "table doesn't exist" (MySQL errno 1146); any other failure here still
+    # raises exactly as before.
     - name: clear-scheduler-tasks
       sql: "TRUNCATE TABLE tx_scheduler_task"
       tolerate_missing_table: true
+    # `fe_sessions` and `fe_users` are NOT guaranteed the way `be_sessions`/
+    # `sys_log` above are: both are defined in
+    # typo3/sysext/frontend/ext_tables.sql, not typo3/sysext/core, and
+    # typo3/cms-core's own composer.json does not require typo3/cms-frontend
+    # (checked against both files at v13.4.2). A backend-only or
+    # API/headless TYPO3 install - cms-core without cms-frontend - has
+    # neither table. An earlier version of this profile's comment claimed
+    # these three tables "all come from typo3/cms-core, always present",
+    # which was wrong for exactly these two; `clear-fe-sessions`,
+    # `anonymize-fe-users` and `reset-fe-passwords` below all now carry
+    # `tolerate_missing_table` for the same reason `clear-scheduler-tasks`
+    # does - an unconditional raise on a table a real install can lack would
+    # abort every rule after it, database already imported.
     - name: clear-fe-sessions
       sql: "TRUNCATE TABLE fe_sessions"
-      requires_table: fe_sessions
+      tolerate_missing_table: true
     - name: clear-sys-log
       sql: "TRUNCATE TABLE sys_log"
       requires_table: sys_log
     - name: anonymize-fe-users
       sql: "UPDATE fe_users SET email = CONCAT('fe', uid, '@example.invalid')"
-      requires_table: fe_users
+      tolerate_missing_table: true
     - name: reset-fe-passwords
       operation: reset_passwords
       table: fe_users
       column: password
       value: "$argon2i$disabled"
+      tolerate_missing_table: true
     # fe_users (frontend/website visitors) had both an anonymise and a reset
     # rule; be_users (backend/editor accounts) had neither, so a sync left
     # every real editor's email and password hash on the laptop untouched

@@ -114,6 +114,43 @@ def test_a_failing_sql_shaped_operation_is_an_error(tmp_path: Path) -> None:
     assert "Table doesn't exist" in str(caught.value)
 
 
+def test_a_tolerated_missing_table_is_swallowed_on_an_operation_rule(tmp_path: Path) -> None:
+    # Part of fix 4: an operation rule (reset_passwords here) builds and runs
+    # SQL against a named table exactly like a plain sql: rule, so the same
+    # errno 1146 is just as possible - and must be just as tolerable.
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["mysql"],
+        returncode=1,
+        stderr="ERROR 1146 (42S02) at line 1: Table 'db.fe_users' doesn't exist",
+    )
+    config = rule_config(
+        name="pw",
+        operation="reset_passwords",
+        table="fe_users",
+        column="password",
+        value="x",
+        tolerate_missing_table=True,
+    )
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+
+
+def test_tolerate_missing_table_still_raises_on_a_different_error(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["mysql"], returncode=1, stderr="ERROR 1045: Access denied")
+    config = rule_config(
+        name="pw",
+        operation="reset_passwords",
+        table="fe_users",
+        column="password",
+        value="x",
+        tolerate_missing_table=True,
+    )
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert "Access denied" in str(caught.value)
+
+
 def test_reset_passwords_sets_the_configured_value(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["mysql"], stdout="")

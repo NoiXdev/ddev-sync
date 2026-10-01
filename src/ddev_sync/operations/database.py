@@ -32,24 +32,53 @@ _REQUIRED = ("name", "user", "password", "host", "port")
 
 @dataclass(frozen=True)
 class RemoteCredentials:
-    """Database credentials read from the remote environment."""
+    """Database credentials read from the remote environment.
+
+    `table_prefix` is only ever set by the `wp_cli` source (see
+    `_from_wp_cli`) - WordPress's `$table_prefix`, needed to resolve
+    `${WP_TABLE_PREFIX}` (operations/placeholders.py) against production
+    rather than a local, possibly-regenerated wp-config.php. It stays `None`
+    for every other source, which have no such concept.
+    """
 
     name: str
     user: str
     password: str
     host: str
     port: str
+    table_prefix: str | None = None
 
     def __repr__(self) -> str:
         """Redact the password so a traceback cannot leak it."""
         return (
             f"RemoteCredentials(name={self.name!r}, user={self.user!r}, "
-            f"password='<REDACTED>', host={self.host!r}, port={self.port!r})"
+            f"password='<REDACTED>', host={self.host!r}, port={self.port!r}, "
+            f"table_prefix={self.table_prefix!r})"
         )
 
 
+_CREDENTIALS_CACHE_KEY = "remote_credentials"
+
+
 def read_remote_credentials(context: ExecutionContext) -> RemoteCredentials:
-    """Read database credentials using the profile's configured source."""
+    """Read database credentials using the profile's configured source.
+
+    Memoised on `context.cache`: db.dump, the Part 3 preflight table probe,
+    and (for a `wp_cli` source) the `${WP_TABLE_PREFIX}` placeholder resolver
+    can all ask for this in the same run, and the answer cannot change
+    between them - without caching, that is up to three identical ssh round
+    trips (or three separate `wp config get` invocations against production)
+    for the same data.
+    """
+    cached = context.cache.get(_CREDENTIALS_CACHE_KEY)
+    if isinstance(cached, RemoteCredentials):
+        return cached
+    credentials = _read_remote_credentials(context)
+    context.cache[_CREDENTIALS_CACHE_KEY] = credentials
+    return credentials
+
+
+def _read_remote_credentials(context: ExecutionContext) -> RemoteCredentials:
     source = context.config("database.remote_credentials", default="env")
     if source == "explicit":
         return _from_config(context)
@@ -153,30 +182,65 @@ def _unquote(value: str) -> str:
     return value
 
 
-_WP_KEYS = ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST")
+_WP_CREDENTIAL_KEYS = ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST")
+# `--type` defaults to `all`, which ERRORS - "Found both a constant and a
+# variable 'table_prefix' ... Use --type=<type> to disambiguate." - the
+# instant a project also happens to define a same-named constant. The DB_*
+# keys above need no such disambiguation (they are conventionally constants
+# only); `table_prefix` specifically is a documented wp-config.php
+# *variable*, so leaving it ambiguous is a real, if unusual, failure mode
+# this closes.
+_WP_TABLE_PREFIX_GET = "wp config get table_prefix --type=variable"
 
 
 def _from_wp_cli(context: ExecutionContext) -> RemoteCredentials:
-    """Read credentials with `wp config get`, in one ssh round trip."""
+    """Read credentials and the WordPress table prefix, in one ssh round trip.
+
+    `table_prefix` rides along with the credential reads rather than opening
+    a second channel for operations/placeholders.py's `${WP_TABLE_PREFIX}`:
+    both need exactly one ssh connection to production, and `read_remote_
+    credentials`'s own memoisation means db.dump, the Part 3 preflight probe
+    and the placeholder resolver share this single result for the whole run.
+
+    Deliberately NOT `wp db prefix`: that returns the *current site's*
+    prefix, which differs on a WordPress multisite install. The users table
+    is special there - it lives in `wpdb::$global_tables`, not the per-site
+    `$tables`, so it is always named from `base_prefix` regardless of which
+    site is current (a multisite subsite 2 still shares `wp_users`, never
+    `wp_2_users`). The `table_prefix` variable in wp-config.php *is*
+    `base_prefix`, so reading it directly - not `wp db prefix` - is the
+    correct source for the one table this placeholder serves.
+    """
     remote_root = context.remote_code("")
-    gets = " && ".join(f"wp config get {key}" for key in _WP_KEYS)
-    script = f"cd {shlex.quote(remote_root)} && {gets}"
+    gets = " && ".join(f"wp config get {key}" for key in _WP_CREDENTIAL_KEYS)
+    script = f"cd {shlex.quote(remote_root)} && {gets} && {_WP_TABLE_PREFIX_GET}"
     result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]))
     if not result.ok:
         raise OperationError(
             f"could not read wp-config on {context.target.host} via wp-cli in "
-            f"{remote_root}: {result.stderr.strip()}"
+            f"{remote_root}: {result.stderr.strip()}. This is the normal result on "
+            "an env-based setup (e.g. Bedrock), where wp-config.php has no static "
+            "literal for wp-cli to read back. Set 'database.wp_table_prefix' in "
+            ".ddev/ddev-sync.yaml to supply the table prefix directly, and "
+            "'database.remote_credentials: explicit' with 'database.credentials' "
+            "for the database connection itself."
         )
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    if len(lines) < len(_WP_KEYS):
+    expected = (*_WP_CREDENTIAL_KEYS, "table_prefix")
+    if len(lines) < len(expected):
         raise OperationError(
             f"wp config get returned {len(lines)} values, expected "
-            f"{len(_WP_KEYS)} ({', '.join(_WP_KEYS)})"
+            f"{len(expected)} ({', '.join(expected)})"
         )
-    name, user, password, host_value = lines[: len(_WP_KEYS)]
+    name, user, password, host_value, table_prefix = lines[: len(expected)]
     host, _, port = host_value.partition(":")
     return RemoteCredentials(
-        name=name, user=user, password=password, host=host, port=port or "3306"
+        name=name,
+        user=user,
+        password=password,
+        host=host,
+        port=port or "3306",
+        table_prefix=table_prefix,
     )
 
 

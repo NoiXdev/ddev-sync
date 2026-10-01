@@ -24,13 +24,14 @@ def context_for(tmp_path: Path) -> ExecutionContext:
 
     `parse_rules` expands every configured rule, not just the one a given
     test is looking at, so the profile's `${WP_TABLE_PREFIX}` rules
-    (anonymize-users, reset-user-passwords) make this resolve the prefix via
-    `wp config get table_prefix` on every call here - scripted once,
-    regardless of which rule a test actually asserts on.
+    (anonymize-users, reset-user-passwords) make this read the prefix from
+    production via wp-cli over ssh (the wordpress profile's
+    `database.remote_credentials: wp_cli`) on every call here - scripted
+    once, regardless of which rule a test actually asserts on.
     """
     profile = REGISTRY.resolve("wordpress", None)
     runner = FakeCommandRunner()
-    runner.script_prefix(["wp", "config", "get", "table_prefix"], stdout="wp_\n")
+    runner.script_prefix(["ssh"], stdout="acme_prod\nacme\nsecret\ndb\nwp_\n")
     return ExecutionContext(
         project=DdevProject(name="acme", type="wordpress", docroot="public", root=tmp_path),
         target=ResolvedTarget(

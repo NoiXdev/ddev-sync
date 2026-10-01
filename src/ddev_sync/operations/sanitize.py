@@ -27,7 +27,7 @@ from ddev_sync.operations.placeholders import expand_value
 _MISSING_TABLE_ERROR = re.compile(r"\b1146\b|\(42S02\)")
 
 
-def _is_missing_table_error(stderr: str) -> bool:
+def is_missing_table_error(stderr: str) -> bool:
     return _MISSING_TABLE_ERROR.search(stderr) is not None
 
 
@@ -40,14 +40,26 @@ class SanitizeRule:
     operation: str | None = None
     params: Mapping[str, Any] = field(default_factory=dict)
     # Deliberately narrower than a general `allow_failure`: this tolerates
-    # only a missing table, and only for `sql` rules (see `_parse_rule`). A
-    # sanitize rule that could fail silently for any OTHER reason would
-    # undermine the one invariant this module exists to guarantee - a rule
-    # that can run either runs or raises loudly, because a rule that fails
-    # silently means production data stays on a laptop. The only thing this
-    # carves out is a table that genuinely was never there to sanitise, e.g.
-    # `tx_scheduler_task` on a TYPO3 project that never required
-    # `typo3/cms-scheduler` (a separate, optional Composer package).
+    # only a missing table. A sanitize rule that could fail silently for any
+    # OTHER reason would undermine the one invariant this module exists to
+    # guarantee - a rule that can run either runs or raises loudly, because a
+    # rule that fails silently means production data stays on a laptop. The
+    # only thing this carves out is a table that genuinely was never there to
+    # sanitise, e.g. `tx_scheduler_task` on a TYPO3 project that never
+    # required `typo3/cms-scheduler` (a separate, optional Composer package).
+    #
+    # Allowed on BOTH `sql` and `operation` rules, not just `sql` - narrowed
+    # to `sql` only in an earlier version of this comment, on the assumption
+    # that an `operation` rule's failure could not be a missing-table error.
+    # That assumption does not hold: `reset_passwords`, `clear_mail_config`
+    # and `search_replace`'s sql driver (operations/catalog.py) all build and
+    # run SQL against a named table exactly like a `sql` rule does, so a 1146
+    # is just as possible there. Without this, an `operation` rule whose
+    # table happens to be optional (e.g. typo3.yaml's `reset-fe-passwords`
+    # against `fe_users`, absent on a backend-only install - see that file's
+    # comment) could be named a hard requirement by the Part 3 preflight
+    # probe (its `table` param counts, see `preflight.py::_rule_table`) with
+    # no way to say otherwise.
     tolerate_missing_table: bool = False
     # The table this rule needs, for the Part 3 preflight probe to check
     # before the dump even starts. Only meaningful (and only accepted) on a
@@ -85,13 +97,11 @@ def _parse_rule(entry: Mapping[str, Any], context: ExecutionContext) -> Sanitize
         raise OperationError(f"sanitize rule {name!r} has neither 'sql' nor 'operation'")
     if sql is not None and operation is not None:
         raise OperationError(f"sanitize rule {name!r} has both 'sql' and 'operation'; pick one")
+    # No restriction to `sql`-only here: an `operation` rule (reset_passwords,
+    # clear_mail_config, search_replace's sql driver) can hit the identical
+    # missing-table error - see the field's own docstring above - so both
+    # shapes accept the flag.
     tolerate_missing_table = bool(entry.get("tolerate_missing_table", False))
-    if tolerate_missing_table and sql is None:
-        raise OperationError(
-            f"sanitize rule {name!r} sets 'tolerate_missing_table' but has no 'sql'; "
-            "it only means anything for a SQL rule that might target a table that "
-            "does not exist"
-        )
     requires_table = entry.get("requires_table")
     if requires_table is not None and sql is None:
         raise OperationError(
@@ -158,7 +168,7 @@ class SanitizeOperation:
         result = context.runner.run(local_mysql_argv(context, database, sql=rule.sql))
         if result.ok:
             return
-        if rule.tolerate_missing_table and _is_missing_table_error(result.stderr):
+        if rule.tolerate_missing_table and is_missing_table_error(result.stderr):
             return
         raise OperationError(f"sanitize rule {rule.name!r} failed: {result.stderr.strip()}")
 

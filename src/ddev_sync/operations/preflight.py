@@ -119,17 +119,41 @@ class PreflightOperation:
         if not required:
             return
         tables = _remote_tables(context)
+        lowered = {table.lower(): table for table in tables}
         for rule_name, table in required:
-            if table not in tables:
+            if table in tables:
+                continue
+            actual = lowered.get(table.lower())
+            if actual is not None:
+                # Exists, but under a different letter case. MySQL/MariaDB
+                # with lower_case_table_names=1 (the default on macOS and
+                # Windows servers) would resolve this rule's SQL fine
+                # regardless - so reporting this the same as "does not
+                # exist" would be wrong, and would abort syncs that were
+                # actually going to work. But on a case-sensitive server
+                # (the Linux default) the rule's literal, case-sensitive
+                # table reference genuinely will fail at run time with the
+                # database already imported - so this still has to abort,
+                # just with the honest diagnosis instead of a misleading
+                # "not found": name both spellings so a reader can tell
+                # which one is real.
                 raise OperationError(
-                    f"sanitize rule {rule_name!r} requires table {table!r}, which does "
-                    f"not exist on {context.target.host}'s database "
-                    f"({len(tables)} table(s) found). Nothing was downloaded or "
-                    "imported. Either this project's table is named differently - "
-                    "override it in .ddev/ddev-sync.yaml - or, if the table is "
-                    "genuinely optional for this project, add "
-                    "'tolerate_missing_table: true' to the rule."
+                    f"sanitize rule {rule_name!r} requires table {table!r}, but the "
+                    f"remote database has it as {actual!r} - only the letter case "
+                    "differs. Nothing was downloaded or imported. If this server folds "
+                    "table name case, the rule would work as-is; if it does not "
+                    "(the common case on Linux), it will fail for real. Change the "
+                    f"rule's declared table name to match the exact case ({actual!r})."
                 )
+            raise OperationError(
+                f"sanitize rule {rule_name!r} requires table {table!r}, which does "
+                f"not exist on {context.target.host}'s database "
+                f"({len(tables)} table(s) found). Nothing was downloaded or "
+                "imported. Either this project's table is named differently - "
+                "override it in .ddev/ddev-sync.yaml - or, if the table is "
+                "genuinely optional for this project, add "
+                "'tolerate_missing_table: true' to the rule."
+            )
 
 
 def _required_tables(rules: list[SanitizeRule]) -> list[tuple[str, str]]:

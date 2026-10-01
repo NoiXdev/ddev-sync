@@ -47,8 +47,14 @@ _OPTIONAL_TABLE_RULES: dict[str, frozenset[str]] = {
     "laravel": frozenset({"clear-sessions", "clear-jobs", "clear-failed-jobs"}),
     # EXT:scheduler (`typo3/cms-scheduler`) is a separate, non-default
     # Composer package; a project that never required it has no
-    # `tx_scheduler_task` table. See the long comment in typo3.yaml.
-    "typo3": frozenset({"clear-scheduler-tasks"}),
+    # `tx_scheduler_task` table. `fe_sessions`/`fe_users` come from
+    # typo3/cms-frontend, not typo3/cms-core (cms-core does not require
+    # cms-frontend) - absent on a backend-only or API/headless install.
+    # Both verified against TYPO3 v13.4.2's ext_tables.sql/composer.json; see
+    # the long comment in typo3.yaml.
+    "typo3": frozenset(
+        {"clear-scheduler-tasks", "clear-fe-sessions", "anonymize-fe-users", "reset-fe-passwords"}
+    ),
     # `watchdog` belongs to Database Logging (dblog), a core module that can
     # be disabled - and commonly is in production - in favour of `syslog`,
     # which needs no table at all. `sessions`: since Drupal 10.3, created
@@ -204,6 +210,30 @@ def test_every_sql_rule_declares_requires_table_or_tolerates_its_absence(
             "'requires_table' nor 'tolerate_missing_table'. Add 'requires_table: "
             "<name>' if the engine must be able to verify the table exists, or "
             "'tolerate_missing_table: true' if it is allowed to be absent."
+        )
+
+
+@pytest.mark.parametrize(("name", "major"), variants())
+def test_requires_table_actually_occurs_in_its_own_rules_sql(name: str, major: str | None) -> None:
+    # The ratchet above is satisfiable by writing 'requires_table: anything'
+    # on a rule and never checking it against reality - it only forces a
+    # choice between the two flags, not that the choice is correct. This is
+    # not SQL parsing (deliberately: that is what declaring the table is for
+    # instead of inferring it); a plain substring check is cheap and still
+    # catches the likely real mistake - a typo that makes the declared name
+    # disagree with the table the rule's own SQL actually names, checked
+    # against the raw YAML so a placeholder like ${WP_TABLE_PREFIX}users
+    # compares as the same literal text in both fields.
+    rules = REGISTRY.resolve(name, major).data.get("sanitize", {}).get("rules", [])
+    for rule in rules:
+        requires_table = rule.get("requires_table")
+        if requires_table is None:
+            continue
+        sql = str(rule.get("sql"))
+        assert str(requires_table) in sql, (
+            f"{name}@{major}: rule {rule.get('name')!r} declares "
+            f"requires_table={requires_table!r}, but that text does not appear in "
+            f"its own sql {sql!r} - likely a typo in one or the other."
         )
 
 
