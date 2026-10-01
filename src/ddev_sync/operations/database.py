@@ -6,6 +6,7 @@ traceback or a debug log cannot leak a production secret.
 """
 
 import re
+import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,10 +112,18 @@ def _fetch_first_env_file(context: ExecutionContext, candidates: list[str]) -> t
     statements. A `FakeCommandRunner` never executes this string, so the
     bug this leaves behind is invisible to unit tests - only a real shell
     catches it, which is exactly why the integration suite exists.
+
+    Each path is `shlex.quote`d rather than hand-wrapped in `"..."`: a
+    double-quoted string still lets the shell expand `$(...)` and `` ` ``
+    inside it, so a path containing either would still execute as part of
+    the probe. `shlex.quote` is also the only form that survives a literal
+    `"` in the path at all.
     """
     paths = [context.remote_data(name) for name in candidates]
     tests = "; ".join(
-        f'if [ -f "{path}" ]; then echo "{path}"; cat "{path}"; exit 0; fi' for path in paths
+        f"if [ -f {shlex.quote(path)} ]; then echo {shlex.quote(path)}; "
+        f"cat {shlex.quote(path)}; exit 0; fi"
+        for path in paths
     )
     script = f"{tests}; exit 9"
     result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]))
@@ -151,7 +160,7 @@ def _from_wp_cli(context: ExecutionContext) -> RemoteCredentials:
     """Read credentials with `wp config get`, in one ssh round trip."""
     remote_root = context.remote_code("")
     gets = " && ".join(f"wp config get {key}" for key in _WP_KEYS)
-    script = f"cd {remote_root} && {gets}"
+    script = f"cd {shlex.quote(remote_root)} && {gets}"
     result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]))
     if not result.ok:
         raise OperationError(
@@ -320,6 +329,20 @@ def confirm_destructive(question: str) -> bool:
     A module-level function rather than a method so that tests can replace it
     without constructing a console, and so the interactive layer in Task 13 can
     swap in a richer prompt.
+
+    `input()` raises `EOFError` when stdin is closed, which is exactly what a
+    non-interactive invocation (a script, a cron job, CI) looks like. Left
+    uncaught, `ddev sync --steps=db` from such a context downloads the entire
+    production dump and only then dies on a traceback, right at the one
+    question that exists to stop a destructive action. Turning it into a
+    clean `OperationError` naming `--yes` makes the fix the same one-line
+    answer as every other "I can't ask, so tell me how to skip asking" case.
     """
-    answer = input(f"{question} [y/N] ").strip().lower()
+    try:
+        answer = input(f"{question} [y/N] ").strip().lower()
+    except EOFError as error:
+        raise OperationError(
+            "cannot confirm a destructive action: no input is available "
+            "(stdin is closed). Pass --yes to skip the confirmation prompt."
+        ) from error
     return answer in {"y", "yes"}

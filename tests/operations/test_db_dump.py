@@ -87,7 +87,7 @@ def test_the_env_candidates_are_probed_in_order(tmp_path: Path) -> None:
     runner = env_runner()
     read_remote_credentials(make_context(runner, tmp_path))
     probe = runner.calls[0][-1]
-    assert probe.index("/srv/app/.env.local") < probe.index('/srv/app/.env"')
+    assert probe.index("/srv/app/.env.local") < probe.index("/srv/app/.env ]")
 
 
 def test_the_env_candidates_are_probed_under_the_data_root_of_a_plain_target(
@@ -107,7 +107,7 @@ def test_the_env_candidates_are_probed_under_the_data_root_of_a_deployer_target(
     read_remote_credentials(make_context(runner, tmp_path, layout=Layout.DEPLOYER))
     probe = runner.calls[0][-1]
     assert "/srv/app/shared/.env.local" in probe
-    assert '/srv/app/shared/.env"' in probe
+    assert "/srv/app/shared/.env ]" in probe
 
 
 def test_a_quoted_value_is_unquoted(tmp_path: Path) -> None:
@@ -246,6 +246,26 @@ def test_missing_env_file_configuration_falls_back_to_defaults(tmp_path: Path) -
     probe = runner.calls[0][-1]
     assert "/srv/app/.env.local" in probe
     assert "/srv/app/.env" in probe
+
+
+def test_the_generated_probe_script_is_pinned_exactly(tmp_path: Path) -> None:
+    """Pins the fix for `fi if`: a mutation reverting `"; ".join(` back to
+    `" ".join(` survived the entire unit suite (691 tests, 100% branch
+    coverage) because `FakeCommandRunner` never starts a shell - only the
+    integration suite's real shell caught the resulting syntax error, on its
+    first run. Every other test here asserts substrings, which cannot see a
+    missing separator between two `if` blocks; this is the one site that has
+    already shipped a bug of this exact class.
+    """
+    runner = env_runner()
+    read_remote_credentials(make_context(runner, tmp_path))
+    probe = runner.calls[0][-1]
+    assert probe == (
+        "sh -c 'if [ -f /srv/app/.env.local ]; then echo /srv/app/.env.local; "
+        "cat /srv/app/.env.local; exit 0; fi; "
+        "if [ -f /srv/app/.env ]; then echo /srv/app/.env; cat /srv/app/.env; exit 0; fi; "
+        "exit 9'"
+    )
 
 
 def test_a_non_dict_env_section_falls_back_to_default_candidates(tmp_path: Path) -> None:

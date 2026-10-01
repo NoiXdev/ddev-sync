@@ -268,3 +268,15 @@ def test_confirm_destructive_reads_the_answer_from_stdin(
 ) -> None:
     monkeypatch.setattr("builtins.input", lambda _prompt: typed)
     assert confirm_destructive("Drop the local database?") is expected
+
+
+def test_confirm_destructive_raises_a_clean_error_when_stdin_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def closed_stdin(_prompt: str) -> str:
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", closed_stdin)
+    with pytest.raises(OperationError) as caught:
+        confirm_destructive("Drop the local database?")
+    assert "--yes" in str(caught.value)
