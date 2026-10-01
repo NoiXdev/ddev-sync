@@ -568,3 +568,38 @@ def test_render_doctor_aligns_ok_and_fail_markers_to_the_same_column() -> None:
         if "ssh connection" in line
     )
     assert ok_line.index("ssh connection") == fail_line.index("ssh connection")
+
+
+def test_render_doctor_omits_the_sanitize_tables_row_when_nothing_was_probed() -> None:
+    report = PreflightReport(ssh_ok=True, remote_path_ok=True, free_bytes=50 * 1024**3)
+    assert "sanitize tables" not in render_doctor(report, _target())
+
+
+def test_render_doctor_shows_sanitize_tables_ok() -> None:
+    report = PreflightReport(
+        ssh_ok=True,
+        remote_path_ok=True,
+        free_bytes=50 * 1024**3,
+        sanitize_tables_ok=True,
+        sanitize_tables_detail="3 required tables present",
+    )
+    output = render_doctor(report, _target())
+    line = next(line for line in output.splitlines() if "sanitize tables" in line)
+    assert line.strip().startswith("OK")
+    assert "3 required tables present" in line
+
+
+def test_render_doctor_shows_a_failing_sanitize_tables_check() -> None:
+    report = PreflightReport(
+        ssh_ok=True,
+        remote_path_ok=True,
+        free_bytes=50 * 1024**3,
+        sanitize_tables_ok=False,
+        sanitize_tables_detail=(
+            "sanitize rule 'anonymize-users' requires table 'wp_users', which does not exist"
+        ),
+    )
+    output = render_doctor(report, _target())
+    line = next(line for line in output.splitlines() if "sanitize tables" in line)
+    assert line.strip().startswith("FAIL")
+    assert "wp_users" in line

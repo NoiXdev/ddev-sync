@@ -7,7 +7,7 @@ from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations.base import ExecutionContext, OperationError
-from ddev_sync.operations.preflight import MIN_FREE_BYTES, PreflightOperation
+from ddev_sync.operations.preflight import MIN_FREE_BYTES, PreflightOperation, PreflightReport
 from ddev_sync.transport.fake import FakeCommandRunner
 
 
@@ -346,3 +346,88 @@ def test_the_remote_credentials_password_is_redacted_from_a_table_listing_failur
     message = str(caught.value)
     assert "hunter2" not in message
     assert "REDACTED" in message
+
+
+# --- `doctor` must be able to report the sanitize-table probe too ----------
+#
+# `check()` is documented never to raise, so every one of these exercises the
+# non-raising form directly through `check()` - the opposite of the `execute()`
+# raising tests above, which is exactly the gap this closes: before this,
+# `doctor` called `check()`, which never ran the sanitize-table probe at all,
+# so the command whose whole job is "tell me whether a sync will work" stayed
+# silent about a condition that will abort a real sync.
+
+
+def test_check_reports_no_sanitize_tables_result_when_nothing_requires_a_table(
+    tmp_path: Path,
+) -> None:
+    report = PreflightOperation().check(context_with_rules(healthy_runner(), tmp_path, []))
+    assert report.sanitize_tables_ok is None
+    assert report.sanitize_tables_detail == ""
+
+
+def test_check_skips_the_sanitize_table_probe_when_ssh_itself_fails(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=255, stderr="Permission denied (publickey).")
+    context = context_with_rules(
+        runner, tmp_path, [{"name": "x", "sql": "TRUNCATE TABLE t", "requires_table": "t"}]
+    )
+    report = PreflightOperation().check(context)
+    assert report.sanitize_tables_ok is None
+    assert report.sanitize_tables_detail == ""
+    # Only the one connectivity probe - no SHOW TABLES round trip against a
+    # host that already failed to answer.
+    assert len(runner.calls) == 1
+
+
+def test_check_reports_sanitize_tables_ok_without_raising(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="sys_log\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [{"name": "clear-log", "sql": "TRUNCATE TABLE sys_log", "requires_table": "sys_log"}],
+    )
+    report = PreflightOperation().check(context)
+    assert report.sanitize_tables_ok is True
+    assert "1 required table present" in report.sanitize_tables_detail
+
+
+def test_check_reports_a_missing_sanitize_table_without_raising(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="wp_options\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [
+            {
+                "name": "anonymize-users",
+                "sql": "UPDATE wp_users SET x=1",
+                "requires_table": "wp_users",
+            }
+        ],
+    )
+    report = PreflightOperation().check(context)
+    assert report.sanitize_tables_ok is False
+    assert "wp_users" in report.sanitize_tables_detail
+    assert "anonymize-users" in report.sanitize_tables_detail
+
+
+def test_check_reports_a_failed_table_listing_without_raising(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], returncode=1, stderr="Access denied for user 'u'@'h'")
+    context = context_with_rules(
+        runner, tmp_path, [{"name": "x", "sql": "TRUNCATE TABLE t", "requires_table": "t"}]
+    )
+    report = PreflightOperation().check(context)
+    assert report.sanitize_tables_ok is False
+    assert "Access denied" in report.sanitize_tables_detail
+
+
+def test_a_preflight_report_defaults_to_no_sanitize_tables_result() -> None:
+    # Every existing call site that builds a `PreflightReport` with just the
+    # original three positional fields (tests and `_probe` alike) must keep
+    # working - the two new fields must default to "nothing to report".
+    report = PreflightReport(True, True, 50 * 1024**3)
+    assert report.sanitize_tables_ok is None
+    assert report.sanitize_tables_detail == ""

@@ -32,11 +32,22 @@ _NO_PATH = "ddev-sync-no-path"
 
 @dataclass(frozen=True)
 class PreflightReport:
-    """What preflight found, for the doctor command to render."""
+    """What preflight found, for the doctor command to render.
+
+    `sanitize_tables_ok` is `None` when the sanitize-table probe was not
+    meaningfully run at all - either connectivity already failed (`ssh_ok`
+    or `remote_path_ok` is `False`, so there is no remote database to query)
+    or no sanitize rule requires a table in the first place. `doctor`
+    renders no row for that case rather than a misleading OK; `True`/`False`
+    mean the probe actually ran and found every required table present, or
+    did not.
+    """
 
     ssh_ok: bool
     remote_path_ok: bool
     free_bytes: int
+    sanitize_tables_ok: bool | None = None
+    sanitize_tables_detail: str = ""
 
 
 class PreflightOperation:
@@ -69,9 +80,25 @@ class PreflightOperation:
             self._probe_sanitize_tables(context)
 
     def check(self, context: ExecutionContext) -> PreflightReport:
-        """Run the probes and report, without raising on a bad result."""
+        """Run the probes and report, without raising on a bad result.
+
+        Includes the sanitize-table probe (`_check_sanitize_tables`), the
+        same check `execute()` runs when sanitize is selected - `doctor`'s
+        whole job is "tell me whether a sync will work", so it must be able
+        to report the one failure mode that otherwise only surfaces by
+        actually running a sync. `execute()`'s version raises because it
+        runs mid-sync and must stop everything after it; this one must not,
+        because `check()` itself is documented never to raise.
+        """
         report, _stderr = self._probe(context)
-        return report
+        sanitize_ok, sanitize_detail = self._check_sanitize_tables(context, report)
+        return PreflightReport(
+            ssh_ok=report.ssh_ok,
+            remote_path_ok=report.remote_path_ok,
+            free_bytes=report.free_bytes,
+            sanitize_tables_ok=sanitize_ok,
+            sanitize_tables_detail=sanitize_detail,
+        )
 
     def _probe(self, context: ExecutionContext) -> tuple[PreflightReport, str]:
         """Run the ssh probe once and return the report plus any stderr.
@@ -113,47 +140,48 @@ class PreflightOperation:
         a `requires_table` containing a placeholder (e.g.
         `${WP_TABLE_PREFIX}users`) arrives here already resolved to the real
         name - checked against the real name, not the literal placeholder
-        text.
+        text. The actual table comparison lives in
+        `_first_missing_table_problem`, shared with `check()`'s non-raising
+        form (`_check_sanitize_tables`) below, so the two can never quietly
+        disagree about what counts as missing.
         """
         required = _required_tables(parse_rules(context))
         if not required:
             return
         tables = _remote_tables(context)
-        lowered = {table.lower(): table for table in tables}
-        for rule_name, table in required:
-            if table in tables:
-                continue
-            actual = lowered.get(table.lower())
-            if actual is not None:
-                # Exists, but under a different letter case. MySQL/MariaDB
-                # with lower_case_table_names=1 (the default on macOS and
-                # Windows servers) would resolve this rule's SQL fine
-                # regardless - so reporting this the same as "does not
-                # exist" would be wrong, and would abort syncs that were
-                # actually going to work. But on a case-sensitive server
-                # (the Linux default) the rule's literal, case-sensitive
-                # table reference genuinely will fail at run time with the
-                # database already imported - so this still has to abort,
-                # just with the honest diagnosis instead of a misleading
-                # "not found": name both spellings so a reader can tell
-                # which one is real.
-                raise OperationError(
-                    f"sanitize rule {rule_name!r} requires table {table!r}, but the "
-                    f"remote database has it as {actual!r} - only the letter case "
-                    "differs. Nothing was downloaded or imported. If this server folds "
-                    "table name case, the rule would work as-is; if it does not "
-                    "(the common case on Linux), it will fail for real. Change the "
-                    f"rule's declared table name to match the exact case ({actual!r})."
-                )
-            raise OperationError(
-                f"sanitize rule {rule_name!r} requires table {table!r}, which does "
-                f"not exist on {context.target.host}'s database "
-                f"({len(tables)} table(s) found). Nothing was downloaded or "
-                "imported. Either this project's table is named differently - "
-                "override it in .ddev/ddev-sync.yaml - or, if the table is "
-                "genuinely optional for this project, add "
-                "'tolerate_missing_table: true' to the rule."
-            )
+        problem = _first_missing_table_problem(context, required, tables)
+        if problem is not None:
+            raise OperationError(problem)
+
+    @staticmethod
+    def _check_sanitize_tables(
+        context: ExecutionContext, report: PreflightReport
+    ) -> tuple[bool | None, str]:
+        """The non-raising form of `_probe_sanitize_tables`, for `doctor`.
+
+        Returns `(None, "")` when there is nothing meaningful to report:
+        either connectivity already failed - `ssh_ok`/`remote_path_ok` above
+        already cover that, and there is no remote database left to query -
+        or no sanitize rule requires a table at all. Otherwise runs the same
+        probe `execute()` runs, catching the one `OperationError` that
+        `_remote_tables` can raise (the table *listing* itself failing, e.g.
+        bad credentials) instead of letting it propagate, because `check()`
+        is documented to never raise.
+        """
+        if not (report.ssh_ok and report.remote_path_ok):
+            return None, ""
+        required = _required_tables(parse_rules(context))
+        if not required:
+            return None, ""
+        try:
+            tables = _remote_tables(context)
+        except OperationError as error:
+            return False, str(error)
+        problem = _first_missing_table_problem(context, required, tables)
+        if problem is not None:
+            return False, problem
+        plural = "table" if len(required) == 1 else "tables"
+        return True, f"{len(required)} required {plural} present"
 
 
 def _required_tables(rules: list[SanitizeRule]) -> list[tuple[str, str]]:
@@ -179,6 +207,53 @@ def _rule_table(rule: SanitizeRule) -> str | None:
         return rule.requires_table
     table = rule.params.get("table")
     return str(table) if table else None
+
+
+def _first_missing_table_problem(
+    context: ExecutionContext, required: list[tuple[str, str]], tables: set[str]
+) -> str | None:
+    """The message for the first required table that is missing, or `None`.
+
+    Shared by `_probe_sanitize_tables` (which raises it) and
+    `_check_sanitize_tables` (which reports it without raising) so the two
+    can never describe the same missing table two different ways.
+    """
+    lowered = {table.lower(): table for table in tables}
+    for rule_name, table in required:
+        if table in tables:
+            continue
+        actual = lowered.get(table.lower())
+        if actual is not None:
+            # Exists, but under a different letter case. MySQL/MariaDB
+            # with lower_case_table_names=1 (the default on macOS and
+            # Windows servers) would resolve this rule's SQL fine
+            # regardless - so reporting this the same as "does not
+            # exist" would be wrong, and would abort syncs that were
+            # actually going to work. But on a case-sensitive server
+            # (the Linux default) the rule's literal, case-sensitive
+            # table reference genuinely will fail at run time with the
+            # database already imported - so this still has to abort,
+            # just with the honest diagnosis instead of a misleading
+            # "not found": name both spellings so a reader can tell
+            # which one is real.
+            return (
+                f"sanitize rule {rule_name!r} requires table {table!r}, but the "
+                f"remote database has it as {actual!r} - only the letter case "
+                "differs. Nothing was downloaded or imported. If this server folds "
+                "table name case, the rule would work as-is; if it does not "
+                "(the common case on Linux), it will fail for real. Change the "
+                f"rule's declared table name to match the exact case ({actual!r})."
+            )
+        return (
+            f"sanitize rule {rule_name!r} requires table {table!r}, which does "
+            f"not exist on {context.target.host}'s database "
+            f"({len(tables)} table(s) found). Nothing was downloaded or "
+            "imported. Either this project's table is named differently - "
+            "override it in .ddev/ddev-sync.yaml - or, if the table is "
+            "genuinely optional for this project, add "
+            "'tolerate_missing_table: true' to the rule."
+        )
+    return None
 
 
 def _remote_tables(context: ExecutionContext) -> set[str]:

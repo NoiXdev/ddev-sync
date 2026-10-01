@@ -202,6 +202,52 @@ def test_doctor_exits_nonzero_when_a_check_fails(
     assert "FAIL" in capsys.readouterr().out
 
 
+def test_doctor_exits_nonzero_when_the_sanitize_table_probe_fails(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The new failure mode this closes: ssh and the deploy path are both
+    # fine, but a sanitize rule needs a table production does not have.
+    # `doctor`'s whole job is to catch this before a real sync does, so it
+    # must exit non-zero here too, not just on the original two checks.
+    from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
+
+    monkeypatch.setattr(
+        PreflightOperation,
+        "check",
+        lambda _self, _context: PreflightReport(
+            True,
+            True,
+            50 * 1024**3,
+            sanitize_tables_ok=False,
+            sanitize_tables_detail="sanitize rule 'x' requires table 'y', which does not exist",
+        ),
+    )
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
+    output = capsys.readouterr().out
+    assert "FAIL" in output
+    assert "sanitize tables" in output
+
+
+def test_doctor_exits_zero_when_the_sanitize_table_probe_has_nothing_to_report(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
+
+    monkeypatch.setattr(
+        PreflightOperation,
+        "check",
+        lambda _self, _context: PreflightReport(True, True, 50 * 1024**3),
+    )
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 0
+    assert "sanitize tables" not in capsys.readouterr().out
+
+
 def test_a_run_without_a_target_and_without_a_tty_asks_for_target(
     project: Path,
     tmp_path: Path,

@@ -52,7 +52,14 @@ def doctor_command(context: RunContext, echo: Callable[[str], None]) -> int:
     execution = _execution_context(context, assume_yes=True)
     report = PreflightOperation().check(execution)
     echo(render_doctor(report, context.target))
-    return 0 if report.ssh_ok and report.remote_path_ok else 1
+    # `sanitize_tables_ok is False` is the one condition that is checked (not
+    # merely skipped) and failed - `None` means nothing to report (see
+    # `PreflightReport`'s own docstring) and must not fail the command.
+    return (
+        0
+        if report.ssh_ok and report.remote_path_ok and report.sanitize_tables_ok is not False
+        else 1
+    )
 
 
 def run_command(

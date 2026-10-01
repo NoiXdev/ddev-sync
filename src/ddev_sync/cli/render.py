@@ -145,8 +145,14 @@ def render_targets(collected: Mapping[str, CollectedTarget]) -> str:
 
 
 def render_doctor(report: PreflightReport, target: ResolvedTarget) -> str:
-    """Render the preflight report as a checklist."""
-    checks = (
+    """Render the preflight report as a checklist.
+
+    The sanitize-tables row is included only when `report.sanitize_tables_ok`
+    is not `None` - that probe genuinely was not run (no remote database to
+    query, or no sanitize rule requires a table), and a row would otherwise
+    show either a false OK or need a third marker of its own.
+    """
+    checks = [
         ("ssh connection", report.ssh_ok, f"{target.host}"),
         ("deploy path", report.remote_path_ok, target.path),
         (
@@ -154,7 +160,9 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget) -> str:
             report.free_bytes >= MIN_FREE_BYTES,
             f"{report.free_bytes // 1024**3} GB free",
         ),
-    )
+    ]
+    if report.sanitize_tables_ok is not None:
+        checks.append(("sanitize tables", report.sanitize_tables_ok, report.sanitize_tables_detail))
     lines = [f"  Doctor for target {target.name!r}", ""]
     for label, ok, detail in checks:
         # Width 6, not 4: "FAIL" alone is already 4 characters, so padding to
