@@ -1,0 +1,10 @@
+# Deliberately thin. Inertia's local setup need is the frontend build, which
+# node-build already provides. This exists so detection REPORTS it — a reader
+# of the dry run learns the project is an Inertia app — and so that a project
+# with Inertia-specific steps has an obvious place to put them.
+name: inertia
+description: Detected for reporting; the build itself is node-build's job.
+applies_to: [laravel]
+
+detect:
+  composer_package: inertiajs/inertia-laravel

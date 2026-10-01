@@ -1,0 +1,20 @@
+# Horizon is a feature rather than a base-profile rule because its presence
+# genuinely varies. The BASELINE queue safety — jobs and failed_jobs — is in
+# profiles/laravel.yaml, where it cannot be forgotten. See the features design
+# doc §5.1. horizon_jobs/horizon_supervisors are distinct tables the base
+# profile does not touch, so there is no overlap to deduplicate.
+name: horizon
+description: Clear Horizon's queue state so no production job runs locally.
+applies_to: [laravel]
+
+detect:
+  composer_package: laravel/horizon
+
+sanitize:
+  rules:
+    - { name: clear-horizon-jobs, sql: "TRUNCATE TABLE horizon_jobs" }
+    - { name: clear-horizon-supervisors, sql: "TRUNCATE TABLE horizon_supervisors" }
+
+setup:
+  commands:
+    - { run: "php artisan horizon:clear", allow_failure: true }

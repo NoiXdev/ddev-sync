@@ -1,0 +1,10 @@
+name: livewire
+description: Republish Livewire's assets after an import.
+applies_to: [laravel]
+
+detect:
+  composer_package: livewire/livewire
+
+setup:
+  commands:
+    - { run: "php artisan livewire:publish --assets", allow_failure: true }

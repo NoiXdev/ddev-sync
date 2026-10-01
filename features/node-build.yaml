@@ -1,0 +1,20 @@
+# Profile-agnostic on purpose: TYPO3, Shopware and Laravel all build frontends.
+# The predecessor hardcoded Grunt and Webpack; this reads the project instead.
+name: node-build
+description: Install frontend dependencies and run the build.
+
+detect:
+  file_exists: package.json
+
+settings:
+  install:
+    default: "ci"
+    description: "install subcommand — ci for a lockfile-exact install, install to update"
+  script:
+    default: "build"
+    description: "the package.json script to run"
+
+setup:
+  commands:
+    - run: "${PM} ${install}"
+    - run: "${PM_RUN} ${script}"

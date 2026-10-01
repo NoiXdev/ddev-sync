@@ -1,0 +1,11 @@
+name: filament
+description: Rebuild Filament's cached components after an import.
+applies_to: [laravel]
+
+detect:
+  composer_package: filament/filament
+
+setup:
+  commands:
+    - { run: "php artisan filament:upgrade", allow_failure: true }
+    - { run: "php artisan filament:optimize", allow_failure: true }
