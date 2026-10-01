@@ -118,6 +118,9 @@ def test_sanitizing_removes_the_real_email_addresses(project: Path, tmp_path: Pa
     assert local_query("SELECT password FROM be_users WHERE uid = 1") == "$argon2i$disabled"
     assert local_query("SELECT COUNT(*) FROM be_sessions") == "0"
     assert local_query("SELECT COUNT(*) FROM sys_log") == "0"
+    # The base-profile rule a scheduler task must not survive a sync on -
+    # see profiles/typo3.yaml's `clear-scheduler-tasks` comment.
+    assert local_query("SELECT COUNT(*) FROM tx_scheduler_task") == "0"
 
 
 def test_the_dump_is_removed_after_the_import(project: Path, tmp_path: Path) -> None:
