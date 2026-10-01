@@ -382,6 +382,44 @@ def test_golden_laravel_with_features(tmp_path: Path) -> None:
     write_or_compare("laravel-with-features.txt", render_plan(golden_plan_with_features(tmp_path)))
 
 
+def test_a_feature_contributing_only_a_hook_still_reaches_the_legend(tmp_path: Path) -> None:
+    """`render._legend` has a known, tracked gap: a layer whose only
+    contribution is a `hooks.post_sync` entry never appears in it, because
+    `post_sync` is rendered separately as `plan.post_sync` and never becomes
+    a `PlannedStep` (see the module notes carried into Plan 3). This is a
+    *different* hook: an ordinary phase hook such as `post_db_import` is
+    expanded by `build_plan`/`_Builder.hooks` into a real `PlannedStep` with
+    `is_hook=True`, which `_legend` already walks like any other step. This
+    test pins that a feature contributing only such a hook is not a second
+    instance of the same gap - so a later reader does not "fix" the wrong
+    one.
+    """
+    (tmp_path / "hook-only-marker.txt").write_text("", encoding="utf-8")
+    project = DdevProject(name="acme", type="laravel", docroot="public", root=tmp_path)
+    profile = ProfileRegistry(PROFILE_ROOT).resolve("laravel", None)
+    resolution = resolve_features(FeatureRegistry(FEATURE_ROOT), project, profile.name, None, True)
+    assert [a.feature.name for a in resolution.activated] == ["hook-only"]
+    plan = build_plan(
+        target=ResolvedTarget(
+            name="production",
+            host="web01.example",
+            user="deploy",
+            port=22,
+            path="/srv/app/",
+            stage=Stage.PRODUCTION,
+        ),
+        project=project,
+        profile=profile,
+        merged=merge_layers([*profile.layers, *resolution.layers]),
+        steps=steps_for_selection(["db"]),
+        features=resolution,
+    )
+    output = render_plan(plan)
+    legend = output.rsplit("Sources:", maxsplit=1)[1]
+    assert "feature:hook-only" in legend
+    assert "echo hook-only ran" in output
+
+
 def _target() -> ResolvedTarget:
     return ResolvedTarget(
         name="production",

@@ -1,0 +1,7 @@
+name: hook-only
+detect:
+  file_exists: hook-only-marker.txt
+hooks:
+  post_db_import:
+    commands:
+      - run: echo hook-only ran

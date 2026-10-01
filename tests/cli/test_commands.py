@@ -1,13 +1,16 @@
+import json
 from pathlib import Path
 
 import pytest
 
 from ddev_sync.cli import commands
+from ddev_sync.cli.context import build_context
 from ddev_sync.cli.main import main
 from ddev_sync.config.merge import MergeResult
 from ddev_sync.transport.runner import CommandResult
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
+FEATURE_ROOT = Path(__file__).parent / "features"
 
 
 @pytest.fixture
@@ -315,6 +318,53 @@ def test_a_real_run_with_sanitize_selected_skips_the_warning(
     output = capsys.readouterr().out
     assert code == 0
     assert "not sanitized" not in output.lower()
+
+
+def test_a_real_feature_contributes_a_step_to_the_plan(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`run_command`'s `features=context.features` (the line that wires the
+    feature subsystem's resolution into the plan it builds) has no other
+    test that would fail if it were deleted or replaced with an empty
+    resolution: `invoke()`'s `project` fixture is a plain `php` project with
+    no `composer.lock`/`package.json`, and there is no `--feature-root` CLI
+    flag yet (Task 7 adds it) to point a CLI-level run at a fixture
+    directory that has anything to detect. `build_context` is called
+    directly instead - exactly what this module's own docstring says the
+    split from `main.py` is for - against a project whose `composer.lock`
+    genuinely activates `filament`.
+
+    Asserting on the "Features" block, specifically, matters: the setup step
+    and its `[feature:filament]` source label come from `context.merged`
+    (already carrying the feature's layer, merged in by `build_context`
+    itself) and render identically whether or not `build_plan` ever sees
+    `context.features` - a first version of this test asserted on exactly
+    that step line and kept passing when the wiring line below was mutated
+    to pass an empty resolution instead. The "Features" block above the
+    steps is the *only* thing `build_plan`'s `features` argument controls
+    (see `Plan.features`/`features_detection_enabled`), which is what makes
+    this assertion the one that actually exercises the wiring.
+    """
+    (project / "composer.lock").write_text(
+        json.dumps({"packages": [{"name": "filament/filament", "version": "v3.2.0"}]}),
+        encoding="utf-8",
+    )
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="laravel",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag=None,
+        no_features=False,
+    )
+    code = commands.run_command(context, ["setup"], dry_run=True, assume_yes=True, echo=print)
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "Features  filament" in output
+    assert "detected: filament/filament" in output
 
 
 def test_keep_dump_defaults_to_false_without_a_defaults_block() -> None:
