@@ -108,10 +108,22 @@ def _endpoint(plan: Plan) -> str:
 
 
 def _legend(plan: Plan) -> str:
+    """Every source that contributed anything the plan will execute.
+
+    A layer whose sole contribution is a `hooks.post_sync` command never
+    becomes a `PlannedStep` - `post_sync` is rendered separately, as
+    `plan.post_sync` (see `Plan`'s own docstring) - so walking `plan.steps`
+    alone would silently drop it here: a step would run with no indication
+    of where it came from. `plan.post_sync` is reachable from the same
+    `Plan`, so it costs nothing to fold in.
+    """
     seen: list[str] = []
     for step in plan.steps:
         if step.source not in seen:
             seen.append(step.source)
+    for entry in plan.post_sync:
+        if entry.source not in seen:
+            seen.append(entry.source)
     return "   ".join(f"[{source}]" for source in seen)
 
 

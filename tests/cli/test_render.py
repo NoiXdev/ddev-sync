@@ -170,6 +170,31 @@ def test_a_hook_step_shows_hook_in_the_kind_column_not_its_parents_kind() -> Non
     assert "db.import" not in output.split("Nothing will be executed.")[1]
 
 
+def test_the_sources_legend_includes_a_source_that_only_contributes_post_sync() -> None:
+    # A layer whose sole contribution is a `hooks.post_sync` command never
+    # becomes a `PlannedStep` (see `Plan.post_sync`'s own docstring for why),
+    # so `_legend`, which used to walk only `plan.steps`, silently dropped it
+    # from the "Sources:" line - a step ran with no indication of where it
+    # came from. The legend must name every source the plan will execute
+    # something from, numbered step or post_sync epilogue alike.
+    plan = Plan(
+        target=small_plan().target,
+        profile_label="typo3@12",
+        project_name="acme",
+        steps=small_plan().steps,
+        post_sync=(
+            PostSyncEntry(detail="cleanup", source="feature:cleanup-only"),
+            # Same source as the first numbered step above ("built-in") -
+            # already contributed something, so it must not be listed twice.
+            PostSyncEntry(detail="also cleanup", source="built-in"),
+        ),
+    )
+    output = render_plan(plan)
+    legend_line = next(line for line in output.splitlines() if line.strip().startswith("Sources:"))
+    assert "[feature:cleanup-only]" in legend_line
+    assert legend_line.count("[built-in]") == 1
+
+
 def test_post_sync_entries_render_as_an_epilogue_not_a_numbered_step() -> None:
     plan = Plan(
         target=small_plan().target,
