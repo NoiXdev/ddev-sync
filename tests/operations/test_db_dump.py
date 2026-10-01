@@ -11,7 +11,6 @@ from ddev_sync.operations.database import (
     DUMP_FILENAME,
     DbDumpOperation,
     RemoteCredentials,
-    _scrub,
     dump_is_complete,
     read_remote_credentials,
 )
@@ -400,19 +399,3 @@ def test_a_dump_whose_connection_dropped_leaves_no_file_to_import_by_accident(
         DbDumpOperation().execute(context, {})
     # The next step in the plan would read this path; it must not exist.
     assert list(context.downloads_dir.glob("*.sql")) == []
-
-
-@pytest.mark.parametrize(
-    ("text", "secret", "expected"),
-    [
-        ("failed with s3cret in it", "s3cret", "failed with <REDACTED> in it"),
-        ("nothing to redact", "s3cret", "nothing to redact"),
-        # An empty secret must be a no-op. str.replace("", x) would otherwise
-        # insert x between every character of the message.
-        ("a message", "", "a message"),
-    ],
-)
-def test_scrub_replaces_the_secret_and_tolerates_an_empty_one(
-    text: str, secret: str, expected: str
-) -> None:
-    assert _scrub(text, secret) == expected

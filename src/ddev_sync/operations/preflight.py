@@ -1,15 +1,20 @@
 """Check that a sync can succeed before starting to move gigabytes.
 
-One ssh round trip answers both questions that matter - can we connect, and is
-the deploy path there - because two round trips through a jump host is two
-chances for the user to wait.
+One ssh round trip answers the two questions that matter for connectivity
+alone - can we connect, and is the deploy path there - because two round
+trips through a jump host is two chances for the user to wait.
 
-When the sanitize step is also selected, a second probe lists the remote
-database's tables and checks every non-tolerated `requires_table` the
-profile's sanitize rules declare, before the dump even starts: a missing
-table costs nothing here (nothing has moved yet), but found only after the
-import it means a sanitize rule silently never ran and the preceding steps
-in the run already left production data behind.
+When the sanitize step is also selected, this grows to up to three round
+trips: the connectivity probe above, then (if needed) a `read_remote_
+credentials` fetch - for a `wp_cli` source, resolving `${WP_TABLE_PREFIX}`
+means asking production's wp-cli for it - and finally a `SHOW TABLES` that
+checks every non-tolerated `requires_table` the profile's sanitize rules
+declare, before the dump even starts. The credentials fetch is memoised on
+`ExecutionContext.cache` (see its own docstring), so a sync that already
+paid for it elsewhere in the same run does not pay twice. A missing table
+costs nothing here (nothing has moved yet), but found only after the import
+it means a sanitize rule silently never ran and the preceding steps in the
+run already left production data behind.
 """
 
 import shlex
@@ -18,7 +23,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.base import ExecutionContext, OperationError, redact
 from ddev_sync.operations.database import RemoteCredentials, read_remote_credentials
 from ddev_sync.operations.files import validate_path_pairs
 from ddev_sync.operations.sanitize import SanitizeRule, parse_rules
@@ -262,7 +267,7 @@ def _remote_tables(context: ExecutionContext) -> set[str]:
     if not result.ok:
         raise OperationError(
             "could not list tables on the remote database to verify sanitize rules "
-            f"before the dump: {_redact(result.stderr, credentials.password).strip()}"
+            f"before the dump: {redact(result.stderr, credentials.password).strip()}"
         )
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
@@ -280,10 +285,3 @@ def _show_tables_argv(credentials: RemoteCredentials) -> list[str]:
         "SHOW TABLES",
         credentials.name,
     ]
-
-
-def _redact(text: str, secret: str) -> str:
-    """Remove `secret` from `text`; a no-op for an empty secret (see the
-    identical guard and reasoning in operations/database.py's `_scrub`).
-    """
-    return text.replace(secret, "<REDACTED>") if secret else text

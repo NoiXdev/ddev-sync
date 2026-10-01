@@ -6,7 +6,13 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import Layout, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
-from ddev_sync.operations.base import ExecutionContext, OperationError, PathEscapesProject, confirm
+from ddev_sync.operations.base import (
+    ExecutionContext,
+    OperationError,
+    PathEscapesProject,
+    confirm,
+    redact,
+)
 from ddev_sync.transport.fake import FakeCommandRunner
 
 
@@ -137,3 +143,26 @@ def test_confirm_raises_a_clean_error_naming_the_subject_when_stdin_is_closed(
     message = str(caught.value)
     assert "a thing only this test names" in message
     assert "--yes" in message
+
+
+# --- redact: shared by operations/database.py and operations/preflight.py --
+
+
+def test_redact_replaces_the_secret_with_a_placeholder() -> None:
+    assert redact("password=hunter2 failed", "hunter2") == "password=<REDACTED> failed"
+
+
+def test_redact_replaces_every_occurrence() -> None:
+    assert redact("hunter2 hunter2", "hunter2") == "<REDACTED> <REDACTED>"
+
+
+def test_redact_is_a_no_op_for_an_empty_secret() -> None:
+    # `str.replace("", x)` would otherwise insert `x` between every
+    # character of the message, garbling it exactly when a caller most
+    # needs to read it - see operations/database.py's DbDumpOperation,
+    # which calls this with an empty password whenever a target has none.
+    assert redact("some text", "") == "some text"
+
+
+def test_redact_is_a_no_op_when_the_secret_is_absent() -> None:
+    assert redact("nothing to hide here", "hunter2") == "nothing to hide here"

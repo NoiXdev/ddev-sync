@@ -49,6 +49,24 @@ def confirm(question: str, *, subject: str) -> bool:
     return answer in {"y", "yes"}
 
 
+def redact(text: str, secret: str) -> str:
+    """Remove `secret` from `text`.
+
+    Shared by `operations/database.py` (a failed `mysqldump`'s stderr) and
+    `operations/preflight.py` (a failed `SHOW TABLES`'s stderr), which used
+    to each carry an identical copy of this - the same risk `confirm` above
+    already closed for a different pair of call sites: two faithful copies
+    are exactly the shape that silently drifts the next time one changes and
+    the other does not.
+
+    An empty `secret` must be a no-op: `str.replace("", x)` would otherwise
+    insert `x` between every character of the message, garbling it exactly
+    when a caller most needs to read it - a target with no password (an
+    empty string, not a missing one) is a real, if unusual, configuration.
+    """
+    return text.replace(secret, "<REDACTED>") if secret else text
+
+
 @dataclass(frozen=True)
 class ExecutionContext:
     """Everything an operation needs, and nothing it does not."""

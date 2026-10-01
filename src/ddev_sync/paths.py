@@ -5,8 +5,8 @@ installed path, fall back to a checkout": `profiles/registry.py` and
 `features/registry.py` each need the identical rule for their respective
 `DEFAULT_PROFILE_ROOT`/`DEFAULT_FEATURE_ROOT` constants, and two copies of a
 filesystem check that quietly drift apart is exactly this project's own
-recurring defect (see `operations/preflight.py`'s and
-`operations/database.py`'s note on the same theme for their `_scrub`).
+recurring defect (see `operations/base.py`'s `redact` for the same theme
+applied to `operations/database.py` and `operations/preflight.py`).
 """
 
 from pathlib import Path

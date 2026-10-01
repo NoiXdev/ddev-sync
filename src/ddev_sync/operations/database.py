@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ddev_sync.operations.base import ExecutionContext, OperationError, confirm
+from ddev_sync.operations.base import ExecutionContext, OperationError, confirm, redact
 from ddev_sync.transport.ssh import ssh_command
 
 DUMP_FILENAME = "dump.sql"
@@ -257,7 +257,7 @@ class DbDumpOperation:
             destination.unlink(missing_ok=True)
             raise OperationError(
                 f"the remote dump failed (exit {result.returncode}): "
-                f"{_scrub(result.stderr, credentials.password).strip()}"
+                f"{redact(result.stderr, credentials.password).strip()}"
             )
         if not dump_is_complete(destination):
             size = destination.stat().st_size
@@ -291,16 +291,6 @@ def dump_is_complete(path: Path) -> bool:
             handle.seek(0)
         tail = handle.read()
     return DUMP_SENTINEL in tail
-
-
-def _scrub(text: str, secret: str) -> str:
-    """Remove `secret` from `text`.
-
-    An empty `secret` must be a no-op: `str.replace("", x)` would otherwise
-    insert `x` between every character of the message, garbling it exactly
-    when the caller most needs to read it.
-    """
-    return text.replace(secret, "<REDACTED>") if secret else text
 
 
 LOCAL_DB_USER = "db"
