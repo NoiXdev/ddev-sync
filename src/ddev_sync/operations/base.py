@@ -52,9 +52,13 @@ class ExecutionContext:
             return []
         return [entry for entry in node if isinstance(entry, dict)]
 
-    def remote(self, relative: str) -> str:
-        """Join `relative` onto the target's deploy path."""
-        return f"{self.target.path.rstrip('/')}/{relative.lstrip('/')}"
+    def remote_data(self, relative: str) -> str:
+        """Join `relative` onto the target's data root - user files, the env file."""
+        return f"{self.target.data_root}{relative.lstrip('/')}"
+
+    def remote_code(self, relative: str) -> str:
+        """Join `relative` onto the target's code root - where framework CLIs run."""
+        return f"{self.target.code_root}{relative.lstrip('/')}"
 
     def local(self, relative: str) -> Path:
         """Join `relative` onto the project root, refusing to escape it.

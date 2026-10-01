@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from ddev_sync.config.models import ResolvedTarget, Stage, TargetSpec
+from ddev_sync.config.models import Layout, ResolvedTarget, Stage, TargetSpec
 
 
 def test_stage_values_match_the_spec() -> None:
@@ -17,6 +17,7 @@ def test_target_spec_defaults_are_all_empty_so_layers_can_complete_each_other() 
     assert spec.extends is None
     assert spec.port == 22
     assert spec.jump_host_port == 22
+    assert spec.layout is None
 
 
 def test_target_spec_rejects_unknown_keys() -> None:
@@ -75,3 +76,56 @@ def test_the_target_path_always_ends_with_exactly_one_separator(given: str, expe
         stage=Stage.PRODUCTION,
     )
     assert target.path == expected
+
+
+def _target(path: str, layout: Layout | None = None) -> ResolvedTarget:
+    kwargs: dict[str, object] = {
+        "name": "production",
+        "host": "web01.example",
+        "user": "deploy",
+        "port": 22,
+        "path": path,
+        "stage": Stage.PRODUCTION,
+    }
+    if layout is not None:
+        kwargs["layout"] = layout
+    return ResolvedTarget(**kwargs)  # type: ignore[arg-type]
+
+
+def test_layout_defaults_to_plain_when_not_set() -> None:
+    assert _target("/srv/app/").layout is Layout.PLAIN
+
+
+def test_layout_values_match_the_spec() -> None:
+    assert [layout.value for layout in Layout] == ["plain", "deployer"]
+
+
+def test_a_plain_target_derives_both_roots_from_path_unchanged() -> None:
+    target = _target("/srv/app/", Layout.PLAIN)
+    assert target.code_root == "/srv/app/"
+    assert target.data_root == "/srv/app/"
+
+
+def test_a_deployer_target_derives_code_root_under_current() -> None:
+    target = _target("/srv/app/", Layout.DEPLOYER)
+    assert target.code_root == "/srv/app/current/"
+
+
+def test_a_deployer_target_derives_data_root_under_shared() -> None:
+    target = _target("/srv/app/", Layout.DEPLOYER)
+    assert target.data_root == "/srv/app/shared/"
+
+
+@pytest.mark.parametrize("layout", [Layout.PLAIN, Layout.DEPLOYER])
+@pytest.mark.parametrize("given", ["/srv/app", "/srv/app/"])
+def test_code_root_and_data_root_end_with_exactly_one_separator_regardless_of_input(
+    given: str, layout: Layout
+) -> None:
+    """The C14 invariant `path` already guarantees must hold for both derived
+    roots too - that is the whole point of deriving rather than writing them.
+    """
+    target = _target(given, layout)
+    assert target.code_root.endswith("/")
+    assert not target.code_root.endswith("//")
+    assert target.data_root.endswith("/")
+    assert not target.data_root.endswith("//")
