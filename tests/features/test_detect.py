@@ -64,7 +64,7 @@ def test_npm_package_does_not_match_when_absent(tmp_path: Path) -> None:
     assert matches({"npm_package": "vite"}, project_at(tmp_path)) is False
 
 
-@pytest.mark.parametrize("content", ["not json", "[]", "null"])
+@pytest.mark.parametrize("content", ["not json", "[]", "null", '"a string"'])
 def test_a_corrupt_package_json_does_not_match_and_does_not_raise(
     tmp_path: Path, content: str
 ) -> None:
@@ -226,3 +226,39 @@ def test_validate_predicate_rejects_invalid_nested_predicates() -> None:
             },
         )
     assert "my-feature" in str(caught.value)
+
+
+def test_file_exists_rejects_empty_path(tmp_path: Path) -> None:
+    with pytest.raises(FeatureError) as caught:
+        matches({"file_exists": ""}, project_at(tmp_path))
+    assert "empty" in str(caught.value).lower()
+
+
+def test_file_exists_rejects_absolute_path(tmp_path: Path) -> None:
+    with pytest.raises(FeatureError) as caught:
+        matches({"file_exists": "/etc/passwd"}, project_at(tmp_path))
+    assert "outside" in str(caught.value).lower() or "project root" in str(caught.value).lower()
+
+
+def test_file_exists_rejects_symlink_pointing_outside_project(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("x", encoding="utf-8")
+    symlink = tmp_path / "link"
+    symlink.symlink_to(outside)
+    with pytest.raises(FeatureError) as caught:
+        matches({"file_exists": "link"}, project_at(tmp_path))
+    assert "outside" in str(caught.value).lower() or "project root" in str(caught.value).lower()
+
+
+def test_validate_predicate_rejects_empty_file_exists() -> None:
+    with pytest.raises(FeatureError) as caught:
+        validate_predicate("my-feature", {"file_exists": ""})
+    assert "my-feature" in str(caught.value)
+    assert "non-empty" in str(caught.value).lower()
+
+
+def test_validate_predicate_rejects_non_string_file_exists() -> None:
+    with pytest.raises(FeatureError) as caught:
+        validate_predicate("my-feature", {"file_exists": 123})
+    assert "my-feature" in str(caught.value)
+    assert "non-empty" in str(caught.value).lower()

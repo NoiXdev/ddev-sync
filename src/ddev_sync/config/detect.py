@@ -5,12 +5,11 @@ then detection, then ask - and both report where the answer came from, because
 a tool that silently guesses is a tool nobody trusts with a production dump.
 """
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
+from ddev_sync.composer import read_packages
 from ddev_sync.ddev.project import DdevProject
 
 GENERIC_PROFILE = "generic"
@@ -94,24 +93,7 @@ def detect_major_version(project: DdevProject, profile_name: str) -> str | None:
 
 
 def _major_from_composer_lock(lock_path: Path, package: str) -> str | None:
-    if not lock_path.is_file():
-        return None
-    try:
-        document = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    if not isinstance(document, dict):
-        return None
-    for section in ("packages", "packages-dev"):
-        version = _find_version(document.get(section), package)
-        if version is not None:
-            return version
-    return None
-
-
-def _find_version(entries: Any, package: str) -> str | None:
-    if not isinstance(entries, list):
-        return None
+    entries = read_packages(lock_path)
     for entry in entries:
         if isinstance(entry, dict) and entry.get("name") == package:
             match = _SEMVER_MAJOR.match(str(entry.get("version", "")))

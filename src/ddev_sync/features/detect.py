@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from ddev_sync.composer import read_packages
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.errors import FeatureError
 
@@ -44,7 +45,10 @@ def validate_predicate(name: str, predicate: Any) -> None:
     except FeatureError as e:
         raise FeatureError(f"feature {name!r}: {e}") from e
 
-    if key in ("any_of", "all_of"):
+    if key == "file_exists":
+        if not isinstance(value, str) or not value:
+            raise FeatureError(f"feature {name!r}: file_exists must be a non-empty string")
+    elif key in ("any_of", "all_of"):
         try:
             nested = _nested(key, value)
         except FeatureError as e:
@@ -76,6 +80,10 @@ def _nested(key: str, value: Any) -> list[Mapping[str, Any]]:
 
 def _within_root(project: DdevProject, relative: str) -> Path:
     """Resolve `relative` under the project root, refusing to leave it."""
+    if not relative:
+        raise FeatureError(
+            "file_exists path is empty; a feature must specify a file or directory to check"
+        )
     root = project.root.resolve()
     candidate = (root / relative).resolve()
     if candidate != root and root not in candidate.parents:
@@ -88,16 +96,8 @@ def _within_root(project: DdevProject, relative: str) -> Path:
 
 
 def _composer_has(lock_path: Path, package: str) -> bool:
-    document = _read_json(lock_path)
-    if not isinstance(document, dict):
-        return False
-    for section in ("packages", "packages-dev"):
-        entries = document.get(section)
-        if not isinstance(entries, list):
-            continue
-        if any(isinstance(entry, dict) and entry.get("name") == package for entry in entries):
-            return True
-    return False
+    entries = read_packages(lock_path)
+    return any(isinstance(entry, dict) and entry.get("name") == package for entry in entries)
 
 
 def _npm_has(package_json: Path, package: str) -> bool:
