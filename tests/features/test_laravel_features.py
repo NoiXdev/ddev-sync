@@ -49,10 +49,19 @@ def test_inertia_contributes_nothing_and_that_is_allowed() -> None:
     assert feature.detect
 
 
-def test_horizon_clears_queue_state_as_sanitize_not_setup() -> None:
-    rules = REGISTRY.load("horizon").data["sanitize"]["rules"]
-    names = {rule["name"] for rule in rules}
-    assert "clear-horizon-jobs" in names
+def test_horizon_clears_queue_state_via_setup_not_sanitize() -> None:
+    # Horizon's queue and supervisor state lives in Redis, not the database:
+    # it ships no migrations and no horizon_jobs/horizon_supervisors tables
+    # (checked against laravel/horizon 5.x and main). A sanitize.rules entry
+    # that TRUNCATEs a table that does not exist does not merely fail
+    # quietly - operations/sanitize.py::_run_sql raises unconditionally,
+    # which aborts the whole sync right after the database import. So this
+    # cleanup lives in `setup.commands`, which tolerates failure, not in
+    # `sanitize.rules`, which cannot.
+    data = REGISTRY.load("horizon").data
+    assert "sanitize" not in data
+    commands_run = [str(entry.get("run", "")) for entry in data["setup"]["commands"]]
+    assert any("horizon:clear" in command for command in commands_run)
 
 
 def test_laravels_baseline_queue_safety_is_in_the_profile_not_the_feature() -> None:
@@ -74,11 +83,11 @@ def test_commands_that_may_not_exist_tolerate_failure(name: str) -> None:
             assert entry.get("allow_failure") is True, entry
 
 
-def test_horizon_does_not_duplicate_the_profiles_jobs_tables() -> None:
-    # horizon_jobs/horizon_supervisors are Horizon-specific tables, distinct
-    # from the plain `jobs`/`failed_jobs` tables the base laravel profile
-    # already truncates; this pins that the feature does not re-truncate what
-    # the profile already covers.
-    rules = REGISTRY.load("horizon").data["sanitize"]["rules"]
-    names = {rule["name"] for rule in rules}
-    assert names == {"clear-horizon-jobs", "clear-horizon-supervisors"}
+def test_composer_package_detections_are_pinned() -> None:
+    # A typo in a detect value fails silently: the feature simply never
+    # activates, and nothing reports the mismatch. Pinning the exact string
+    # here makes any future change to one a deliberate edit, not a slip.
+    assert REGISTRY.load("filament").detect == {"composer_package": "filament/filament"}
+    assert REGISTRY.load("livewire").detect == {"composer_package": "livewire/livewire"}
+    assert REGISTRY.load("inertia").detect == {"composer_package": "inertiajs/inertia-laravel"}
+    assert REGISTRY.load("horizon").detect == {"composer_package": "laravel/horizon"}

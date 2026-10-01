@@ -1,9 +1,28 @@
+import re
 from pathlib import Path
+from typing import Any
 
 from ddev_sync.features.registry import FeatureRegistry
 
 FEATURE_ROOT = Path(__file__).parent.parent.parent / "features"
 REGISTRY = FeatureRegistry(FEATURE_ROOT)
+VERIFIED_MD = Path(__file__).parent.parent.parent / "profiles" / "VERIFIED.md"
+
+# Matches the table name following TRUNCATE TABLE / UPDATE / FROM in a raw
+# sanitize rule's `sql`, plus the explicit `table:` key an operation-based
+# rule (e.g. reset_passwords) carries instead.
+_SQL_TABLE = re.compile(r"(?:TABLE|UPDATE|FROM)\s+`?(\w+)`?", re.IGNORECASE)
+
+
+def _tables_touched(rule: dict[str, Any]) -> set[str]:
+    tables: set[str] = set()
+    table = rule.get("table")
+    if table:
+        tables.add(str(table))
+    sql = rule.get("sql")
+    if sql:
+        tables.update(_SQL_TABLE.findall(str(sql)))
+    return tables
 
 
 def test_processedfiles_has_no_detect_block_and_is_explicit_only() -> None:
@@ -72,3 +91,43 @@ def test_typo3_and_symfony_optional_commands_tolerate_failure() -> None:
     for name in ("typo3-solr", "symfony-search"):
         for entry in REGISTRY.load(name).data["setup"]["commands"]:
             assert entry.get("allow_failure") is True, entry
+
+
+def test_composer_package_detections_are_pinned() -> None:
+    # A typo in a detect value fails silently: the feature simply never
+    # activates, and nothing reports the mismatch. Pinning the exact string
+    # here makes any future change to one a deliberate edit, not a slip.
+    assert REGISTRY.load("typo3-solr").detect == {"composer_package": "apache-solr-for-typo3/solr"}
+    assert REGISTRY.load("symfony-search").detect == {
+        "composer_package": "friendsofsymfony/elastica-bundle"
+    }
+
+
+def test_features_with_sanitize_rules_name_their_tables_in_verified_md() -> None:
+    # A TRUNCATE against a table that does not exist aborts the whole sync
+    # (operations/sanitize.py::_run_sql raises unconditionally on failure,
+    # with no allow_failure available on that path) - that is exactly how
+    # horizon.yaml's now-removed sanitize block would have failed on a real
+    # Horizon install. This cannot prove a table is real without running
+    # against one, but it can force every claim about one into the one file
+    # whose job is tracking exactly that, where it is visible to whoever
+    # eventually verifies it.
+    verified_text = VERIFIED_MD.read_text(encoding="utf-8")
+    for name in REGISTRY.available():
+        rules = REGISTRY.load(name).data.get("sanitize", {}).get("rules", [])
+        if not rules:
+            continue
+        touched: set[str] = set()
+        for rule in rules:
+            touched |= _tables_touched(rule)
+        assert touched, f"{name}: has sanitize rules but no table name could be extracted"
+        row = next(
+            (line for line in verified_text.splitlines() if line.startswith(f"| {name} |")),
+            None,
+        )
+        assert row is not None, f"{name}: no profiles/VERIFIED.md row found"
+        for table in touched:
+            assert table in row, (
+                f"{name}: profiles/VERIFIED.md row does not name the table {table!r} "
+                f"it truncates:\n{row}"
+            )

@@ -1,19 +1,25 @@
+# Horizon's queue and supervisor state lives in Redis, not the database: it
+# ships no migrations, and neither `horizon_jobs` nor `horizon_supervisors`
+# exists as a table (checked against laravel/horizon 5.x and main — grepping
+# the source turns up neither name). An earlier version of this file carried
+# a sanitize.rules block that TRUNCATEd those two non-existent tables. That
+# is worse than dead weight: operations/sanitize.py::_run_sql raises
+# unconditionally on failure, with no allow_failure on that path, so on any
+# project that actually has Horizon installed the first TRUNCATE would have
+# failed with "table doesn't exist" and aborted the entire sync right after
+# the database import - including the `horizon:clear` command below, which
+# is the one that actually does the job, because the real state is in Redis.
+#
 # Horizon is a feature rather than a base-profile rule because its presence
-# genuinely varies. The BASELINE queue safety — jobs and failed_jobs — is in
-# profiles/laravel.yaml, where it cannot be forgotten. See the features design
-# doc §5.1. horizon_jobs/horizon_supervisors are distinct tables the base
-# profile does not touch, so there is no overlap to deduplicate.
+# genuinely varies. The BASELINE Laravel queue tables - jobs, failed_jobs -
+# are sanitized by profiles/laravel.yaml, where they cannot be forgotten.
+# See the features design doc §5.1.
 name: horizon
-description: Clear Horizon's queue state so no production job runs locally.
+description: Clear Horizon's Redis-backed queue state so no production job runs locally.
 applies_to: [laravel]
 
 detect:
   composer_package: laravel/horizon
-
-sanitize:
-  rules:
-    - { name: clear-horizon-jobs, sql: "TRUNCATE TABLE horizon_jobs" }
-    - { name: clear-horizon-supervisors, sql: "TRUNCATE TABLE horizon_supervisors" }
 
 setup:
   commands:

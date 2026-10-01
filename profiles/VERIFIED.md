@@ -30,9 +30,9 @@ other's columns would blur what was actually checked.
 | filament | | | | not yet verified; `filament:upgrade`/`filament:optimize` subcommand names unverified |
 | livewire | | | | not yet verified; `livewire:publish --assets` unverified |
 | inertia | | | | not yet verified; detection-only, no commands to verify |
-| horizon | | | | not yet verified; `horizon:clear` unverified, and the horizon_jobs/horizon_supervisors table names are version-dependent (Horizon has changed its schema across major versions) |
-| typo3-processedfiles | | | | not yet verified; `sys_file_processedfile` table name unverified; no detect block by design, see the file's comment |
-| typo3-solr | | | | not yet verified; `vendor/bin/typo3 solr:initializesolrconnections` command name unverified across apache-solr-for-typo3 versions |
+| horizon | | | | not yet verified; `horizon:clear` command unverified. No sanitize rule: Horizon's queue/supervisor state lives in Redis, not the database - `horizon_jobs`/`horizon_supervisors` tables do not exist in laravel/horizon 5.x or main, checked by reading the source; an earlier draft of this feature truncated them and would have aborted every sync on a real Horizon install |
+| typo3-processedfiles | | | | not yet verified; truncates `sys_file_processedfile` (a TYPO3 core FAL table) - no detect block by design, see the file's comment |
+| typo3-solr | | | | not yet verified; `vendor/bin/typo3 solr:initializesolrconnections` could not be located as a CLI command in apache-solr-for-typo3/solr 11.6 or main - connection setup there appears to be TypoScript/site-config driven rather than a console command. `allow_failure: true` limits the blast radius if the command does not exist, but the command itself should be treated as a guess until checked against a real ext:solr install |
 | symfony-search | | | | not yet verified; `fos:elastica:populate` command name unverified |
 
 ## Known limitations
