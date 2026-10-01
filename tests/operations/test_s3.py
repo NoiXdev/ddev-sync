@@ -87,6 +87,15 @@ def test_the_environment_names_both_providers(tmp_path: Path) -> None:
     assert env["RCLONE_CONFIG_SRC_ENDPOINT"] == "https://s3.example"
 
 
+def test_the_path_includes_alpines_sbin_directories(tmp_path: Path) -> None:
+    # Alpine (what slim containers typically use) puts /usr/local/sbin,
+    # /usr/sbin and /sbin on the default PATH alongside the bin dirs; some
+    # tooling rclone shells out to lives there. Pinned PATH must include them
+    # too, in the conventional order, or that tooling silently disappears.
+    env = rclone_env(S3Endpoint(**REMOTE, region=""), S3Endpoint(**LOCAL, region=""))
+    assert env["PATH"] == "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+
 def test_the_endpoint_repr_redacts_the_secret() -> None:
     endpoint = S3Endpoint(**REMOTE, region="")
     assert "remote-secret" not in repr(endpoint)

@@ -48,7 +48,20 @@ def rclone_env(remote: S3Endpoint, local: S3Endpoint) -> dict[str, str]:
         "RCLONE_CONFIG_DST_ACCESS_KEY_ID": local.access_key,
         "RCLONE_CONFIG_DST_SECRET_ACCESS_KEY": local.secret_key,
         "RCLONE_CONFIG_DST_REGION": local.region,
-        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        # `context.runner.run(..., env=...)` replaces the subprocess's
+        # environment rather than extending it (see `transport/runner.py`),
+        # so a `PATH` has to be supplied explicitly here or `rclone` itself
+        # would not be found on `$PATH` at all. Pinned to the conventional
+        # default rather than inherited from the calling process for the same
+        # reason credentials go through `RCLONE_CONFIG_*` and not argv: a
+        # setup-command's shell (`operations/exec.py`) may have exported all
+        # manner of project-specific `PATH` entries by the time this runs,
+        # and none of that should leak into what `rclone` can execute.
+        # Alpine - what slim containers typically use - puts
+        # /usr/local/sbin, /usr/sbin and /sbin on the default PATH
+        # alongside the bin dirs, and some tooling lives only there; this
+        # used to omit all three.
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     }
 
 
