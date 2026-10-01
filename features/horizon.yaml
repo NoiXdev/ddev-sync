@@ -7,8 +7,7 @@
 # unconditionally on failure, with no allow_failure on that path, so on any
 # project that actually has Horizon installed the first TRUNCATE would have
 # failed with "table doesn't exist" and aborted the entire sync right after
-# the database import - including the `horizon:clear` command below, which
-# is the one that actually does the job, because the real state is in Redis.
+# the database import.
 #
 # Horizon is a feature rather than a base-profile rule because its presence
 # genuinely varies. profiles/laravel.yaml's own `jobs`/`failed_jobs` rules
@@ -20,11 +19,27 @@
 # own state. (It is also no longer able to abort the sync if those tables
 # are absent: both rules carry tolerate_missing_table, the same guard this
 # file's own comment above describes for the two Horizon-specific tables
-# that turned out not to exist.) What actually protects a Horizon project is
-# `horizon:clear` below, against Redis, where Horizon's real state lives.
-# See the features design doc §5.1.
+# that turned out not to exist.) See the features design doc §5.1.
+#
+# What `horizon:clear` below actually does, and does not do (verified
+# against the Laravel 11.x Horizon docs, "Clearing Jobs From Queues"):
+# ddev-sync never syncs Redis, so there is no production queue state on this
+# machine to begin with - the description used to read "so no production
+# job runs locally", which claims a protection that cannot exist when
+# nothing production-side was ever copied here. What this command actually
+# clears is this developer's OWN local Redis queue: specifically, with no
+# `--queue` option (as called here), it empties only the `default` queue -
+# every other queue name is untouched. The real reason to run it after a
+# sync is mundane but genuine: a local queue can be carrying jobs enqueued
+# against the *previous* local database (e.g. "send a welcome email to user
+# 42"), and once this sync has replaced that database, those jobs point at
+# rows that may no longer exist or mean something different - clearing the
+# backlog avoids them running against data they were never meant to see.
 name: horizon
-description: Clear Horizon's Redis-backed queue state so no production job runs locally.
+description: >-
+  Clear this machine's own local Horizon "default" queue in Redis (not
+  production's - ddev-sync never syncs Redis) so jobs left over from before
+  this sync don't run against the freshly imported database.
 applies_to: [laravel]
 
 detect:
