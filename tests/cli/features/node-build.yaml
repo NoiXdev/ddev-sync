@@ -1,0 +1,12 @@
+name: node-build
+detect:
+  file_exists: package.json
+settings:
+  install:
+    default: ci
+  script:
+    default: build
+setup:
+  commands:
+    - run: ${PM} ${install}
+    - run: ${PM_RUN} ${script}

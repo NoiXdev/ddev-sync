@@ -1,0 +1,4 @@
+name: manual-only
+setup:
+  commands:
+    - run: echo manual

@@ -70,6 +70,7 @@ def run_command(
         profile=context.profile,
         merged=context.merged,
         steps=steps_for_selection(selection),
+        features=context.features,
     )
     if dry_run:
         echo(render_plan(plan))

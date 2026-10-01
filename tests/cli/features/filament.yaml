@@ -1,0 +1,7 @@
+name: filament
+applies_to: [laravel]
+detect:
+  composer_package: filament/filament
+setup:
+  commands:
+    - run: php artisan filament:upgrade

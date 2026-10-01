@@ -14,12 +14,19 @@ from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.steps import StepKind, hook_name
 from ddev_sync.errors import ConfigError
+from ddev_sync.features.resolver import ActivatedFeature, FeatureResolution
 from ddev_sync.operations.base import preview_local_path
 from ddev_sync.profiles.registry import ResolvedProfile
 from ddev_sync.transport.ssh import rsync_pull_command, ssh_command
 
 DUMP_FILENAME = "dump.sql"
 DOWNLOAD_DIR = ".ddev/.downloads"
+
+# A module-level singleton rather than constructing one in the signature:
+# `FeatureResolution()` is immutable (every field is a tuple or a bool), so
+# sharing this one instance across every caller that does not pass its own
+# is safe - unlike the `[]` or `{}` this same rule exists to catch.
+_NO_FEATURES = FeatureResolution()
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,8 @@ class Plan:
     steps: tuple[PlannedStep, ...]
     notices: tuple[str, ...] = ()
     post_sync: tuple[PostSyncEntry, ...] = ()
+    features: tuple[ActivatedFeature, ...] = ()
+    features_detection_enabled: bool = True
 
 
 def build_plan(
@@ -83,6 +92,7 @@ def build_plan(
     profile: ResolvedProfile,
     merged: MergeResult,
     steps: Sequence[StepKind],
+    features: FeatureResolution = _NO_FEATURES,
 ) -> Plan:
     """Expand the selected steps, with their hooks, into numbered plan entries."""
     builder = _Builder(target=target, project=project, merged=merged)
@@ -119,6 +129,8 @@ def build_plan(
         steps=numbered,
         notices=notices,
         post_sync=_post_sync_preview(merged),
+        features=features.activated,
+        features_detection_enabled=features.detection_enabled,
     )
 
 

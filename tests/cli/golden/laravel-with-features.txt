@@ -1,0 +1,17 @@
+  Plan for target 'production'        laravel
+  acme  -  deploy@web01.example:22  /srv/app/
+  Nothing will be executed.
+
+  Features  filament    detected: filament/filament
+            node-build  detected: package.json
+
+   1  preflight     remote  ssh -p 22 deploy@web01.example   [built-in]
+   2  setup         local   composer install --no-interaction   [profile:laravel]
+   3  setup         local   php artisan migrate --force  (allow_failure)   [profile:laravel]
+   4  setup         local   php artisan optimize:clear   [profile:laravel]
+   5  setup         local   php artisan storage:link  (allow_failure)   [profile:laravel]
+   6  setup         local   php artisan filament:upgrade   [feature:filament]
+   7  setup         local   pnpm ci   [feature:node-build]
+   8  setup         local   pnpm run build   [feature:node-build]
+
+  Sources:  [built-in]   [profile:laravel]   [feature:filament]   [feature:node-build]

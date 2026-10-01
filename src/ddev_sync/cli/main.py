@@ -42,6 +42,7 @@ from ddev_sync.cli.context import RunContext, build_context
 from ddev_sync.ddev.project import DEFAULT_PROJECT_ROOT
 from ddev_sync.engine.steps import SELECTION_GROUPS
 from ddev_sync.errors import DdevSyncError, TargetError
+from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT
 from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT
 
 
@@ -52,6 +53,11 @@ class _Options:
     project_root: Path
     home: Path
     profile_root: Path
+    # No `--feature-root` option exists yet - Task 7 adds it, plus
+    # `--features` and `--no-features`, as options feeding `build_context`'s
+    # other two new parameters. This field is wired ahead of the flag so
+    # that build_context's call site does not need touching again then.
+    feature_root: Path
     target_name: str | None
     type_flag: str | None
     framework_version_flag: str | None
@@ -95,6 +101,7 @@ def cli(
         project_root=project_root,
         home=home if home is not None else Path.home(),
         profile_root=profile_root,
+        feature_root=DEFAULT_FEATURE_ROOT,
         target_name=target_name,
         type_flag=type_flag,
         framework_version_flag=framework_version_flag,
@@ -141,6 +148,7 @@ def _build_run_context(options: _Options) -> RunContext:
             type_flag=options.type_flag,
             framework_version_flag=options.framework_version_flag,
             profile_root=options.profile_root,
+            feature_root=options.feature_root,
         )
 
     if options.target_name is not None:

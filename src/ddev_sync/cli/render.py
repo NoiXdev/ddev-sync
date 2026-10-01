@@ -14,6 +14,11 @@ from ddev_sync.operations.preflight import MIN_FREE_BYTES, PreflightReport
 
 _KIND_WIDTH = 14
 _WHERE_WIDTH = 7
+_FEATURES_LABEL = "  Features  "
+_FEATURES_INDENT = " " * len(_FEATURES_LABEL)
+_FEATURES_DISABLED_NOTICE = (
+    f"{_FEATURES_LABEL}(detection disabled by ~/.ddev/ddev-sync/config.yaml)"
+)
 
 
 def render_header(plan: Plan) -> str:
@@ -30,6 +35,11 @@ def render_plan(plan: Plan) -> str:
     lines = [render_header(plan), "  Nothing will be executed.", ""]
     lines.extend(f"  ! {notice}" for notice in plan.notices)
     if plan.notices:
+        lines.append("")
+
+    features_block = render_features(plan)
+    if features_block:
+        lines.append(features_block)
         lines.append("")
 
     if not plan.steps:
@@ -56,6 +66,29 @@ def render_plan(plan: Plan) -> str:
             lines.append(f"        {entry.detail}   [{entry.source}]")
 
     return "\n".join(lines) + "\n"
+
+
+def render_features(plan: Plan) -> str:
+    """The block of active features, shown above the steps.
+
+    Three outcomes, not two: features active (list them, one per line, each
+    naming why); none active because nothing matched (render nothing - an
+    empty heading would be noise on every ordinary run); none active because
+    detection itself was switched off (say so once, so a user who expected
+    `node-build` to show up learns why it did not, rather than concluding
+    their project was not detected).
+    """
+    if not plan.features:
+        if plan.features_detection_enabled:
+            return ""
+        return _FEATURES_DISABLED_NOTICE
+    width = max(len(activated.feature.name) for activated in plan.features)
+    lines = [
+        f"{_FEATURES_LABEL if index == 0 else _FEATURES_INDENT}"
+        f"{activated.feature.name:<{width}}  {activated.reason}"
+        for index, activated in enumerate(plan.features)
+    ]
+    return "\n".join(lines)
 
 
 def _kind_label(step: PlannedStep) -> str:

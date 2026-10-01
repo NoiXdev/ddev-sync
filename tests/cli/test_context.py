@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ from ddev_sync.cli.context import build_context
 from ddev_sync.errors import ConfigError, TargetError
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
+FEATURE_ROOT = Path(__file__).parent / "features"
 
 
 @pytest.fixture
@@ -216,3 +218,172 @@ def test_an_undetectable_type_is_reported_with_guidance(tmp_path: Path) -> None:
     # php maps to generic rather than failing; DetectionError is reserved for
     # the case where .ddev/config.yaml itself cannot supply a type.
     assert context.profile.name == "generic"
+
+
+def test_a_detected_feature_contributes_a_layer(project: Path, tmp_path: Path) -> None:
+    (project / "composer.lock").write_text(
+        json.dumps({"packages": [{"name": "filament/filament", "version": "v3.2.0"}]}),
+        encoding="utf-8",
+    )
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="laravel",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag=None,
+        no_features=False,
+    )
+    assert [a.feature.name for a in context.features.activated] == ["filament"]
+    # The brief's own sketch of this assertion fell back on
+    # `context.features.layers` because `filament`'s only contribution is a
+    # `setup.commands` entry - a list, not a scalar - so `scalar_sources`
+    # alone can never see it. Checking `list_sources` directly is the real
+    # verification: it confirms the merge machinery actually carried
+    # `feature:filament` through as a step's provenance label, not merely
+    # that *some* feature activated.
+    assert any("feature:filament" in labels for labels in context.merged.list_sources.values())
+
+
+def test_no_features_disables_detection_for_the_run(project: Path, tmp_path: Path) -> None:
+    (project / "composer.lock").write_text(
+        json.dumps({"packages": [{"name": "filament/filament", "version": "v3.2.0"}]}),
+        encoding="utf-8",
+    )
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="laravel",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag=None,
+        no_features=True,
+    )
+    assert context.features.activated == ()
+
+
+def test_the_global_kill_switch_disables_detection(project: Path, tmp_path: Path) -> None:
+    (project / "composer.lock").write_text(
+        json.dumps({"packages": [{"name": "filament/filament", "version": "v3.2.0"}]}),
+        encoding="utf-8",
+    )
+    home = tmp_path / "home"
+    config = home / ".ddev" / "ddev-sync" / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("version: 1\ndefaults:\n  detect_features: false\n", encoding="utf-8")
+    context = build_context(
+        project_root=project,
+        home=home,
+        target_name="production",
+        type_flag="laravel",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag=None,
+        no_features=False,
+    )
+    assert context.features.activated == ()
+
+
+def test_a_project_features_key_overrides_detection(project: Path, tmp_path: Path) -> None:
+    (project / "composer.lock").write_text(
+        json.dumps({"packages": [{"name": "filament/filament", "version": "v3.2.0"}]}),
+        encoding="utf-8",
+    )
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\n"
+        "features:\n"
+        "  - manual-only\n"
+        "targets:\n"
+        "  production:\n"
+        "    host: web01.example\n"
+        "    user: deploy\n"
+        "    path: /srv/app/\n"
+        "    stage: production\n",
+        encoding="utf-8",
+    )
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="laravel",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag=None,
+        no_features=False,
+    )
+    # An explicit `features:` key replaces detection entirely (spec §2): only
+    # the named feature is active, even though filament would otherwise have
+    # been detected from the composer.lock written above.
+    assert [a.feature.name for a in context.features.activated] == ["manual-only"]
+
+
+def test_the_features_flag_overrides_the_project_features_key(
+    project: Path, tmp_path: Path
+) -> None:
+    (project / "package.json").write_text("{}", encoding="utf-8")
+    (project / "package-lock.json").write_text("{}", encoding="utf-8")
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\n"
+        "features:\n"
+        "  - manual-only\n"
+        "targets:\n"
+        "  production:\n"
+        "    host: web01.example\n"
+        "    user: deploy\n"
+        "    path: /srv/app/\n"
+        "    stage: production\n",
+        encoding="utf-8",
+    )
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="laravel",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        # A trailing empty entry (from a trailing comma) must be dropped
+        # rather than looked up as a feature named "".
+        features_flag="node-build,",
+        no_features=False,
+    )
+    assert [a.feature.name for a in context.features.activated] == ["node-build"]
+    assert context.features.activated[0].reason == "from --features"
+
+
+def test_a_features_mapping_with_settings_is_parsed(project: Path, tmp_path: Path) -> None:
+    (project / "package.json").write_text("{}", encoding="utf-8")
+    (project / "package-lock.json").write_text("{}", encoding="utf-8")
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\n"
+        "features:\n"
+        "  node-build:\n"
+        "    install: npm\n"
+        "targets:\n"
+        "  production:\n"
+        "    host: web01.example\n"
+        "    user: deploy\n"
+        "    path: /srv/app/\n"
+        "    stage: production\n",
+        encoding="utf-8",
+    )
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="laravel",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag=None,
+        no_features=False,
+    )
+    assert [a.feature.name for a in context.features.activated] == ["node-build"]
+    assert context.features.activated[0].settings["install"] == "npm"
+    assert context.features.activated[0].reason == "from .ddev/ddev-sync.yaml"

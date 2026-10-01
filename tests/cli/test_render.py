@@ -1,16 +1,28 @@
+import json
 import os
 from pathlib import Path
 
-from ddev_sync.cli.render import render_doctor, render_plan
+from ddev_sync.cli.render import render_doctor, render_features, render_plan
 from ddev_sync.config.merge import merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.plan import Plan, PlannedStep, PostSyncEntry, build_plan
 from ddev_sync.engine.steps import StepKind, steps_for_selection
+from ddev_sync.features.registry import Feature, FeatureRegistry
+from ddev_sync.features.resolver import ActivatedFeature, resolve_features
 from ddev_sync.operations.preflight import PreflightReport
 from ddev_sync.profiles.registry import ProfileRegistry
 
 GOLDEN = Path(__file__).parent / "golden"
+FEATURE_ROOT = Path(__file__).parent / "features"
+
+
+def activated(name: str, reason: str) -> ActivatedFeature:
+    """A minimal `ActivatedFeature` for rendering tests that do not need to
+    exercise detection or settings resolution - only `render_features` reads
+    `.feature.name` and `.reason`.
+    """
+    return ActivatedFeature(feature=Feature(name=name), settings={}, reason=reason)
 
 
 def step(
@@ -190,6 +202,81 @@ def test_an_empty_plan_still_renders_a_header() -> None:
     assert "no steps selected" in output
 
 
+def test_render_features_with_nothing_active_renders_nothing() -> None:
+    plan = Plan(
+        target=small_plan().target,
+        profile_label="laravel",
+        project_name="acme",
+        steps=(),
+    )
+    assert render_features(plan) == ""
+
+
+def test_render_features_when_detection_is_disabled_says_so_once() -> None:
+    plan = Plan(
+        target=small_plan().target,
+        profile_label="laravel",
+        project_name="acme",
+        steps=(),
+        features_detection_enabled=False,
+    )
+    output = render_features(plan)
+    assert output == "  Features  (detection disabled by ~/.ddev/ddev-sync/config.yaml)"
+    assert output.count("\n") == 0
+
+
+def test_render_features_lists_each_active_feature_with_its_reason() -> None:
+    plan = Plan(
+        target=small_plan().target,
+        profile_label="laravel",
+        project_name="acme",
+        steps=(),
+        features=(
+            activated("node-build", "detected: package.json"),
+            activated("filament", "detected: filament/filament"),
+        ),
+    )
+    lines = render_features(plan).splitlines()
+    assert len(lines) == 2
+    assert lines[0] == "  Features  node-build  detected: package.json"
+    assert lines[1] == "            filament    detected: filament/filament"
+
+
+def test_render_plan_shows_the_feature_block_above_the_steps() -> None:
+    plan = Plan(
+        target=small_plan().target,
+        profile_label="typo3@12",
+        project_name="acme",
+        steps=small_plan().steps,
+        features=(activated("node-build", "detected: package.json"),),
+    )
+    output = render_plan(plan)
+    features_line = output.index("Features")
+    first_step = output.index(" 1  preflight")
+    assert features_line < first_step
+    # A blank line separates the feature block from the step table, matching
+    # how notices are separated from it above.
+    assert "node-build  detected: package.json\n\n" in output
+
+
+def test_a_plan_with_no_active_features_has_no_features_block() -> None:
+    assert "Features" not in render_plan(small_plan())
+
+
+def test_render_plan_shows_the_detection_disabled_notice_above_the_steps() -> None:
+    plan = Plan(
+        target=small_plan().target,
+        profile_label="typo3@12",
+        project_name="acme",
+        steps=small_plan().steps,
+        features_detection_enabled=False,
+    )
+    output = render_plan(plan)
+    notice_line = output.index("detection disabled")
+    first_step = output.index(" 1  preflight")
+    assert notice_line < first_step
+
+
 def write_or_compare(name: str, actual: str) -> None:
     """Compare against the golden file, or create it when UPDATE_GOLDEN is set.
 
@@ -247,6 +334,52 @@ def test_golden_laravel_full() -> None:
         "laravel-full.txt",
         render_plan(golden_plan("laravel", None, ["db", "files", "sanitize", "setup"])),
     )
+
+
+def golden_plan_with_features(tmp_path: Path) -> Plan:
+    """Like `golden_plan`, but against a real project directory so that
+    detection - which reads `composer.lock`, `package.json` and a lockfile
+    straight off disk - has something real to find. Pins the feature block
+    and the `feature:<name>` provenance labels in the `Sources:` legend,
+    neither of which the three existing goldens exercise: none of `generic`,
+    `typo3`, or `laravel` (built via `golden_plan`, against a project
+    directory that does not exist) ever has an active feature.
+    """
+    (tmp_path / "composer.lock").write_text(
+        json.dumps(
+            {
+                "packages": [
+                    {"name": "laravel/framework", "version": "v11.30.0"},
+                    {"name": "filament/filament", "version": "v3.2.0"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "pnpm-lock.yaml").write_text("", encoding="utf-8")
+    project = DdevProject(name="acme", type="laravel", docroot="public", root=tmp_path)
+    profile = ProfileRegistry(PROFILE_ROOT).resolve("laravel", None)
+    resolution = resolve_features(FeatureRegistry(FEATURE_ROOT), project, profile.name, None, True)
+    return build_plan(
+        target=ResolvedTarget(
+            name="production",
+            host="web01.example",
+            user="deploy",
+            port=22,
+            path="/srv/app/",
+            stage=Stage.PRODUCTION,
+        ),
+        project=project,
+        profile=profile,
+        merged=merge_layers([*profile.layers, *resolution.layers]),
+        steps=steps_for_selection(["setup"]),
+        features=resolution,
+    )
+
+
+def test_golden_laravel_with_features(tmp_path: Path) -> None:
+    write_or_compare("laravel-with-features.txt", render_plan(golden_plan_with_features(tmp_path)))
 
 
 def _target() -> ResolvedTarget:

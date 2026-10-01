@@ -1,6 +1,6 @@
 """Assemble everything a run needs from the filesystem and the flags."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +11,9 @@ from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import collect_targets, list_target_names, resolve_target
 from ddev_sync.ddev.project import DdevProject, read_ddev_project
 from ddev_sync.errors import ConfigError, TargetError
+from ddev_sync.features.activation import DETECT_FEATURES_DEFAULT, Request, parse_feature_key
+from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT, FeatureRegistry
+from ddev_sync.features.resolver import FeatureResolution, resolve_features
 from ddev_sync.profiles.registry import ProfileRegistry, ResolvedProfile
 
 
@@ -23,6 +26,7 @@ class RunContext:
     target: ResolvedTarget
     merged: MergeResult
     notices: tuple[str, ...] = ()
+    features: FeatureResolution = field(default_factory=FeatureResolution)
 
 
 def build_context(
@@ -33,6 +37,9 @@ def build_context(
     type_flag: str | None,
     framework_version_flag: str | None,
     profile_root: Path,
+    feature_root: Path = DEFAULT_FEATURE_ROOT,
+    features_flag: str | None = None,
+    no_features: bool = False,
 ) -> RunContext:
     """Read config, detect type and version, resolve profile and target."""
     project = read_ddev_project(project_root)
@@ -61,15 +68,79 @@ def build_context(
     registry = ProfileRegistry(profile_root)
     profile = registry.resolve(profile_resolution.value, major)
 
-    merged = merge_layers([*profile.layers, *user_layers])
+    # Features need the profile's name (to filter `applies_to`), so they can
+    # only be resolved once the profile itself is - and must happen before
+    # the final merge, since their layers slot between the profile's and the
+    # user's own configuration (spec §4, amended).
+    feature_registry = FeatureRegistry(feature_root)
+    detect_enabled = _detect_enabled(user_merged.data, no_features=no_features)
+    requests = _feature_requests(user_merged, features_flag)
+    resolution = resolve_features(feature_registry, project, profile.name, requests, detect_enabled)
+
+    merged = merge_layers([*profile.layers, *resolution.layers, *user_layers])
     target = resolve_target(
         _pick_target_name(target_name, user_layers), collect_targets(user_layers)
     )
 
     notices = () if profile.notice is None else (profile.notice,)
     return RunContext(
-        project=project, profile=profile, target=target, merged=merged, notices=notices
+        project=project,
+        profile=profile,
+        target=target,
+        merged=merged,
+        notices=notices,
+        features=resolution,
     )
+
+
+def _detect_enabled(user_data: dict[str, Any], *, no_features: bool) -> bool:
+    """`defaults.detect_features` in the merged user config, defaulting to
+    `DETECT_FEATURES_DEFAULT`, then overridden by `--no-features` (spec §4,
+    amended). `--no-features` always wins: it is the single run's own word,
+    the most specific of the three levels this setting can come from.
+    """
+    if no_features:
+        return False
+    defaults = user_data.get("defaults")
+    if not isinstance(defaults, dict):
+        return DETECT_FEATURES_DEFAULT
+    return bool(defaults.get("detect_features", DETECT_FEATURES_DEFAULT))
+
+
+def _feature_requests(user_merged: MergeResult, features_flag: str | None) -> list[Request] | None:
+    """`features:` in the merged user config, overridden by `--features`.
+
+    `--features` is a flat, comma-separated list of names - it has no way to
+    carry per-feature settings, unlike the YAML `features:` key - so it is
+    turned into bare `Request`s directly rather than going through
+    `parse_feature_key`, which exists to parse the richer YAML shapes.
+    """
+    if features_flag is not None:
+        return [
+            Request(name.strip(), {}, "--features")
+            for name in features_flag.split(",")
+            if name.strip()
+        ]
+    return parse_feature_key(user_merged.data.get("features"), _features_source(user_merged))
+
+
+def _features_source(user_merged: MergeResult) -> str:
+    """Name the layer that defined the top-level `features:` key.
+
+    `features:` is either a bare list of names (tracked in `list_sources`) or
+    a mapping of name to settings (tracked per leaf, under `scalar_sources`,
+    because a mapping merges like ordinary nested data) - `parse_feature_key`
+    accepts both shapes, so both are checked here. This mirrors
+    `config/targets.py`'s `_strongest_source`, which faces the same two-shape
+    problem for one target's definition.
+    """
+    list_labels = user_merged.list_sources.get(("features",))
+    if list_labels:
+        return list_labels[-1]
+    for path, label in user_merged.scalar_sources.items():
+        if path[:1] == ("features",):
+            return label
+    return "merged configuration"
 
 
 def _as_mapping(raw: object, label: str) -> dict[str, Any]:
