@@ -7,9 +7,9 @@ entire reason it is a separate object from the operations.
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
-from ddev_sync.engine.plan import Plan, PlannedStep
+from ddev_sync.engine.plan import Plan, PlannedStep, command_entries_at, resolve_command_path
 from ddev_sync.engine.registry import OPERATIONS
 from ddev_sync.engine.steps import StepKind
 from ddev_sync.errors import DdevSyncError
@@ -118,14 +118,19 @@ class Executor:
                 self.reporter.notice(f"post_sync hook failed: {error}")
 
 
-def _post_sync_entries(context: ExecutionContext) -> list[Mapping[str, object]]:
-    node = context.merged.data.get("hooks", {})
-    if not isinstance(node, dict):
-        return []
-    block = node.get("post_sync", {})
-    if not isinstance(block, dict):
-        return []
-    commands = block.get("commands", [])
-    if not isinstance(commands, list):
-        return []
-    return [entry for entry in commands if isinstance(entry, dict)]
+def _post_sync_entries(context: ExecutionContext) -> list[dict[str, Any]]:
+    """Resolve `hooks.post_sync` through the same shape logic the plan
+    builder's hooks and `setup` commands use (`engine.plan.resolve_command_path`
+    / `command_entries_at`), rather than a hand-rolled check that only
+    accepted a `{commands: [...]}` mapping. A bare list and a bare string are
+    both valid everywhere else this shape appears (spec §4.5); requiring the
+    mapping form here and nowhere else meant a cleanup hook written either of
+    those two ways silently never ran.
+    """
+    path = resolve_command_path(context.merged.data, ("hooks", "post_sync"))
+    return [
+        entry
+        for entry, _source in command_entries_at(
+            context.merged.data, context.merged.list_sources, path
+        )
+    ]

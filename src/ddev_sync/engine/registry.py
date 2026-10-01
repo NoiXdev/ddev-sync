@@ -6,9 +6,11 @@ from typing import Any
 from ddev_sync.engine.steps import StepKind
 from ddev_sync.operations.base import ExecutionContext, Operation
 from ddev_sync.operations.database import DbDumpOperation, DbImportOperation
+from ddev_sync.operations.env import EnvRewriteOperation
 from ddev_sync.operations.exec import ExecOperation
 from ddev_sync.operations.files import FilesRsyncOperation
 from ddev_sync.operations.preflight import PreflightOperation
+from ddev_sync.operations.s3 import S3SyncOperation
 from ddev_sync.operations.sanitize import SanitizeOperation
 
 
@@ -30,7 +32,9 @@ OPERATIONS: dict[StepKind, Operation] = {
     StepKind.DB_DUMP: DbDumpOperation(),
     StepKind.DB_DOWNLOAD: NoOpOperation(),
     StepKind.DB_IMPORT: DbImportOperation(),
+    StepKind.ENV: EnvRewriteOperation(),
     StepKind.FILES_SYNC: FilesRsyncOperation(),
+    StepKind.S3_SYNC: S3SyncOperation(),
     StepKind.SANITIZE: SanitizeOperation(),
     StepKind.SETUP: ExecOperation(),
 }

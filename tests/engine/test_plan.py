@@ -9,6 +9,7 @@ from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.plan import Plan, build_plan
 from ddev_sync.engine.steps import StepKind, steps_for_selection
 from ddev_sync.errors import ConfigError
+from ddev_sync.operations.base import PathEscapesProject
 from ddev_sync.profiles.registry import ResolvedProfile
 
 
@@ -542,3 +543,165 @@ def test_a_target_path_without_a_trailing_slash_still_joins_correctly() -> None:
     details = " ".join(step.detail for step in plan.steps)
     assert "/srv/app/public/fileadmin/" in details
     assert "/srv/apppublic" not in details
+
+
+def test_an_env_step_lands_between_db_import_and_files_sync() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {"env": {"strategy": "patch_keys", "file": [".env"], "set": {"DB_HOST": "x"}}},
+    )
+    plan = plan_for(["db", "files"], user_layers=[extra])
+    assert kinds(plan) == [
+        "preflight",
+        "db.dump",
+        "db.download",
+        "db.import",
+        "env",
+        "files.sync",
+    ]
+
+
+def test_an_env_step_names_its_strategy_candidates_and_key_count() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {
+            "env": {
+                "strategy": "patch_keys",
+                "file": [".env.local", ".env"],
+                "set": {"DB_HOST": "x", "DB_USER": "y"},
+            }
+        },
+    )
+    plan = plan_for(["db"], user_layers=[extra])
+    step = next(entry for entry in plan.steps if entry.kind is StepKind.ENV)
+    assert "patch_keys" in step.detail
+    assert "2 key(s)" in step.detail
+    assert ".env.local, .env" in step.detail
+    assert "DB_HOST" in step.detail
+    assert "DB_USER" in step.detail
+    assert step.source == ".ddev/ddev-sync.yaml"
+    assert step.where == "local"
+
+
+def test_an_env_strategy_of_none_emits_no_step() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"strategy": "none"}})
+    plan = plan_for(["db"], user_layers=[extra])
+    assert all(step.kind is not StepKind.ENV for step in plan.steps)
+
+
+def test_an_env_block_with_nothing_to_set_emits_no_step() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"strategy": "patch_keys"}})
+    plan = plan_for(["db"], user_layers=[extra])
+    assert all(step.kind is not StepKind.ENV for step in plan.steps)
+
+
+def test_selecting_files_alone_does_not_pull_in_env() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {"env": {"strategy": "patch_keys", "set": {"DB_HOST": "x"}}},
+    )
+    plan = plan_for(["files"], user_layers=[extra])
+    assert all(step.kind is not StepKind.ENV for step in plan.steps)
+
+
+def test_an_s3_sync_step_renders_when_both_sides_are_configured() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {
+            "s3": {
+                "remote": {"bucket": "prod-media"},
+                "local": {"bucket": "local-media"},
+            }
+        },
+    )
+    plan = plan_for(["s3"], user_layers=[extra])
+    step = next(entry for entry in plan.steps if entry.kind is StepKind.S3_SYNC)
+    assert step.where == "rclone"
+    assert "rclone copy prod-media -> local-media" in step.detail
+    assert step.source == ".ddev/ddev-sync.yaml"
+    assert step.params == extra.data["s3"]
+
+
+def test_an_s3_sync_step_shows_sync_when_delete_is_set() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {
+            "s3": {
+                "remote": {"bucket": "prod-media"},
+                "local": {"bucket": "local-media"},
+                "delete": True,
+            }
+        },
+    )
+    plan = plan_for(["s3"], user_layers=[extra])
+    step = next(entry for entry in plan.steps if entry.kind is StepKind.S3_SYNC)
+    assert "rclone sync" in step.detail
+
+
+@pytest.mark.parametrize(
+    "s3_value",
+    [
+        "not-a-mapping",
+        {"remote": {"bucket": "x"}},
+        {"remote": {"bucket": "x"}, "local": "not-a-mapping"},
+    ],
+)
+def test_an_s3_block_of_the_wrong_shape_yields_no_step(s3_value: Any) -> None:
+    plan = plan_for(["s3"], user_layers=[LayerDoc("bad", {"s3": s3_value})])
+    assert all(step.kind is not StepKind.S3_SYNC for step in plan.steps)
+
+
+def test_an_escaping_local_path_is_rejected_while_building_the_plan() -> None:
+    """`--dry-run` must refuse a `files.paths` entry whose `local:` escapes
+    the project root, the same way the real run does - rendering it as
+    though it were fine would be a dry run that lied.
+    """
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml", {"files": {"paths": [{"remote": "x/", "local": "../../etc/"}]}}
+    )
+    with pytest.raises(PathEscapesProject):
+        plan_for(["files"], user_layers=[extra])
+
+
+def test_post_sync_hooks_appear_in_the_plans_post_sync_field_not_as_a_step() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml", {"hooks": {"post_sync": {"commands": [{"run": "cleanup"}]}}}
+    )
+    plan = plan_for(["db"], user_layers=[extra])
+    assert all(step.detail != "cleanup" for step in plan.steps)
+    assert [entry.detail for entry in plan.post_sync] == ["cleanup"]
+    assert plan.post_sync[0].source == ".ddev/ddev-sync.yaml"
+
+
+def test_post_sync_as_a_bare_list_is_resolved_too() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"hooks": {"post_sync": [{"run": "cleanup"}]}})
+    plan = plan_for(["db"], user_layers=[extra])
+    assert [entry.detail for entry in plan.post_sync] == ["cleanup"]
+
+
+def test_post_sync_as_a_bare_string_operation_reference_is_resolved_too() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml", {"hooks": {"post_sync": ["ddev-sync:flush-cache"]}}
+    )
+    plan = plan_for(["db"], user_layers=[extra])
+    assert [entry.detail for entry in plan.post_sync] == ["ddev-sync:flush-cache"]
+
+
+def test_no_post_sync_hooks_means_an_empty_post_sync_field() -> None:
+    assert plan_for(["db"]).post_sync == ()
+
+
+@pytest.mark.parametrize(
+    "hooks",
+    ["not-a-mapping", {"post_sync": "not-a-mapping"}, {"post_sync": {"commands": "no"}}],
+)
+def test_a_malformed_post_sync_block_yields_no_entries(hooks: Any) -> None:
+    plan = plan_for(["db"], user_layers=[LayerDoc("bad", {"hooks": hooks})])
+    assert plan.post_sync == ()
+
+
+def test_a_typoed_post_sync_mode_is_a_config_error() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"hooks": {"post_sync": {"mode": "replce"}}})
+    with pytest.raises(ConfigError) as caught:
+        plan_for(["db"], user_layers=[extra])
+    assert "hooks.post_sync" in str(caught.value)

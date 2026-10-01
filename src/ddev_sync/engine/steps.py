@@ -11,7 +11,9 @@ class StepKind(StrEnum):
     DB_DUMP = "db.dump"
     DB_DOWNLOAD = "db.download"
     DB_IMPORT = "db.import"
+    ENV = "env"
     FILES_SYNC = "files.sync"
+    S3_SYNC = "s3.sync"
     SANITIZE = "sanitize"
     SETUP = "setup"
 
@@ -21,7 +23,13 @@ STEP_ORDER: tuple[StepKind, ...] = (
     StepKind.DB_DUMP,
     StepKind.DB_DOWNLOAD,
     StepKind.DB_IMPORT,
+    # ENV must run after DB_IMPORT and before FILES_SYNC: it points the local
+    # app at the freshly imported database, so anything that could read the
+    # app's configuration must not run before the database it describes is
+    # actually in place.
+    StepKind.ENV,
     StepKind.FILES_SYNC,
+    StepKind.S3_SYNC,
     StepKind.SANITIZE,
     StepKind.SETUP,
 )
@@ -29,8 +37,16 @@ STEP_ORDER: tuple[StepKind, ...] = (
 ALWAYS: frozenset[StepKind] = frozenset({StepKind.PREFLIGHT})
 
 SELECTION_GROUPS: dict[str, tuple[StepKind, ...]] = {
-    "db": (StepKind.DB_DUMP, StepKind.DB_DOWNLOAD, StepKind.DB_IMPORT),
+    # ENV rides along with the database group: an env rewrite with no fresh
+    # database behind it just points the local app at a stale (or absent)
+    # one, so it makes no sense to select independently of "db".
+    "db": (StepKind.DB_DUMP, StepKind.DB_DOWNLOAD, StepKind.DB_IMPORT, StepKind.ENV),
     "files": (StepKind.FILES_SYNC,),
+    # Deliberately its own group, and deliberately absent from
+    # `cli.prompts.DEFAULT_STEPS`: no shipped profile uses S3, and pulling a
+    # whole media bucket is a deliberate act a project opts into, not
+    # something that should be ticked by default.
+    "s3": (StepKind.S3_SYNC,),
     "sanitize": (StepKind.SANITIZE,),
     "setup": (StepKind.SETUP,),
 }

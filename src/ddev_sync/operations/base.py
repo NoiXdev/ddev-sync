@@ -1,5 +1,6 @@
 """Shared context and the protocol every operation implements."""
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,14 +67,57 @@ class ExecutionContext:
         rsync and mysql will write wherever they are told. Refusing here is
         cheaper than explaining to someone why their /etc got a fileadmin.
         """
-        root = self.project.root.resolve()
-        candidate = (root / relative).resolve()
-        if candidate != root and root not in candidate.parents:
-            raise PathEscapesProject(
-                f"path {relative!r} resolves to {candidate}, which is outside "
-                f"the project root {root}"
-            )
-        return candidate
+        return resolve_local_path(self.project.root, relative)
+
+
+def resolve_local_path(root: Path, relative: str) -> Path:
+    """Join `relative` onto `root`, refusing to escape it.
+
+    Used wherever a local path is about to be acted on for real (rsync's
+    destination, mysql's dump path, a setup command's workdir): rsync and
+    mysql will write wherever they are told, and refusing here is cheaper
+    than explaining to someone why their /etc got a fileadmin. `.resolve()`
+    follows real symlinks, which is what makes this the authoritative check -
+    see `preview_local_path` for the dry-run's equivalent, which deliberately
+    does not.
+    """
+    resolved_root = root.resolve()
+    candidate = (resolved_root / relative).resolve()
+    if candidate != resolved_root and resolved_root not in candidate.parents:
+        raise PathEscapesProject(
+            f"path {relative!r} resolves to {candidate}, which is outside "
+            f"the project root {resolved_root}"
+        )
+    return candidate
+
+
+def preview_local_path(root: Path, relative: str) -> Path:
+    """Join `relative` onto `root` for the *dry-run preview only*, applying
+    the same escape check as `resolve_local_path` without touching the
+    filesystem.
+
+    The plan builder has no running project to inspect - `root` may not
+    exist yet, and `--dry-run` must render identically wherever it runs.
+    `resolve_local_path`'s `.resolve()` follows real symlinks, which makes it
+    sensitive to details of the machine it runs on that have nothing to do
+    with the configured value: on macOS, `/var` is a symlink to `/private/var`
+    and a project rooted there would render as `/private/var/...`; on Linux
+    it would not. A dry run is still useful protection against the thing
+    spec §1.1 and this fix actually care about - a `files.paths` entry whose
+    `local:` escapes the project root with a `../` - which plain lexical
+    normalisation (`os.path.normpath`) catches exactly as well, with no
+    filesystem access and no platform-dependent symlink surprises. The real
+    run still goes through `resolve_local_path`/`ExecutionContext.local`,
+    which remains the authoritative check.
+    """
+    normalized_root = Path(os.path.normpath(root))
+    candidate = Path(os.path.normpath(normalized_root / relative))
+    if candidate != normalized_root and normalized_root not in candidate.parents:
+        raise PathEscapesProject(
+            f"path {relative!r} resolves to {candidate}, which is outside "
+            f"the project root {normalized_root}"
+        )
+    return candidate
 
 
 class Operation(Protocol):

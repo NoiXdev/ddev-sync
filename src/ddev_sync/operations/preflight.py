@@ -5,12 +5,14 @@ the deploy path there - because two round trips through a jump host is two
 chances for the user to wait.
 """
 
+import shlex
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.files import validate_path_pairs
 from ddev_sync.transport.ssh import ssh_command
 
 MIN_FREE_BYTES = 2 * 1024**3
@@ -32,7 +34,15 @@ class PreflightOperation:
     """Verifies ssh access, the remote deploy path and local disk space."""
 
     def execute(self, context: ExecutionContext, params: Mapping[str, Any]) -> None:
-        """Raise unless everything preflight checks is in order."""
+        """Raise unless everything preflight checks is in order.
+
+        `validate_path_pairs` runs first: it is local, network-free
+        validation of `files.paths`, and it exists specifically so a bad
+        entry - missing a key, or a `local` that escapes the project root -
+        is caught before a single byte moves, not mid-transfer after earlier
+        pairs have already rsynced.
+        """
+        validate_path_pairs(context)
         report, stderr = self._probe(context)
         if not report.ssh_ok:
             raise OperationError(self._ssh_help(context, stderr))
@@ -60,7 +70,8 @@ class PreflightOperation:
         `self` - so this object stays stateless: nothing here depends on
         `check` having been called first.
         """
-        probe = f"if [ -d {context.target.path} ]; then echo {_OK}; else echo {_NO_PATH}; fi"
+        quoted_path = shlex.quote(context.target.path)
+        probe = f"if [ -d {quoted_path} ]; then echo {_OK}; else echo {_NO_PATH}; fi"
         result = context.runner.run(ssh_command(context.target, ["sh", "-c", probe]))
         if not result.ok:
             return PreflightReport(False, False, self._free_bytes(context)), result.stderr

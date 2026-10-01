@@ -34,19 +34,27 @@ def render_plan(plan: Plan) -> str:
 
     if not plan.steps:
         lines.append("  (no steps selected)")
-        return "\n".join(lines) + "\n"
+    else:
+        for step in plan.steps:
+            lines.append(
+                f"  {step.index:2d}  "
+                f"{_kind_label(step):<{_KIND_WIDTH}}"
+                f"{step.where:<{_WHERE_WIDTH}} "
+                f"{step.detail}"
+                f"   [{step.source}]"
+            )
+        lines.append("")
+        lines.append(f"  Sources:  {_legend(plan)}")
 
-    for step in plan.steps:
-        lines.append(
-            f"  {step.index:2d}  "
-            f"{_kind_label(step):<{_KIND_WIDTH}}"
-            f"{step.where:<{_WHERE_WIDTH}} "
-            f"{step.detail}"
-            f"   [{step.source}]"
-        )
+    if plan.post_sync:
+        # Always runs, success or failure - never a numbered step (see
+        # `PostSyncEntry`) - so it is rendered as its own epilogue rather
+        # than folded into the step table above.
+        lines.append("")
+        lines.append("  post_sync (always runs, regardless of outcome):")
+        for entry in plan.post_sync:
+            lines.append(f"        {entry.detail}   [{entry.source}]")
 
-    lines.append("")
-    lines.append(f"  Sources:  {_legend(plan)}")
     return "\n".join(lines) + "\n"
 
 

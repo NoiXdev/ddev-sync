@@ -8,9 +8,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from ddev_sync.config.loader import PROJECT_LABEL
 from ddev_sync.operations.base import ExecutionContext, OperationError
 
 _REQUIRED = ("endpoint", "access_key", "secret_key", "bucket")
+_SECRET_KEYS = ("access_key", "secret_key")
 
 
 @dataclass(frozen=True)
@@ -50,13 +52,15 @@ def rclone_env(remote: S3Endpoint, local: S3Endpoint) -> dict[str, str]:
     }
 
 
-def _endpoint(params: Mapping[str, Any], side: str) -> S3Endpoint:
+def _endpoint(context: ExecutionContext, params: Mapping[str, Any], side: str) -> S3Endpoint:
     raw = params.get(side)
     if not isinstance(raw, Mapping):
         raise OperationError(f"s3_sync needs a {side!r} block with S3 credentials")
     missing = [key for key in _REQUIRED if not raw.get(key)]
     if missing:
         raise OperationError(f"the {side!r} S3 block is missing {', '.join(missing)}")
+    for key in _SECRET_KEYS:
+        _reject_committed_secret(context, side, key)
     return S3Endpoint(
         endpoint=str(raw["endpoint"]),
         access_key=str(raw["access_key"]),
@@ -66,13 +70,31 @@ def _endpoint(params: Mapping[str, Any], side: str) -> S3Endpoint:
     )
 
 
+def _reject_committed_secret(context: ExecutionContext, side: str, key: str) -> None:
+    """Refuse an S3 secret that came from the committed config layer.
+
+    Spec §10: no credentials live in the add-on's configuration, because
+    `.ddev/ddev-sync.yaml` is committed to the repo. The merge tracks
+    provenance per value (`context.merged.scalar_sources`), so this can tell
+    *where* `s3.<side>.<key>` came from, not just what it is - the gitignored
+    local override and the global `~/.ddev/ddev-sync/config.yaml` are both
+    fine; only the committed layer is refused.
+    """
+    if context.merged.scalar_sources.get(("s3", side, key)) == PROJECT_LABEL:
+        raise OperationError(
+            f"s3.{side}.{key} is set in {PROJECT_LABEL}, which is committed to "
+            "the repository; move S3 credentials to .ddev/ddev-sync.local.yaml "
+            "(gitignored) or the global config instead"
+        )
+
+
 class S3SyncOperation:
     """Mirrors a remote bucket into the local one with rclone."""
 
     def execute(self, context: ExecutionContext, params: Mapping[str, Any]) -> None:
         """Copy, or with `delete: true` sync, remote bucket to local."""
-        remote = _endpoint(params, "remote")
-        local = _endpoint(params, "local")
+        remote = _endpoint(context, params, "remote")
+        local = _endpoint(context, params, "local")
         subcommand = "sync" if params.get("delete", False) else "copy"
         result = context.runner.run(
             [

@@ -16,7 +16,9 @@ def test_the_canonical_order_matches_the_spec() -> None:
         "db.dump",
         "db.download",
         "db.import",
+        "env",
         "files.sync",
+        "s3.sync",
         "sanitize",
         "setup",
     ]
@@ -42,12 +44,13 @@ def test_hook_names_replace_dots_with_underscores(
     assert hook_name(kind, phase) == expected
 
 
-def test_selecting_db_pulls_in_dump_download_and_import() -> None:
+def test_selecting_db_pulls_in_dump_download_import_and_env() -> None:
     assert steps_for_selection(["db"]) == (
         StepKind.PREFLIGHT,
         StepKind.DB_DUMP,
         StepKind.DB_DOWNLOAD,
         StepKind.DB_IMPORT,
+        StepKind.ENV,
     )
 
 
@@ -57,9 +60,14 @@ def test_selection_is_returned_in_canonical_order_not_selection_order() -> None:
         StepKind.DB_DUMP,
         StepKind.DB_DOWNLOAD,
         StepKind.DB_IMPORT,
+        StepKind.ENV,
         StepKind.FILES_SYNC,
         StepKind.SETUP,
     )
+
+
+def test_selecting_s3_pulls_in_only_s3_sync() -> None:
+    assert steps_for_selection(["s3"]) == (StepKind.PREFLIGHT, StepKind.S3_SYNC)
 
 
 def test_an_empty_selection_still_runs_preflight() -> None:
@@ -75,7 +83,7 @@ def test_an_unknown_selection_lists_the_valid_ones() -> None:
         steps_for_selection(["database"])
     message = str(caught.value)
     assert "database" in message
-    assert "db, files, sanitize, setup" in message
+    assert "db, files, s3, sanitize, setup" in message
 
 
 def test_the_selection_groups_cover_every_non_preflight_step() -> None:

@@ -14,6 +14,7 @@ from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.steps import StepKind, hook_name
 from ddev_sync.errors import ConfigError
+from ddev_sync.operations.base import preview_local_path
 from ddev_sync.profiles.registry import ResolvedProfile
 from ddev_sync.transport.ssh import rsync_pull_command, ssh_command
 
@@ -41,6 +42,22 @@ class PlannedStep:
 
 
 @dataclass(frozen=True)
+class PostSyncEntry:
+    """One `hooks.post_sync` command, shown in the dry run.
+
+    Deliberately not a `PlannedStep`: `post_sync` is never walked by the
+    executor's main per-step loop - it always runs once after every step,
+    success or failure, via `Executor._run_post_sync` - so it has no `index`
+    among the numbered steps and no `kind` to group under. Keeping it a
+    separate, smaller shape makes that "always runs, not a step" distinction
+    structural instead of a comment someone has to notice.
+    """
+
+    detail: str
+    source: str
+
+
+@dataclass(frozen=True)
 class Plan:
     """An ordered, immutable description of a sync run."""
 
@@ -49,6 +66,7 @@ class Plan:
     project_name: str
     steps: tuple[PlannedStep, ...]
     notices: tuple[str, ...] = ()
+    post_sync: tuple[PostSyncEntry, ...] = ()
 
 
 def build_plan(
@@ -93,6 +111,21 @@ def build_plan(
         project_name=project.name,
         steps=numbered,
         notices=notices,
+        post_sync=_post_sync_preview(merged),
+    )
+
+
+def _post_sync_preview(merged: MergeResult) -> tuple[PostSyncEntry, ...]:
+    """Resolve `hooks.post_sync` through the same shared logic the executor
+    uses, so a cleanup hook written as a bare list or a bare string (both
+    valid per spec §4.5) shows up here exactly as it will actually run -
+    rather than the dry run being unable to reveal that the executor's own
+    hand-rolled shape check silently dropped it.
+    """
+    path = resolve_command_path(merged.data, ("hooks", "post_sync"))
+    return tuple(
+        PostSyncEntry(detail=_hook_detail(entry), source=source)
+        for entry, source in command_entries_at(merged.data, merged.list_sources, path)
     )
 
 
@@ -126,7 +159,9 @@ class _Builder:
             StepKind.DB_DUMP: self._db_dump,
             StepKind.DB_DOWNLOAD: self._db_download,
             StepKind.DB_IMPORT: self._db_import,
+            StepKind.ENV: self._env,
             StepKind.FILES_SYNC: self._files_sync,
+            StepKind.S3_SYNC: self._s3_sync,
             StepKind.SANITIZE: self._sanitize,
             StepKind.SETUP: self._setup,
         }
@@ -197,6 +232,49 @@ class _Builder:
             _Entry(kind=StepKind.DB_IMPORT, where="local", detail=detail, source=source, params={})
         ]
 
+    def _env(self) -> list[_Entry]:
+        node = self._data.get("env", {})
+        settings = node if isinstance(node, dict) else {}
+        strategy = str(settings.get("strategy", "patch_keys"))
+        if strategy == "none":
+            return []
+        raw_values = settings.get("set", {})
+        if not isinstance(raw_values, dict) or not raw_values:
+            return []
+        configured = settings.get("file", [".env.local", ".env"])
+        candidates = [configured] if isinstance(configured, str) else [str(c) for c in configured]
+        keys = ", ".join(sorted(str(key) for key in raw_values))
+        detail = f"{strategy}: {len(raw_values)} key(s) -> {', '.join(candidates)} ({keys})"
+        return [
+            _Entry(
+                kind=StepKind.ENV,
+                where="local",
+                detail=detail,
+                source=self._source(("env", "strategy")),
+                params={},
+            )
+        ]
+
+    def _s3_sync(self) -> list[_Entry]:
+        node = self._data.get("s3")
+        if not isinstance(node, dict):
+            return []
+        remote = node.get("remote")
+        local = node.get("local")
+        if not isinstance(remote, dict) or not isinstance(local, dict):
+            return []
+        subcommand = "sync" if node.get("delete", False) else "copy"
+        detail = f"rclone {subcommand} {remote.get('bucket', '?')} -> {local.get('bucket', '?')}"
+        return [
+            _Entry(
+                kind=StepKind.S3_SYNC,
+                where="rclone",
+                detail=detail,
+                source=self._source(("s3", "remote", "bucket")),
+                params=dict(node),
+            )
+        ]
+
     def _files_sync(self) -> list[_Entry]:
         paths = self._list_at(("files", "paths"))
         sources = self._list_sources.get(("files", "paths"), ())
@@ -205,7 +283,7 @@ class _Builder:
             remote_suffix = _require_key(mapping, "remote")
             local_suffix = _require_key(mapping, "local")
             remote = f"{self._target.data_root}{remote_suffix}"
-            local = f"{self._project.root}/{local_suffix}"
+            local = f"{preview_local_path(self._project.root, local_suffix)}/"
             delete = bool(mapping.get("delete", False))
             detail = " ".join(rsync_pull_command(self._target, remote, local, delete=delete))
             entries.append(
@@ -250,29 +328,7 @@ class _Builder:
         ]
 
     def _resolve_command_path(self, base_path: tuple[str, ...]) -> tuple[str, ...]:
-        # A hook or `setup` block's merged shape depends on whether any layer
-        # wrote an explicit `mode:` alongside `commands:` (spec §4.5): with
-        # `mode`, `{mode, commands}` is a list directive and collapses to a
-        # flat list right at `base_path`; without it, `commands` is an
-        # ordinary nested key and the list sits one level deeper, as it
-        # always has.
-        #
-        # `mode` with no `commands` alongside it (typically a typo that
-        # dropped `commands:`) merges as ordinary data instead of a
-        # directive - `config/merge.py` is deliberately schema-agnostic and
-        # cannot tell the difference - and would otherwise disable the whole
-        # block with nobody told. This is the one place that does know the
-        # schema, so it is rejected here.
-        node = self._node_at(base_path)
-        if isinstance(node, list):
-            return base_path
-        if isinstance(node, dict) and "mode" in node and "commands" not in node:
-            display = ".".join(base_path)
-            valid = ", ".join(sorted(LIST_MODES))
-            raise ConfigError(
-                f"{display} has 'mode' but no 'commands' - probably a typo; valid modes: {valid}"
-            )
-        return (*base_path, "commands")
+        return resolve_command_path(self._data, base_path)
 
     def _list_at(self, path: tuple[str, ...]) -> list[dict[str, Any]]:
         node: Any = self._data
@@ -284,32 +340,8 @@ class _Builder:
             return []
         return [entry for entry in node if isinstance(entry, dict)]
 
-    def _node_at(self, path: tuple[str, ...]) -> Any:
-        node: Any = self._data
-        for part in path:
-            if not isinstance(node, dict):
-                return None
-            node = node.get(part)
-        return node
-
     def _command_entries_at(self, path: tuple[str, ...]) -> list[tuple[dict[str, Any], str]]:
-        """Hook and setup command lists (spec §4.5) additionally accept a bare
-        string as shorthand for a named built-in operation, e.g.
-        `- ddev-sync:flush-cache` normalises to `{"operation": "ddev-sync:flush-cache"}`.
-        Anything that is neither a string nor a mapping is malformed and is
-        dropped rather than crashing the whole plan.
-        """
-        node = self._node_at(path)
-        if not isinstance(node, list):
-            return []
-        sources = self._list_sources.get(path, ())
-        pairs: list[tuple[dict[str, Any], str]] = []
-        for position, entry in enumerate(node):
-            if isinstance(entry, str):
-                pairs.append(({"operation": entry}, _source_at(sources, position)))
-            elif isinstance(entry, dict):
-                pairs.append((entry, _source_at(sources, position)))
-        return pairs
+        return command_entries_at(self._data, self._list_sources, path)
 
     def _scalar_at(self, path: tuple[str, ...], *, default: str) -> str:
         node: Any = self._data
@@ -321,6 +353,73 @@ class _Builder:
 
     def _source(self, path: tuple[str, ...]) -> str:
         return self._scalar_sources.get(path, "built-in")
+
+
+def _node_at(data: Mapping[str, Any], path: tuple[str, ...]) -> Any:
+    node: Any = data
+    for part in path:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
+
+
+def resolve_command_path(data: Mapping[str, Any], base_path: tuple[str, ...]) -> tuple[str, ...]:
+    """Find where a hook or `setup`-shaped command list actually sits.
+
+    Module-level (not a `_Builder` method) because the executor's
+    `post_sync` resolution needs the identical logic against
+    `context.merged.data` - a hand-rolled second shape check next to this one
+    is exactly the kind of duplication spec §4.5's shapes have already
+    caused once.
+
+    A hook or `setup` block's merged shape depends on whether any layer wrote
+    an explicit `mode:` alongside `commands:` (spec §4.5): with `mode`,
+    `{mode, commands}` is a list directive and collapses to a flat list right
+    at `base_path`; without it, `commands` is an ordinary nested key and the
+    list sits one level deeper, as it always has.
+
+    `mode` with no `commands` alongside it (typically a typo that dropped
+    `commands:`) merges as ordinary data instead of a directive -
+    `config/merge.py` is deliberately schema-agnostic and cannot tell the
+    difference - and would otherwise disable the whole block with nobody
+    told. This is the one place that does know the schema, so it is rejected
+    here.
+    """
+    node = _node_at(data, base_path)
+    if isinstance(node, list):
+        return base_path
+    if isinstance(node, dict) and "mode" in node and "commands" not in node:
+        display = ".".join(base_path)
+        valid = ", ".join(sorted(LIST_MODES))
+        raise ConfigError(
+            f"{display} has 'mode' but no 'commands' - probably a typo; valid modes: {valid}"
+        )
+    return (*base_path, "commands")
+
+
+def command_entries_at(
+    data: Mapping[str, Any],
+    list_sources: Mapping[tuple[str, ...], tuple[str, ...]],
+    path: tuple[str, ...],
+) -> list[tuple[dict[str, Any], str]]:
+    """Hook and setup command lists (spec §4.5) additionally accept a bare
+    string as shorthand for a named built-in operation, e.g.
+    `- ddev-sync:flush-cache` normalises to `{"operation": "ddev-sync:flush-cache"}`.
+    Anything that is neither a string nor a mapping is malformed and is
+    dropped rather than crashing the whole plan.
+    """
+    node = _node_at(data, path)
+    if not isinstance(node, list):
+        return []
+    sources = list_sources.get(path, ())
+    pairs: list[tuple[dict[str, Any], str]] = []
+    for position, entry in enumerate(node):
+        if isinstance(entry, str):
+            pairs.append(({"operation": entry}, _source_at(sources, position)))
+        elif isinstance(entry, dict):
+            pairs.append((entry, _source_at(sources, position)))
+    return pairs
 
 
 def _source_at(sources: Sequence[str], position: int) -> str:

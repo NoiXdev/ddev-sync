@@ -5,7 +5,7 @@ from ddev_sync.cli.render import render_doctor, render_plan
 from ddev_sync.config.merge import merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
-from ddev_sync.engine.plan import Plan, PlannedStep, build_plan
+from ddev_sync.engine.plan import Plan, PlannedStep, PostSyncEntry, build_plan
 from ddev_sync.engine.steps import StepKind, steps_for_selection
 from ddev_sync.operations.preflight import PreflightReport
 from ddev_sync.profiles.registry import ProfileRegistry
@@ -155,6 +155,27 @@ def test_a_hook_step_shows_hook_in_the_kind_column_not_its_parents_kind() -> Non
     output = render_plan(plan)
     assert " 1  hook" in output
     assert "db.import" not in output.split("Nothing will be executed.")[1]
+
+
+def test_post_sync_entries_render_as_an_epilogue_not_a_numbered_step() -> None:
+    plan = Plan(
+        target=small_plan().target,
+        profile_label="typo3@12",
+        project_name="acme",
+        steps=small_plan().steps,
+        post_sync=(PostSyncEntry(detail="cleanup", source=".ddev/ddev-sync.yaml"),),
+    )
+    output = render_plan(plan)
+    assert "post_sync (always runs, regardless of outcome):" in output
+    assert "cleanup   [.ddev/ddev-sync.yaml]" in output
+    # Not folded into the numbered step table.
+    assert "db.dump" in output  # sanity: the real steps are still there
+    post_sync_section = output.rsplit("post_sync (always runs", maxsplit=1)[1]
+    assert "cleanup" in post_sync_section
+
+
+def test_no_post_sync_entries_means_no_epilogue() -> None:
+    assert "post_sync" not in render_plan(small_plan())
 
 
 def test_an_empty_plan_still_renders_a_header() -> None:
