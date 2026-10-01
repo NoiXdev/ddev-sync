@@ -26,6 +26,14 @@ sync build` (an alias for `--steps=setup --features=node-build`, implemented
 by `build_cmd` below) is a second place that needs to run the interactive
 sync, so both now travel through `_Options` too, exactly like every other
 value a subcommand might consult.
+
+`build` is itself a worked example of the same failure the paragraph above
+describes, one level up: combining it with `--steps`, `--features` or
+`--no-features` does not get a second, conflicting copy of the value - it
+gets silently discarded, which is no better. `_reject_build_conflicts`
+refuses the combination outright instead, the same way `--features` and
+`--no-features` together are refused - nothing a user typed is ever quietly
+thrown away.
 """
 
 from collections.abc import Sequence
@@ -48,6 +56,15 @@ from ddev_sync.engine.steps import SELECTION_GROUPS
 from ddev_sync.errors import DdevSyncError, TargetError
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT
 from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT
+
+# `build` means exactly `--steps=setup --features=node-build` - nothing more.
+# These two constants are the single place that equivalence is spelled out;
+# `build_cmd` and `_reject_build_conflicts` below read them instead of
+# writing the strings out a second time, so the alias cannot quietly drift
+# from the thing it is shorthand for.
+_BUILD_STEPS = "setup"
+_BUILD_FEATURES = "node-build"
+_BUILD_IMPLIES = f"'build' already implies --steps={_BUILD_STEPS} --features={_BUILD_FEATURES}"
 
 
 @dataclass(frozen=True)
@@ -118,6 +135,11 @@ def cli(
     """Pull remote database, files and setup into this DDEV project."""
     if features_flag is not None and no_features:
         raise click.UsageError("--features and --no-features cannot be used together")
+    if features_flag is not None and _is_blank_features_flag(features_flag):
+        raise click.UsageError(
+            "--features named no features; use --no-features to disable detection"
+        )
+    _reject_build_conflicts(ctx.invoked_subcommand, steps, features_flag, no_features)
     ctx.obj = _Options(
         project_root=project_root,
         home=home if home is not None else Path.home(),
@@ -136,6 +158,56 @@ def cli(
     return _run(ctx.obj, steps=steps, dry_run=dry_run, assume_yes=assume_yes)
 
 
+def _is_blank_features_flag(features_flag: str) -> bool:
+    """True when every comma-separated entry is blank after stripping.
+
+    `--features=` is almost never a deliberate "zero features" - it is what
+    `--features=$FEATURES` becomes when a script's environment variable is
+    unset, and silently treating that the same as `--no-features` would hide
+    exactly the kind of mistake that costs someone an afternoon. The two
+    spellings also render differently (the "detection disabled" notice only
+    ever comes from `--no-features`/the config kill switch), so letting them
+    both mean "no features" would be two spellings, one effect, different
+    output - its own small trap. `--no-features` is the one CLI spelling for
+    "none"; an empty `--features` is refused instead of silently guessing
+    that is what was meant.
+
+    YAML's `features: []` is deliberately NOT tightened to match: a human
+    writing `[]` into a config file is unambiguous in a way a shell
+    expansion never is, so `parse_feature_key`'s existing "absent means
+    detect, empty means none" contract is untouched. Only this CLI flag -
+    where "empty" usually means "something upstream went wrong" - gets the
+    stricter reading.
+    """
+    return not any(name.strip() for name in features_flag.split(","))
+
+
+def _reject_build_conflicts(
+    invoked_subcommand: str | None,
+    steps: str | None,
+    features_flag: str | None,
+    no_features: bool,
+) -> None:
+    """Refuse `build` combined with any option it already fixes.
+
+    `build` means exactly `--steps=setup --features=node-build` (see
+    `_BUILD_STEPS`/`_BUILD_FEATURES`); overriding one silently - which is
+    what happened before this check existed - is the same failure shape the
+    module docstring opens with: an option the user typed, accepted without
+    complaint, and then ignored. Refusing the combination, the same way
+    `--features` and `--no-features` together are refused, means nothing a
+    user typed on the command line is ever quietly thrown away.
+    """
+    if invoked_subcommand != "build":
+        return
+    if steps is not None:
+        raise click.UsageError(f"--steps cannot be combined with 'build'; {_BUILD_IMPLIES}")
+    if features_flag is not None:
+        raise click.UsageError(f"--features cannot be combined with 'build'; {_BUILD_IMPLIES}")
+    if no_features:
+        raise click.UsageError(f"--no-features cannot be combined with 'build'; {_BUILD_IMPLIES}")
+
+
 @cli.command("targets")
 @click.pass_obj
 def targets_cmd(options: _Options) -> int:
@@ -151,25 +223,21 @@ def doctor_cmd(options: _Options) -> int:
     return doctor_command(context, click.echo)
 
 
-# `build` means exactly `--steps=setup --features=node-build` - nothing more.
-# These two constants are the single place that equivalence is spelled out;
-# `build_cmd` below reads them instead of writing the strings out a second
-# time, so the alias cannot quietly drift from the thing it is shorthand for.
-_BUILD_STEPS = "setup"
-_BUILD_FEATURES = "node-build"
-
-
 @cli.command("build")
 @click.pass_obj
 def build_cmd(options: _Options) -> int:
     """Alias for `--steps=setup --features=node-build`.
 
-    Any `--features`/`--no-features` supplied before `build` on the command
-    line are overridden here, not combined with it: `build` is shorthand for
-    one specific selection, not a modifier on top of whatever the group
-    parsed. Routing through `_run` - the same function the bare `ddev-sync`
-    invocation calls - is what keeps this an alias rather than a second
-    implementation that could drift from the long form.
+    By the time this callback runs, `cli()` has already rejected `build`
+    combined with `--steps`, `--features` or `--no-features`
+    (`_reject_build_conflicts`), so `options.features_flag` is always `None`
+    and `options.no_features` is always `False` here - there is nothing left
+    to override, only to fill in. `replace` still states both values
+    explicitly rather than relying on that silently, so the alias stays
+    self-describing even if that guarantee ever moved. Routing through
+    `_run` - the same function the bare `ddev-sync` invocation calls - is
+    what keeps this an alias rather than a second implementation that could
+    drift from the long form.
     """
     forced = replace(options, features_flag=_BUILD_FEATURES, no_features=False)
     return _run(forced, steps=_BUILD_STEPS, dry_run=options.dry_run, assume_yes=options.assume_yes)

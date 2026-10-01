@@ -254,18 +254,18 @@ def test_an_unknown_feature_name_lists_the_available_ones(
     assert "node-build" in error
 
 
-def test_an_empty_features_value_means_no_features_without_disabling_detection(
+def test_an_empty_features_value_is_a_usage_error(
     project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`--features=` means "none, and I mean it" - not a mistake, not `--no-features`.
+    """`--features=` is refused rather than read as "none, deliberately".
 
-    It carries the same meaning `features: []` already has in project config
-    (`features/activation.py::parse_feature_key`'s docstring). The
-    distinction from `--no-features` is observable: unlike `--no-features`,
-    this does not flip `features_detection_enabled`, so the plan shows no
-    "Features" block at all rather than the "detection disabled" notice.
+    Nobody types `--features=` on purpose; it is what `--features=$FEATURES`
+    becomes when a script's environment variable is unset, and treating that
+    the same as `--no-features` would hide exactly the kind of mistake that
+    costs someone an afternoon. `--no-features` remains the one CLI spelling
+    for "disable detection"; this is a different, narrower error from the
+    `--features`-and-`--no-features`-together one below.
     """
-    _write_filament(project)
     code = invoke(
         project,
         tmp_path,
@@ -276,12 +276,36 @@ def test_an_empty_features_value_means_no_features_without_disabling_detection(
         "--features",
         "",
         "--dry-run",
-        "--yes",
     )
-    assert code == 0
-    output = capsys.readouterr().out
-    assert "filament" not in output
-    assert "Features" not in output
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "--features" in error
+    assert "--no-features" in error
+
+
+def test_a_features_value_that_is_only_commas_and_whitespace_is_a_usage_error(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Not just the empty string: anything that reduces to zero names errors.
+
+    `--features=` , `--features=,,` and `--features=  ` are all shapes a
+    broken shell expansion can produce; all of them are refused the same
+    way, not just the literal empty string.
+    """
+    code = invoke(
+        project,
+        tmp_path,
+        "--feature-root",
+        str(FEATURE_ROOT),
+        "--type",
+        "laravel",
+        "--features",
+        " , , ",
+        "--dry-run",
+    )
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "--no-features" in error
 
 
 def test_features_and_no_features_together_is_a_usage_error(
@@ -335,3 +359,40 @@ def test_build_is_equivalent_to_the_long_form(
 
     assert alias_output == long_form_output
     assert "node-build" in alias_output
+
+
+def test_steps_combined_with_build_is_a_usage_error(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--steps` before `build` is not silently discarded; it is refused.
+
+    This is the bug the coordinator's review caught by hand:
+    `ddev-sync --steps db --dry-run --yes build` used to exit 0 and plan
+    only `setup`, with the user's `--steps db` vanishing with no warning -
+    precisely the failure shape the module docstring opens with.
+    """
+    code = invoke(project, tmp_path, "--steps", "db", "--dry-run", "--yes", "build")
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "--steps" in error
+    assert "build" in error
+
+
+def test_features_combined_with_build_is_a_usage_error(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = invoke(project, tmp_path, "--features", "node-build", "--dry-run", "--yes", "build")
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "--features" in error
+    assert "build" in error
+
+
+def test_no_features_combined_with_build_is_a_usage_error(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = invoke(project, tmp_path, "--no-features", "--dry-run", "--yes", "build")
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "--no-features" in error
+    assert "build" in error

@@ -357,6 +357,59 @@ def test_the_features_flag_overrides_the_project_features_key(
     assert context.features.activated[0].reason == "from --features"
 
 
+def test_the_features_flag_strips_whitespace_around_an_interior_name(
+    project: Path, tmp_path: Path
+) -> None:
+    """`--features="node-build, filament"` must look up `filament`, not `" filament"`.
+
+    `_feature_requests` strips each entry twice: once in the filter
+    (`if name.strip()`, which only decides whether to keep an entry) and
+    once in the value actually used to build the `Request`
+    (`Request(name.strip(), ...)`). Only the second strip is exercised here:
+    without it, a name with leading whitespace from `", "`-separated input
+    would be looked up verbatim and fail with "unknown feature ' filament'"
+    even though the entry itself is not empty and so survives the filter.
+    """
+    (project / "package.json").write_text("{}", encoding="utf-8")
+    (project / "package-lock.json").write_text("{}", encoding="utf-8")
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="laravel",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag="node-build, filament",
+        no_features=False,
+    )
+    assert [a.feature.name for a in context.features.activated] == ["node-build", "filament"]
+
+
+def test_the_features_flag_drops_an_interior_empty_element(project: Path, tmp_path: Path) -> None:
+    """`--features=node-build,,filament` drops the middle empty entry.
+
+    Distinct from the already-covered trailing-comma case
+    (`test_the_features_flag_overrides_the_project_features_key`): a
+    *middle* empty element must not be looked up as a feature named `""`
+    either.
+    """
+    (project / "package.json").write_text("{}", encoding="utf-8")
+    (project / "package-lock.json").write_text("{}", encoding="utf-8")
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="laravel",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag="node-build,,filament",
+        no_features=False,
+    )
+    assert [a.feature.name for a in context.features.activated] == ["node-build", "filament"]
+
+
 def test_a_features_mapping_with_settings_is_parsed(project: Path, tmp_path: Path) -> None:
     (project / "package.json").write_text("{}", encoding="utf-8")
     (project / "package-lock.json").write_text("{}", encoding="utf-8")
