@@ -1,0 +1,40 @@
+# WordPress. Deliberately shaped differently from the other profiles:
+# credentials live in wp-config.php rather than an env file, DDEV generates
+# wp-config-ddev.php itself, and URLs are rewritten with wp search-replace
+# rather than raw SQL. If this profile needs no engine changes, the profile
+# abstraction is doing its job.
+name: wordpress
+
+env:
+  strategy: none
+
+database:
+  remote_credentials: wp_cli
+  remote_docroot: current
+
+files:
+  paths:
+    - { remote: "shared/wp-content/uploads/", local: "wp-content/uploads/" }
+
+sanitize:
+  rules:
+    - name: rewrite-site-url
+      operation: search_replace
+      driver: wp_cli
+      from: "https://REPLACE-ME.example"
+      to: "https://${DDEV_SITENAME}.ddev.site"
+    - name: anonymize-users
+      sql: "UPDATE wp_users SET user_email = CONCAT('user', ID, '@example.invalid')"
+    - name: reset-user-passwords
+      operation: reset_passwords
+      table: wp_users
+      column: user_pass
+      value: "$P$Bdisabledhashdisabledhashdisabledha"
+    - name: local-admin
+      operation: create_admin
+      driver: wp_cli
+      user: ddev
+
+setup:
+  commands:
+    - { run: "wp cache flush", allow_failure: true, workdir: "." }

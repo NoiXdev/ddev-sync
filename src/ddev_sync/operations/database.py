@@ -137,13 +137,32 @@ def _unquote(value: str) -> str:
     return value
 
 
-def _from_wp_cli(context: ExecutionContext) -> RemoteCredentials:
-    """Read credentials via `wp config get` on the remote.
+_WP_KEYS = ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST")
 
-    Implemented in the task that lands the WordPress profile; until then this
-    source is rejected explicitly rather than silently misbehaving.
-    """
-    raise OperationError("the wp_cli credential source is not available in this build")
+
+def _from_wp_cli(context: ExecutionContext) -> RemoteCredentials:
+    """Read credentials with `wp config get`, in one ssh round trip."""
+    docroot = context.config("database.remote_docroot", default="current")
+    remote_root = context.remote(docroot)
+    gets = " && ".join(f"wp config get {key}" for key in _WP_KEYS)
+    script = f"cd {remote_root} && {gets}"
+    result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]))
+    if not result.ok:
+        raise OperationError(
+            f"could not read wp-config on {context.target.host} via wp-cli in "
+            f"{remote_root}: {result.stderr.strip()}"
+        )
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if len(lines) < len(_WP_KEYS):
+        raise OperationError(
+            f"wp config get returned {len(lines)} values, expected "
+            f"{len(_WP_KEYS)} ({', '.join(_WP_KEYS)})"
+        )
+    name, user, password, host_value = lines[: len(_WP_KEYS)]
+    host, _, port = host_value.partition(":")
+    return RemoteCredentials(
+        name=name, user=user, password=password, host=host, port=port or "3306"
+    )
 
 
 class DbDumpOperation:

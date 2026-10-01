@@ -233,13 +233,6 @@ def test_a_non_dict_env_section_falls_back_to_default_candidates(tmp_path: Path)
     assert "shared/.env" in probe
 
 
-def test_the_wp_cli_source_is_not_available_yet(tmp_path: Path) -> None:
-    config = {"database": {"remote_credentials": "wp_cli"}}
-    with pytest.raises(OperationError) as caught:
-        read_remote_credentials(make_context(FakeCommandRunner(), tmp_path, config))
-    assert "not available" in str(caught.value)
-
-
 COMPLETE_DUMP = "CREATE TABLE a (id int);\n-- Dump completed on 2026-09-30\n"
 
 
