@@ -264,6 +264,10 @@ def test_no_features_disables_detection_for_the_run(project: Path, tmp_path: Pat
         no_features=True,
     )
     assert context.features.activated == ()
+    # Must name the flag this call actually passed, not the config file - the
+    # two kill switches disable detection the same way but are not the same
+    # source, and the dry run's notice (cli/render.py) must say which one.
+    assert context.features.disabled_reason == "--no-features"
 
 
 def test_the_global_kill_switch_disables_detection(project: Path, tmp_path: Path) -> None:
@@ -287,6 +291,7 @@ def test_the_global_kill_switch_disables_detection(project: Path, tmp_path: Path
         no_features=False,
     )
     assert context.features.activated == ()
+    assert context.features.disabled_reason == "~/.ddev/ddev-sync/config.yaml"
 
 
 def test_a_project_features_key_overrides_detection(project: Path, tmp_path: Path) -> None:

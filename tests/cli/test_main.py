@@ -183,14 +183,18 @@ def test_no_features_suppresses_the_feature_block(
     deliberately prints a one-line notice whenever
     `Plan.features_detection_enabled` is `False`, precisely so a user who
     expected a feature to show up learns that detection was off rather than
-    concluding their project was not recognised. `--no-features` and the
-    `defaults.detect_features: false` kill switch both set that same flag,
-    so both render that same notice. The brief's own sketch of this test
-    ("asserts 'Features' does not appear in the output") cannot hold given
-    that shipped behaviour - the notice line starts with the literal word
-    "Features" - so this asserts the more precise thing that is actually
-    true: the per-feature line for `filament` is gone, replaced by the
-    disabled notice.
+    concluding their project was not recognised. The brief's own sketch of
+    this test ("asserts 'Features' does not appear in the output") cannot
+    hold given that shipped behaviour - the notice line starts with the
+    literal word "Features" - so this asserts the more precise thing that is
+    actually true: the per-feature line for `filament` is gone, replaced by
+    the disabled notice.
+
+    `--no-features` and the `defaults.detect_features: false` kill switch
+    both disable detection, but they are not the same source: the notice
+    must name the one that actually fired here - `--no-features`, a flag this
+    invocation typed - rather than always blaming
+    `~/.ddev/ddev-sync/config.yaml`, a file this test never writes.
     """
     _write_filament(project)
     code = invoke(
@@ -207,7 +211,37 @@ def test_no_features_suppresses_the_feature_block(
     assert code == 0
     output = capsys.readouterr().out
     assert "filament" not in output
-    assert "detection disabled" in output
+    assert "detection disabled by --no-features" in output
+    assert "config.yaml" not in output
+
+
+def test_the_config_kill_switch_blames_the_config_file_not_the_flag(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other half of the pair above: `defaults.detect_features: false`
+    in the global config file disables detection with no `--no-features` on
+    the command line at all, so the notice must name the file, not the flag.
+    """
+    _write_filament(project)
+    home = tmp_path / "home"
+    config = home / ".ddev" / "ddev-sync" / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("version: 1\ndefaults:\n  detect_features: false\n", encoding="utf-8")
+    code = invoke(
+        project,
+        tmp_path,
+        "--feature-root",
+        str(FEATURE_ROOT),
+        "--type",
+        "laravel",
+        "--dry-run",
+        "--yes",
+    )
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "filament" not in output
+    assert "detection disabled by ~/.ddev/ddev-sync/config.yaml" in output
+    assert "--no-features" not in output
 
 
 def test_features_flag_restricts_to_the_named_ones(

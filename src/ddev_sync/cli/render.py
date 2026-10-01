@@ -16,9 +16,6 @@ _KIND_WIDTH = 14
 _WHERE_WIDTH = 7
 _FEATURES_LABEL = "  Features  "
 _FEATURES_INDENT = " " * len(_FEATURES_LABEL)
-_FEATURES_DISABLED_NOTICE = (
-    f"{_FEATURES_LABEL}(detection disabled by ~/.ddev/ddev-sync/config.yaml)"
-)
 
 
 def render_header(plan: Plan) -> str:
@@ -81,7 +78,11 @@ def render_features(plan: Plan) -> str:
     if not plan.features:
         if plan.features_detection_enabled:
             return ""
-        return _FEATURES_DISABLED_NOTICE
+        # Names whichever kill switch (spec §2) actually disabled detection -
+        # `--no-features` or the config file - rather than always blaming the
+        # file, which is what this said even for a run disabled purely by the
+        # flag, pointing at a file that need not exist.
+        return f"{_FEATURES_LABEL}(detection disabled by {plan.features_disabled_reason})"
     width = max(len(activated.feature.name) for activated in plan.features)
     lines = [
         f"{_FEATURES_LABEL if index == 0 else _FEATURES_INDENT}"

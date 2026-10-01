@@ -73,9 +73,11 @@ def build_context(
     # the final merge, since their layers slot between the profile's and the
     # user's own configuration (spec §4, amended).
     feature_registry = FeatureRegistry(feature_root)
-    detect_enabled = _detect_enabled(user_merged.data, no_features=no_features)
+    detect_enabled, disabled_reason = _detect_enabled(user_merged.data, no_features=no_features)
     requests = _feature_requests(user_merged, features_flag)
-    resolution = resolve_features(feature_registry, project, profile.name, requests, detect_enabled)
+    resolution = resolve_features(
+        feature_registry, project, profile.name, requests, detect_enabled, disabled_reason
+    )
 
     merged = merge_layers([*profile.layers, *resolution.layers, *user_layers])
     target = resolve_target(
@@ -93,18 +95,31 @@ def build_context(
     )
 
 
-def _detect_enabled(user_data: dict[str, Any], *, no_features: bool) -> bool:
+_DISABLED_BY_FLAG = "--no-features"
+_DISABLED_BY_CONFIG = "~/.ddev/ddev-sync/config.yaml"
+
+
+def _detect_enabled(user_data: dict[str, Any], *, no_features: bool) -> tuple[bool, str]:
     """`defaults.detect_features` in the merged user config, defaulting to
     `DETECT_FEATURES_DEFAULT`, then overridden by `--no-features` (spec §4,
     amended). `--no-features` always wins: it is the single run's own word,
     the most specific of the three levels this setting can come from.
+
+    Returns `(enabled, reason)`: `reason` names whichever of the two kill
+    switches would be responsible if detection ends up disabled, so the dry
+    run can say so honestly (`render.py::render_features`) instead of always
+    blaming the config file - which is what it did before this function told
+    it which one actually fired, even for a run disabled by `--no-features`
+    alone, a file that need not exist. `reason` is meaningless when `enabled`
+    is True; it is still returned rather than `None` because the caller
+    always has a concrete answer to "which one would it have been".
     """
     if no_features:
-        return False
+        return False, _DISABLED_BY_FLAG
     defaults = user_data.get("defaults")
     if not isinstance(defaults, dict):
-        return DETECT_FEATURES_DEFAULT
-    return bool(defaults.get("detect_features", DETECT_FEATURES_DEFAULT))
+        return DETECT_FEATURES_DEFAULT, _DISABLED_BY_CONFIG
+    return bool(defaults.get("detect_features", DETECT_FEATURES_DEFAULT)), _DISABLED_BY_CONFIG
 
 
 def _feature_requests(user_merged: MergeResult, features_flag: str | None) -> list[Request] | None:

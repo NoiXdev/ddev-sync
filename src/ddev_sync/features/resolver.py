@@ -42,6 +42,13 @@ class FeatureResolution:
     activated: tuple[ActivatedFeature, ...] = ()
     layers: tuple[LayerDoc, ...] = ()
     detection_enabled: bool = True
+    # Which of the two kill switches (spec §2) turned detection off, so the
+    # dry run can say so honestly instead of always blaming the config file -
+    # see `cli/context.py::_detect_enabled`, the only place that knows which
+    # one actually fired. Meaningless (and never read) when detection_enabled
+    # is True; carried as a plain string rather than an enum because the two
+    # possible values are already exactly the text a user needs to see.
+    disabled_reason: str = "~/.ddev/ddev-sync/config.yaml"
 
 
 def resolve_features(
@@ -50,6 +57,7 @@ def resolve_features(
     profile_name: str,
     requests: Sequence[Request] | None,
     detect_enabled: bool,
+    disabled_reason: str = "~/.ddev/ddev-sync/config.yaml",
 ) -> FeatureResolution:
     """Resolve the active feature set.
 
@@ -79,6 +87,7 @@ def resolve_features(
         activated=tuple(activated),
         layers=tuple(layers),
         detection_enabled=detect_enabled,
+        disabled_reason=disabled_reason,
     )
 
 

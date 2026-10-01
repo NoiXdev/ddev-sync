@@ -213,17 +213,38 @@ def test_render_features_with_nothing_active_renders_nothing() -> None:
     assert render_features(plan) == ""
 
 
-def test_render_features_when_detection_is_disabled_says_so_once() -> None:
+def test_render_features_when_detection_is_disabled_by_the_config_file_says_so_once() -> None:
     plan = Plan(
         target=small_plan().target,
         profile_label="laravel",
         project_name="acme",
         steps=(),
         features_detection_enabled=False,
+        features_disabled_reason="~/.ddev/ddev-sync/config.yaml",
     )
     output = render_features(plan)
     assert output == "  Features  (detection disabled by ~/.ddev/ddev-sync/config.yaml)"
     assert output.count("\n") == 0
+
+
+def test_render_features_when_detection_is_disabled_by_the_flag_blames_the_flag_not_a_file() -> (
+    None
+):
+    # T6/T7 seam: the notice used to always name the config file, even for a
+    # run disabled purely by `--no-features` - a flag the user typed, blamed
+    # on a file that need not exist. `FeatureResolution.disabled_reason`
+    # carries which kill switch actually fired (spec §2) through to here.
+    plan = Plan(
+        target=small_plan().target,
+        profile_label="laravel",
+        project_name="acme",
+        steps=(),
+        features_detection_enabled=False,
+        features_disabled_reason="--no-features",
+    )
+    output = render_features(plan)
+    assert output == "  Features  (detection disabled by --no-features)"
+    assert "config.yaml" not in output
 
 
 def test_render_features_lists_each_active_feature_with_its_reason() -> None:

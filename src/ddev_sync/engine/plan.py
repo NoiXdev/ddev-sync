@@ -83,6 +83,7 @@ class Plan:
     post_sync: tuple[PostSyncEntry, ...] = ()
     features: tuple[ActivatedFeature, ...] = ()
     features_detection_enabled: bool = True
+    features_disabled_reason: str = "~/.ddev/ddev-sync/config.yaml"
 
 
 def build_plan(
@@ -131,6 +132,7 @@ def build_plan(
         post_sync=_post_sync_preview(merged),
         features=features.activated,
         features_detection_enabled=features.detection_enabled,
+        features_disabled_reason=features.disabled_reason,
     )
 
 
