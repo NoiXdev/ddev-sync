@@ -19,8 +19,23 @@ files:
 
 sanitize:
   rules:
+    # `sessions` is not guaranteed to exist. Since Drupal 10.3 (change record
+    # https://www.drupal.org/node/3431286, implemented in core issue #3428565)
+    # the table's schema was moved out of `system_schema()` and into
+    # `Drupal\Core\Session\SessionHandler`, which creates it lazily on its
+    # first write rather than at install time - and a site that swaps in an
+    # alternative session handler (e.g. Redis) never takes that write path at
+    # all, so it never gets a `sessions` table in the first place. `_run_sql`
+    # raises unconditionally on any other SQL error, so without
+    # `tolerate_missing_table` this rule being first in the list would abort
+    # every rule after it - anonymize-users, reset-user-passwords, admin
+    # creation, cache flush - on a database already imported, the same bug
+    # class profiles/typo3.yaml's clear-scheduler-tasks guards against.
+    # `tolerate_missing_table` swallows only "table doesn't exist" (MySQL
+    # errno 1146); any other failure here still raises exactly as before.
     - name: clear-sessions
       sql: "TRUNCATE TABLE sessions"
+      tolerate_missing_table: true
     # `watchdog` belongs to Database Logging (dblog), a core module that can
     # be - and, on many production sites, deliberately is - disabled in
     # favour of the `syslog` module, which logs to the OS instead of the

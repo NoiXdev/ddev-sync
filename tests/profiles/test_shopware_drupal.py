@@ -102,6 +102,25 @@ def test_drupal_clears_sessions_and_watchdog() -> None:
     assert {"clear-sessions", "clear-watchdog"} <= names
 
 
+def test_drupal_clear_sessions_tolerates_a_missing_table(tmp_path: Path) -> None:
+    # Since Drupal 10.3 the `sessions` table is created lazily by
+    # `Drupal\Core\Session\SessionHandler` on first write (change record
+    # 3431286 / core issue #3428565) rather than at install time, and a site
+    # using an alternative session handler (e.g. Redis) never gets the table
+    # at all. Without `tolerate_missing_table`, that site's sync would abort
+    # on this rule - the first in the list - with anonymize-users and
+    # reset-user-passwords never reached and the database already imported.
+    parsed = parse_rules(context_for("drupal", tmp_path))
+    assert parsed[0].name == "clear-sessions"
+    assert parsed[0].tolerate_missing_table is True
+
+
+def test_drupal_clear_sessions_runs_before_the_user_sanitize_rules() -> None:
+    names = [entry["name"] for entry in rules("drupal")]
+    assert names.index("clear-sessions") < names.index("anonymize-users")
+    assert names.index("clear-sessions") < names.index("reset-user-passwords")
+
+
 def test_drupal_reads_credentials_explicitly_without_an_env_map() -> None:
     database = REGISTRY.resolve("drupal", None).data["database"]
     assert database["remote_credentials"] == "explicit"

@@ -51,8 +51,12 @@ _OPTIONAL_TABLE_RULES: dict[str, frozenset[str]] = {
     "typo3": frozenset({"clear-scheduler-tasks"}),
     # `watchdog` belongs to Database Logging (dblog), a core module that can
     # be disabled - and commonly is in production - in favour of `syslog`,
-    # which needs no table at all.
-    "drupal": frozenset({"clear-watchdog"}),
+    # which needs no table at all. `sessions`: since Drupal 10.3, created
+    # lazily by `Drupal\Core\Session\SessionHandler` on first write rather
+    # than at install time (change record 3431286 / core issue #3428565); a
+    # site using an alternative session handler (e.g. Redis) never gets the
+    # table at all. See the comment in drupal.yaml.
+    "drupal": frozenset({"clear-sessions", "clear-watchdog"}),
     # `messenger_messages` is created lazily on first use of the Doctrine
     # Messenger transport; a project using a different transport (AMQP,
     # Redis, sync) or `auto_setup: false` has no such table.
