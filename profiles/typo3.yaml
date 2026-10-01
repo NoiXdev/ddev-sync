@@ -53,8 +53,20 @@ sanitize:
     # storage format changed, in v14); task groups live in a separate
     # `tx_scheduler_task_group` table that holds no executable state, so it
     # is not truncated here.
+    #
+    # Unlike its neighbours - `be_sessions`, `fe_sessions`, `sys_log` all come
+    # from typo3/cms-core, always present - EXT:scheduler is its own,
+    # optional Composer package (`typo3/cms-scheduler`, not installed by
+    # default). A project that never required it has no `tx_scheduler_task`
+    # table, and `_run_sql` raises unconditionally on any other SQL error, so
+    # without `tolerate_missing_table` this rule being second in the list
+    # would abort every rule after it - the password resets, admin creation,
+    # cache flush, every setup command - on a database already imported.
+    # `tolerate_missing_table` swallows only "table doesn't exist" (MySQL
+    # errno 1146); any other failure here still raises exactly as before.
     - name: clear-scheduler-tasks
       sql: "TRUNCATE TABLE tx_scheduler_task"
+      tolerate_missing_table: true
     - name: clear-fe-sessions
       sql: "TRUNCATE TABLE fe_sessions"
     - name: clear-sys-log

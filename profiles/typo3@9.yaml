@@ -4,9 +4,13 @@ sanitize:
     mode: replace
     values:
       - { name: clear-be-sessions, sql: "TRUNCATE TABLE be_sessions" }
-      # See typo3.yaml for why this is a base rule, not a feature: a
-      # scheduler task imported from production must not fire locally.
-      - { name: clear-scheduler-tasks, sql: "TRUNCATE TABLE tx_scheduler_task" }
+      # See typo3.yaml for why this is a base rule, not a feature, and why it
+      # carries tolerate_missing_table: EXT:scheduler is its own optional
+      # Composer package, so a project without it has no table here, and
+      # every rule after this one would otherwise be aborted silently.
+      - name: clear-scheduler-tasks
+        sql: "TRUNCATE TABLE tx_scheduler_task"
+        tolerate_missing_table: true
       - { name: clear-fe-sessions, sql: "TRUNCATE TABLE fe_sessions" }
       - { name: clear-sys-log, sql: "TRUNCATE TABLE sys_log" }
       - name: anonymize-fe-users

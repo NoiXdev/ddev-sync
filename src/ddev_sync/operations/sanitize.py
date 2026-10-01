@@ -6,6 +6,7 @@ now declarations in a profile, which is why those special cases no longer sit
 in the middle of the database module.
 """
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -18,6 +19,17 @@ from ddev_sync.operations.database import (
 )
 from ddev_sync.operations.placeholders import expand_value
 
+# MySQL/MariaDB errno 1146 / SQLSTATE 42S02: "table doesn't exist". Narrow on
+# purpose - `tolerate_missing_table` must swallow exactly this failure and no
+# other, so a rule with a typo in its SQL, a permissions error, or a dead
+# database connection still raises. Observed verbatim from a real MariaDB:
+# "ERROR 1146 (42S02) at line 1: Table 'db.tx_scheduler_task' doesn't exist".
+_MISSING_TABLE_ERROR = re.compile(r"\b1146\b|\(42S02\)")
+
+
+def _is_missing_table_error(stderr: str) -> bool:
+    return _MISSING_TABLE_ERROR.search(stderr) is not None
+
 
 @dataclass(frozen=True)
 class SanitizeRule:
@@ -27,6 +39,16 @@ class SanitizeRule:
     sql: str | None = None
     operation: str | None = None
     params: Mapping[str, Any] = field(default_factory=dict)
+    # Deliberately narrower than a general `allow_failure`: this tolerates
+    # only a missing table, and only for `sql` rules (see `_parse_rule`). A
+    # sanitize rule that could fail silently for any OTHER reason would
+    # undermine the one invariant this module exists to guarantee - a rule
+    # that can run either runs or raises loudly, because a rule that fails
+    # silently means production data stays on a laptop. The only thing this
+    # carves out is a table that genuinely was never there to sanitise, e.g.
+    # `tx_scheduler_task` on a TYPO3 project that never required
+    # `typo3/cms-scheduler` (a separate, optional Composer package).
+    tolerate_missing_table: bool = False
 
 
 class SanitizeOperationHandler(Protocol):
@@ -38,7 +60,7 @@ class SanitizeOperationHandler(Protocol):
 
 SANITIZE_OPERATIONS: dict[str, SanitizeOperationHandler] = {}
 
-_RESERVED = {"name", "sql", "operation"}
+_RESERVED = {"name", "sql", "operation", "tolerate_missing_table"}
 
 
 def parse_rules(context: ExecutionContext) -> list[SanitizeRule]:
@@ -56,6 +78,13 @@ def _parse_rule(entry: Mapping[str, Any], context: ExecutionContext) -> Sanitize
         raise OperationError(f"sanitize rule {name!r} has neither 'sql' nor 'operation'")
     if sql is not None and operation is not None:
         raise OperationError(f"sanitize rule {name!r} has both 'sql' and 'operation'; pick one")
+    tolerate_missing_table = bool(entry.get("tolerate_missing_table", False))
+    if tolerate_missing_table and sql is None:
+        raise OperationError(
+            f"sanitize rule {name!r} sets 'tolerate_missing_table' but has no 'sql'; "
+            "it only means anything for a SQL rule that might target a table that "
+            "does not exist"
+        )
     raw_params = {key: value for key, value in entry.items() if key not in _RESERVED}
     return SanitizeRule(
         name=str(name),
@@ -69,6 +98,7 @@ def _parse_rule(entry: Mapping[str, Any], context: ExecutionContext) -> Sanitize
         # the database: `expand_placeholders` used to run only on the (dead)
         # env-rewrite path, never on sanitize rule parameters.
         params=expand_value(raw_params, context),
+        tolerate_missing_table=tolerate_missing_table,
     )
 
 
@@ -104,8 +134,11 @@ class SanitizeOperation:
     @staticmethod
     def _run_sql(context: ExecutionContext, database: str, rule: SanitizeRule) -> None:
         result = context.runner.run(local_mysql_argv(context, database, sql=rule.sql))
-        if not result.ok:
-            raise OperationError(f"sanitize rule {rule.name!r} failed: {result.stderr.strip()}")
+        if result.ok:
+            return
+        if rule.tolerate_missing_table and _is_missing_table_error(result.stderr):
+            return
+        raise OperationError(f"sanitize rule {rule.name!r} failed: {result.stderr.strip()}")
 
     @staticmethod
     def _run_operation(context: ExecutionContext, rule: SanitizeRule) -> None:

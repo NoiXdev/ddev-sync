@@ -93,6 +93,15 @@ def test_a_full_pull_moves_the_database_and_the_files(project: Path, tmp_path: P
 
 
 def test_sanitizing_removes_the_real_email_addresses(project: Path, tmp_path: Path) -> None:
+    # This is also the regression test for `clear-scheduler-tasks`'s
+    # `tolerate_missing_table`: `fixtures/seed.sql` deliberately has no
+    # `tx_scheduler_task` table (the realistic case - EXT:scheduler is an
+    # optional Composer package most projects never require), and
+    # `clear-scheduler-tasks` sits second in profiles/typo3.yaml's rule
+    # list. Before `tolerate_missing_table`, the missing table would have
+    # aborted every rule below it - including every assertion below, on data
+    # already imported into the local database. A green run here, with every
+    # rule after it still having taken effect, is the proof.
     code = main(
         [
             "--project-root",
@@ -118,9 +127,70 @@ def test_sanitizing_removes_the_real_email_addresses(project: Path, tmp_path: Pa
     assert local_query("SELECT password FROM be_users WHERE uid = 1") == "$argon2i$disabled"
     assert local_query("SELECT COUNT(*) FROM be_sessions") == "0"
     assert local_query("SELECT COUNT(*) FROM sys_log") == "0"
-    # The base-profile rule a scheduler task must not survive a sync on -
-    # see profiles/typo3.yaml's `clear-scheduler-tasks` comment.
-    assert local_query("SELECT COUNT(*) FROM tx_scheduler_task") == "0"
+
+
+def remote_db_exec(sql: str) -> None:
+    """Run `sql` against the remote stand-in's "production" database.
+
+    Used to apply `fixtures/seed_with_scheduler.sql` on demand, rather than
+    mounting a second `docker-entrypoint-initdb.d` script: there is only one
+    `db` container for the whole session (`conftest.py`'s `stack` fixture is
+    session-scoped), so a second initdb script would apply to every test, not
+    just the one that wants the table present.
+    """
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(HERE / "docker-compose.yaml"),
+            "exec",
+            "-T",
+            "db",
+            "mariadb",
+            "--user=root",
+            "--password=root",
+            "acme_prod",
+        ],
+        input=sql,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"remote_db_exec failed: {result.stderr}")
+
+
+def test_a_present_scheduler_table_is_still_truncated(project: Path, tmp_path: Path) -> None:
+    """The companion to the test above: `tolerate_missing_table` swallows
+    ONLY "table doesn't exist" - a project that DID require EXT:scheduler
+    still gets it truncated exactly as before. Seeds `tx_scheduler_task`
+    directly on the remote "production" database for this test only, and
+    cleans it back up afterwards, since the remote container is shared for
+    the whole session rather than recreated per test.
+    """
+    seed_sql = (HERE / "fixtures" / "seed_with_scheduler.sql").read_text(encoding="utf-8")
+    try:
+        remote_db_exec(seed_sql)
+        code = main(
+            [
+                "--project-root",
+                str(project),
+                "--home",
+                str(tmp_path / "home"),
+                "--profile-root",
+                str(PROFILE_ROOT),
+                "--target",
+                "production",
+                "--steps",
+                "db,sanitize",
+                "--yes",
+            ]
+        )
+        assert code == 0
+        assert local_query("SELECT COUNT(*) FROM tx_scheduler_task") == "0"
+    finally:
+        remote_db_exec("DROP TABLE IF EXISTS tx_scheduler_task;")
 
 
 def test_the_dump_is_removed_after_the_import(project: Path, tmp_path: Path) -> None:

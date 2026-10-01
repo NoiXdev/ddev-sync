@@ -96,6 +96,26 @@ def test_a_variant_never_silently_drops_a_sanitize_rule_the_base_declares(
 
 
 @pytest.mark.parametrize(("name", "major"), variants())
+def test_no_variant_declares_a_duplicate_sanitize_rule_name(name: str, major: str | None) -> None:
+    # Nothing rejects two rules sharing a name today - `_declares_anonymise_or_
+    # reset_rule` and the dropped-rule check above both build a `set` of names,
+    # which would silently absorb a duplicate rather than flag it. A caught
+    # duplicate during this task (`clear-fe-sessions` appearing twice after an
+    # edit mistake) was found only by a golden-file diff, not by any test - the
+    # same family of silent failure this module exists to close everywhere
+    # else, so it gets its own ratchet here too.
+    rules = REGISTRY.resolve(name, major).data.get("sanitize", {}).get("rules", [])
+    names = [str(rule.get("name", "")) for rule in rules]
+    duplicates = sorted({entry for entry in names if names.count(entry) > 1})
+    assert duplicates == [], (
+        f"{name}@{major} declares sanitize rule name(s) {duplicates} more than once. "
+        "A duplicate name is not a merge conflict and nothing raises - the rule simply "
+        "runs twice, which hides a copy-paste mistake exactly like the one this check "
+        "exists to catch."
+    )
+
+
+@pytest.mark.parametrize(("name", "major"), variants())
 def test_every_profile_declares_an_anonymise_or_reset_rule_unless_opted_out(
     name: str, major: str | None
 ) -> None:

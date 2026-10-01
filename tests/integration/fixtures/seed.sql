@@ -31,11 +31,11 @@ INSERT INTO fe_sessions (ses_id) VALUES ('def456');
 CREATE TABLE sys_log (uid INT PRIMARY KEY, details TEXT);
 INSERT INTO sys_log (uid, details) VALUES (1, 'something happened in production');
 
--- profiles/typo3.yaml's `clear-scheduler-tasks` sanitize rule truncates this
--- table unconditionally - see that file's comment for why a scheduler task
--- is production work, not stale derived state, and so lives in the base
--- profile rather than an optional feature. It has to exist here, the same
--- way be_sessions/fe_sessions/sys_log do, for the rule to have something
--- real to prove it actually ran against.
-CREATE TABLE tx_scheduler_task (uid INT PRIMARY KEY, tasktype VARCHAR(255));
-INSERT INTO tx_scheduler_task (uid, tasktype) VALUES (1, 'send-invoice-reminders');
+-- `tx_scheduler_task` is deliberately ABSENT from this default fixture.
+-- EXT:scheduler (`typo3/cms-scheduler`) is its own, optional Composer
+-- package, not installed by default, so most TYPO3 projects have no such
+-- table - this is the realistic case, and it is the one
+-- `clear-scheduler-tasks` must tolerate (`tolerate_missing_table: true`,
+-- profiles/typo3.yaml) rather than merely the one a seed fixture happens to
+-- provide. See `fixtures/seed_with_scheduler.sql` for the opposite case,
+-- where the table exists and is expected to be truncated.

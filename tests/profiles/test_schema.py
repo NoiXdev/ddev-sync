@@ -157,6 +157,32 @@ def test_a_sanitize_rule_with_neither_sql_nor_operation_is_rejected() -> None:
     assert "neither" in str(caught.value)
 
 
+def test_a_sanitize_rule_with_a_boolean_tolerate_missing_table_passes() -> None:
+    validate_profile(
+        {
+            **MINIMAL,
+            "sanitize": {
+                "rules": [{"name": "x", "sql": "TRUNCATE TABLE t", "tolerate_missing_table": True}]
+            },
+        }
+    )
+
+
+def test_a_sanitize_rule_with_a_non_boolean_tolerate_missing_table_is_rejected() -> None:
+    with pytest.raises(ProfileError) as caught:
+        validate_profile(
+            {
+                **MINIMAL,
+                "sanitize": {
+                    "rules": [
+                        {"name": "x", "sql": "TRUNCATE TABLE t", "tolerate_missing_table": "yes"}
+                    ]
+                },
+            }
+        )
+    assert "tolerate_missing_table" in str(caught.value)
+
+
 def test_setup_must_be_a_mapping() -> None:
     with pytest.raises(ProfileError) as caught:
         validate_profile({**MINIMAL, "setup": "nope"})

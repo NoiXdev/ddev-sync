@@ -97,6 +97,11 @@ def _validate_sanitize(sanitize: Any) -> None:
             )
         if operation is None and not rule.get("sql"):
             raise ProfileError(f"sanitize rule {rule['name']!r} has neither 'sql' nor 'operation'")
+        tolerate_missing_table = rule.get("tolerate_missing_table")
+        if tolerate_missing_table is not None and not isinstance(tolerate_missing_table, bool):
+            raise ProfileError(
+                f"sanitize rule {rule['name']!r}: 'tolerate_missing_table' must be true or false"
+            )
 
 
 def _validate_commands(block: Any, label: str) -> None:

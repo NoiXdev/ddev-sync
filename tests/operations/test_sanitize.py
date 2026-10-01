@@ -132,6 +132,81 @@ def test_a_failing_rule_names_the_rule(tmp_path: Path) -> None:
     assert "Table doesn't exist" in message
 
 
+def test_tolerate_missing_table_defaults_to_false(tmp_path: Path) -> None:
+    rule = parse_rules(make_context(FakeCommandRunner(), tmp_path, **RULES))[0]
+    assert rule.tolerate_missing_table is False
+
+
+def test_tolerate_missing_table_swallows_errno_1146_and_the_next_rule_still_runs(
+    tmp_path: Path,
+) -> None:
+    """The exact regression `tolerate_missing_table` exists to close: a
+    TRUNCATE against a table that genuinely does not exist (e.g. a TYPO3
+    project that never required the optional EXT:scheduler package) must not
+    abort every rule after it - the Horizon lesson, repeated once in a base
+    profile that applies to every project of that type rather than an
+    opt-in feature.
+    """
+    config = {
+        "sanitize": {
+            "rules": [
+                {
+                    "name": "clear-scheduler-tasks",
+                    "sql": "TRUNCATE TABLE tx_scheduler_task",
+                    "tolerate_missing_table": True,
+                },
+                {"name": "clear-log", "sql": "TRUNCATE TABLE sys_log"},
+            ]
+        }
+    }
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["mysql"],
+        returncode=1,
+        stderr="ERROR 1146 (42S02) at line 1: Table 'db.tx_scheduler_task' doesn't exist",
+    )
+    runner.script_prefix(["mysql"], returncode=0)
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert len(runner.calls) == 2
+
+
+def test_tolerate_missing_table_still_raises_on_a_different_sql_error(tmp_path: Path) -> None:
+    config = {
+        "sanitize": {
+            "rules": [
+                {
+                    "name": "clear-scheduler-tasks",
+                    "sql": "TRUNCATE TABLE tx_scheduler_task",
+                    "tolerate_missing_table": True,
+                }
+            ]
+        }
+    }
+    runner = FakeCommandRunner()
+    runner.script_prefix(["mysql"], returncode=1, stderr="ERROR 1045: Access denied")
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    message = str(caught.value)
+    assert "clear-scheduler-tasks" in message
+    assert "Access denied" in message
+
+
+def test_tolerate_missing_table_on_an_operation_rule_is_rejected(tmp_path: Path) -> None:
+    # The flag only means something for a `sql` rule that might target a
+    # table that does not exist; an `operation` rule has nowhere for it to
+    # apply, so it is rejected at parse time rather than silently ignored.
+    config = {
+        "sanitize": {
+            "rules": [{"name": "x", "operation": "flush_cache", "tolerate_missing_table": True}]
+        }
+    }
+    with pytest.raises(OperationError) as caught:
+        parse_rules(make_context(FakeCommandRunner(), tmp_path, **config))
+    message = str(caught.value)
+    assert "x" in message
+    assert "tolerate_missing_table" in message
+
+
 def test_an_unknown_operation_lists_what_is_available(tmp_path: Path) -> None:
     config = {"sanitize": {"rules": [{"name": "x", "operation": "teleport"}]}}
     with pytest.raises(OperationError) as caught:
