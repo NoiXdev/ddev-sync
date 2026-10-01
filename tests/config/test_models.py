@@ -100,32 +100,24 @@ def test_layout_values_match_the_spec() -> None:
     assert [layout.value for layout in Layout] == ["plain", "deployer"]
 
 
-def test_a_plain_target_derives_both_roots_from_path_unchanged() -> None:
-    target = _target("/srv/app/", Layout.PLAIN)
-    assert target.code_root == "/srv/app/"
-    assert target.data_root == "/srv/app/"
-
-
-def test_a_deployer_target_derives_code_root_under_current() -> None:
-    target = _target("/srv/app/", Layout.DEPLOYER)
-    assert target.code_root == "/srv/app/current/"
-
-
-def test_a_deployer_target_derives_data_root_under_shared() -> None:
-    target = _target("/srv/app/", Layout.DEPLOYER)
-    assert target.data_root == "/srv/app/shared/"
-
-
-@pytest.mark.parametrize("layout", [Layout.PLAIN, Layout.DEPLOYER])
 @pytest.mark.parametrize("given", ["/srv/app", "/srv/app/"])
-def test_code_root_and_data_root_end_with_exactly_one_separator_regardless_of_input(
-    given: str, layout: Layout
+@pytest.mark.parametrize(
+    ("layout", "expected_code", "expected_data"),
+    [
+        (Layout.PLAIN, "/srv/app/", "/srv/app/"),
+        (Layout.DEPLOYER, "/srv/app/current/", "/srv/app/shared/"),
+    ],
+)
+def test_the_derived_roots_are_exact_for_both_path_forms(
+    given: str, layout: Layout, expected_code: str, expected_data: str
 ) -> None:
-    """The C14 invariant `path` already guarantees must hold for both derived
-    roots too - that is the whole point of deriving rather than writing them.
+    """Pinned by value, not just by `endswith("/")` - an unslashed `path` plus
+    `deployer` is the one combination where two joins happen (normalise, then
+    append the subdirectory), so it is the combination most likely to produce
+    `/srv/appcurrent/` or `/srv/app/current` while still satisfying a looser,
+    suffix-only assertion. This invariant has broken twice in this project,
+    both times past an approximate check.
     """
     target = _target(given, layout)
-    assert target.code_root.endswith("/")
-    assert not target.code_root.endswith("//")
-    assert target.data_root.endswith("/")
-    assert not target.data_root.endswith("//")
+    assert target.code_root == expected_code
+    assert target.data_root == expected_data
