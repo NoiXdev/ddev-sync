@@ -9,9 +9,9 @@
    5  env           local   patch_keys: 15 key(s) -> .env (APP_DEBUG, APP_ENV, APP_URL, CACHE_STORE, DB_CONNECTION, DB_DATABASE, DB_HOST, DB_PASSWORD, DB_PORT, DB_USERNAME, MAIL_HOST, MAIL_MAILER, MAIL_PORT, QUEUE_CONNECTION, SESSION_DRIVER)   [profile:laravel]
    6  files.sync    rsync   rsync -a --info=progress2 -e ssh -p 22 deploy@web01.example:/srv/app/storage/app/public/ /var/www/html/storage/app/public/   [profile:laravel]
    7  sanitize      sql     5 rules: clear-sessions, clear-jobs, clear-failed-jobs, anonymize-users, reset-user-passwords   [profile:laravel]
-   8  setup         local   composer install --no-interaction   [profile:laravel]
-   9  setup         local   php artisan migrate --force  (allow_failure)   [profile:laravel]
-  10  setup         local   php artisan optimize:clear   [profile:laravel]
-  11  setup         local   php artisan storage:link  (allow_failure)   [profile:laravel]
+   8  setup         web     composer install --no-interaction   [profile:laravel]
+   9  setup         web     php artisan migrate --force  (allow_failure)   [profile:laravel]
+  10  setup         web     php artisan optimize:clear   [profile:laravel]
+  11  setup         web     php artisan storage:link  (allow_failure)   [profile:laravel]
 
   Sources:  [built-in]   [profile:laravel]

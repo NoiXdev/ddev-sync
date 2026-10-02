@@ -228,7 +228,10 @@ class _Builder:
         return [
             _Entry(
                 kind=kind,
-                where="local",
+                # Every hook is a command entry, and a command entry runs in
+                # the web container (operations/exec.py) - the same place its
+                # `setup.commands` sibling runs, whatever step it hangs off.
+                where="web",
                 detail=_hook_detail(entry),
                 source=source,
                 params=dict(entry),
@@ -375,7 +378,7 @@ class _Builder:
         return [
             _Entry(
                 kind=StepKind.SETUP,
-                where="local",
+                where="web",
                 detail=_hook_detail(entry),
                 source=source,
                 params=dict(entry),

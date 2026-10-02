@@ -719,3 +719,35 @@ def test_a_typoed_post_sync_mode_is_a_config_error() -> None:
     with pytest.raises(ConfigError) as caught:
         plan_for(["db"], user_layers=[extra])
     assert "hooks.post_sync" in str(caught.value)
+
+
+def test_a_setup_step_is_labelled_web_not_local() -> None:
+    # `composer install` runs in the project's web container (see
+    # transport/container.py), and a dry run that says "local" would
+    # describe a place the command never reaches.
+    plan = plan_for(["setup"])
+    setup = [step for step in plan.steps if step.kind is StepKind.SETUP]
+    assert setup
+    assert {step.where for step in setup} == {"web"}
+
+
+def test_a_hook_step_is_labelled_web_too() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {"hooks": {"post_db_import": [{"run": "php artisan migrate --force"}]}},
+    )
+    plan = plan_for(["db"], user_layers=[extra])
+    hook = next(step for step in plan.steps if step.is_hook)
+    assert hook.where == "web"
+
+
+def test_the_env_step_stays_local() -> None:
+    # The counter-case: the env rewrite is pure Python in this process and
+    # must not be relabelled along with the commands.
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {"env": {"strategy": "patch_keys", "set": {"DB_HOST": "x"}}},
+    )
+    plan = plan_for(["db"], user_layers=[extra])
+    env = next(step for step in plan.steps if step.kind is StepKind.ENV)
+    assert env.where == "local"
