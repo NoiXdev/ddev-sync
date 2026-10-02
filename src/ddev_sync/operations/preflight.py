@@ -4,8 +4,14 @@ One ssh round trip answers the two questions that matter for connectivity
 alone - can we connect, and is the deploy path there - because two round
 trips through a jump host is two chances for the user to wait.
 
-When the sanitize step is also selected, this grows to up to three round
-trips: the connectivity probe above, then (if needed) a `read_remote_
+`check()` (the `doctor` command) additionally probes two things that need no
+ssh round trip: whether the web container answers a `docker exec` through the
+mounted docker socket (one local command, skipped when the socket is absent or
+unusable) and whether the forwarded ssh agent socket is usable by this user (a
+filesystem check only).
+
+When the sanitize step is also selected, the ssh side grows to up to three
+round trips: the connectivity probe above, then (if needed) a `read_remote_
 credentials` fetch - for a `wp_cli` source, resolving `${WP_TABLE_PREFIX}`
 means asking production's wp-cli for it - and finally a `SHOW TABLES` that
 checks every non-tolerated `requires_table` the profile's sanitize rules
@@ -123,6 +129,12 @@ class PreflightOperation:
         actually running a sync. `execute()`'s version raises because it
         runs mid-sync and must stop everything after it; this one must not,
         because `check()` itself is documented never to raise.
+
+        Also probes the two things a sync needs locally that the ssh probes
+        cannot see: the web container (`_check_web_container`, one local
+        `docker exec`, skipped when the docker socket is absent or unusable)
+        and the forwarded ssh agent (`_check_ssh_agent`, a filesystem check).
+        Both previously surfaced only mid-sync, after the dump was imported.
         """
         report, _stderr = self._probe(context)
         sanitize_ok, sanitize_detail = self._check_sanitize_tables(context, report)
@@ -185,9 +197,19 @@ class PreflightOperation:
                 f"{DOCKER_SOCKET} is mounted but not usable by this user - the sync service "
                 "needs the host's docker group (compose `group_add`)"
             )
-        result = context.runner.run(
-            web_command(context.project, ["true"], workdir=context.project.root)
-        )
+        try:
+            result = context.runner.run(
+                web_command(context.project, ["true"], workdir=context.project.root)
+            )
+        except Exception as error:
+            # `check()` is documented never to raise, and the `CommandRunner`
+            # protocol promises nothing about exceptions: `SubprocessRunner`
+            # happens to turn an `OSError` into a nonzero result, but another
+            # implementation may raise anything. Catching broadly here keeps
+            # that contract true by construction instead of depending on one
+            # runner's internals - and a raise would cost `doctor` every other
+            # row of its checklist.
+            return False, f"could not ask {context.project.web_container}: {error}"
         if not result.ok:
             return False, f"{context.project.web_container} did not answer: {result.stderr.strip()}"
         return True, f"{context.project.web_container} answers"

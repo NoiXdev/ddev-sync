@@ -56,9 +56,10 @@ def doctor_command(context: RunContext, echo: Callable[[str], None]) -> int:
     # command: low disk space is one `PreflightOperation.execute` refuses
     # outright, so leaving it out let a script gated on this exit status
     # start a sync that then aborted in preflight.
-    # `sanitize_tables_ok is False` is the one condition that is checked (not
-    # merely skipped) and failed - `None` means nothing to report (see
-    # `PreflightReport`'s own docstring) and must not fail the command.
+    # `sanitize_tables_ok`, `web_ok` and `agent_ok` are the conditions that
+    # can be checked (not merely skipped) and failed - `is not False` because
+    # `None` means nothing to report (see `PreflightReport`'s own docstring)
+    # and must not fail the command.
     return (
         0
         if report.ssh_ok

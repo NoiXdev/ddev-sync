@@ -1,4 +1,5 @@
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from ddev_sync.operations import preflight
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.preflight import MIN_FREE_BYTES, PreflightOperation, PreflightReport
 from ddev_sync.transport.fake import FakeCommandRunner
+from ddev_sync.transport.runner import CommandResult
 
 
 @pytest.fixture(autouse=True)
@@ -496,7 +498,7 @@ def test_check_reports_a_missing_docker_socket(
     monkeypatch.setattr(preflight, "DOCKER_SOCKET", tmp_path / "docker.sock")
     report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
     assert report.web_ok is False
-    assert "docker.sock" in report.web_detail
+    assert "not mounted" in report.web_detail
 
 
 def test_check_reports_a_mounted_but_unusable_docker_socket(
@@ -521,11 +523,32 @@ def test_check_reports_a_web_container_that_does_not_answer(
     socket.touch()
     monkeypatch.setattr(preflight, "DOCKER_SOCKET", socket)
     runner = healthy_runner()
-    runner.script_prefix(
-        ["docker", "exec"], returncode=1, stderr="No such container: ddev-acme-web"
-    )
+    runner.script_prefix(["docker", "exec"], returncode=1, stderr="Error: No such container")
     report = PreflightOperation().check(make_context(runner, tmp_path))
     assert report.web_ok is False
+    assert "ddev-acme-web" in report.web_detail
+
+
+def test_check_reports_a_runner_that_raises_instead_of_returning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `check()` must not raise whatever the runner does: the CommandRunner
+    # protocol says nothing about exceptions, so this cannot rely on
+    # SubprocessRunner's own OSError handling.
+    class RaisingRunner(FakeCommandRunner):
+        def run(self, argv: Sequence[str], **kwargs: Any) -> CommandResult:
+            if argv[0] == "docker":
+                raise RuntimeError("daemon went away")
+            return super().run(argv, **kwargs)
+
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+    monkeypatch.setattr(preflight, "DOCKER_SOCKET", socket)
+    runner = RaisingRunner()
+    runner.script_prefix(["ssh"], stdout="ddev-sync-ok\n")
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+    assert report.web_ok is False
+    assert "daemon went away" in report.web_detail
     assert "ddev-acme-web" in report.web_detail
 
 

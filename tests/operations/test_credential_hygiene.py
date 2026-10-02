@@ -134,6 +134,8 @@ def test_a_deploy_path_containing_a_space_does_not_break_the_test_command(
     # `check()` also probes the web container; a developer's machine really has
     # a docker socket, which would turn this into an unscripted `docker exec`.
     monkeypatch.setattr(preflight, "DOCKER_SOCKET", tmp_path / "absent" / "docker.sock")
+    # Likewise the agent probe reads SSH_AUTH_SOCK, set on a developer's machine.
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
     context = preflight_context(SPACEY_PATH, tmp_path)
     report = PreflightOperation().check(context)
     assert report.remote_path_ok is True
