@@ -17,19 +17,26 @@ it means a sanitize rule silently never ran and the preceding steps in the
 run already left production data behind.
 """
 
+import os
 import shlex
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ddev_sync.operations.base import ExecutionContext, OperationError, redact
 from ddev_sync.operations.database import RemoteCredentials, read_remote_credentials
 from ddev_sync.operations.files import validate_path_pairs
 from ddev_sync.operations.sanitize import SanitizeRule, parse_rules
+from ddev_sync.transport.container import web_command
 from ddev_sync.transport.ssh import ssh_command
 
 MIN_FREE_BYTES = 2 * 1024**3
+
+# A module constant, not an inline literal: tests monkeypatch it rather than
+# requiring a real socket on the machine running them.
+DOCKER_SOCKET = Path("/var/run/docker.sock")
 
 _OK = "ddev-sync-ok"
 _NO_PATH = "ddev-sync-no-path"
@@ -46,6 +53,11 @@ class PreflightReport:
     renders no row for that case rather than a misleading OK; `True`/`False`
     mean the probe actually ran and found every required table present, or
     did not.
+
+    `web_ok` and `agent_ok` follow the same convention: `None` means the
+    probe was not run, and `doctor` renders no row for it. `web_ok` says
+    whether a `web` step could reach the project's DDEV web container at all;
+    `agent_ok` whether the forwarded ssh agent socket is usable by this user.
     """
 
     ssh_ok: bool
@@ -53,6 +65,10 @@ class PreflightReport:
     free_bytes: int
     sanitize_tables_ok: bool | None = None
     sanitize_tables_detail: str = ""
+    web_ok: bool | None = None
+    web_detail: str = ""
+    agent_ok: bool | None = None
+    agent_detail: str = ""
 
     @property
     def free_space_ok(self) -> bool:
@@ -110,12 +126,18 @@ class PreflightOperation:
         """
         report, _stderr = self._probe(context)
         sanitize_ok, sanitize_detail = self._check_sanitize_tables(context, report)
+        web_ok, web_detail = self._check_web_container(context)
+        agent_ok, agent_detail = self._check_ssh_agent()
         return PreflightReport(
             ssh_ok=report.ssh_ok,
             remote_path_ok=report.remote_path_ok,
             free_bytes=report.free_bytes,
             sanitize_tables_ok=sanitize_ok,
             sanitize_tables_detail=sanitize_detail,
+            web_ok=web_ok,
+            web_detail=web_detail,
+            agent_ok=agent_ok,
+            agent_detail=agent_detail,
         )
 
     def _probe(self, context: ExecutionContext) -> tuple[PreflightReport, str]:
@@ -137,6 +159,63 @@ class PreflightOperation:
                 f"unexpected output from the remote probe on {context.target.host}: {output}"
             )
         return PreflightReport(True, output == _OK, self._free_bytes(context)), ""
+
+    @staticmethod
+    def _check_web_container(context: ExecutionContext) -> tuple[bool, str]:
+        """Whether a `web` step could run at all. Never raises.
+
+        Two failures, reported apart because the fixes differ: the socket is
+        not mounted (a compose problem, in the add-on's own file), or it is
+        mounted and the container is not there (the project is not running -
+        `ddev start`). Checked before a sync rather than at the first setup
+        command, which happens after the production dump is already imported.
+        """
+        if not DOCKER_SOCKET.exists():
+            return False, (
+                f"{DOCKER_SOCKET} is not mounted, so no command can reach "
+                f"{context.project.web_container}"
+            )
+        if not os.access(DOCKER_SOCKET, os.R_OK | os.W_OK):
+            # Mounted but unusable: on the host the socket is typically
+            # root:docker, mode 0660, and a container user's group membership
+            # does not carry over. The fix is the service's `group_add`, not
+            # anything in this image - so the message has to say so, or this
+            # looks like a missing container instead of a missing group.
+            return False, (
+                f"{DOCKER_SOCKET} is mounted but not usable by this user - the sync service "
+                "needs the host's docker group (compose `group_add`)"
+            )
+        result = context.runner.run(
+            web_command(context.project, ["true"], workdir=context.project.root)
+        )
+        if not result.ok:
+            return False, f"{context.project.web_container} did not answer: {result.stderr.strip()}"
+        return True, f"{context.project.web_container} answers"
+
+    @staticmethod
+    def _check_ssh_agent() -> tuple[bool, str]:
+        """Whether the forwarded ssh agent is usable by *this* user.
+
+        The base design's section 12: `ddev-ssh-agent_socket_dir` holds two
+        sockets, and the obvious one is the wrong one - `socket` is mode 0600
+        owned by uid 501, `proxy-socket` is 0666. A sidecar running as a
+        non-root user can only use the second. Asserting it here means a
+        future DDEV release renaming either socket fails in `doctor`, naming
+        the cause, instead of at the first dump with "Error connecting to
+        agent".
+        """
+        configured = os.environ.get("SSH_AUTH_SOCK", "")
+        if not configured:
+            return False, "SSH_AUTH_SOCK is not set - run `ddev auth ssh` and restart the project"
+        socket = Path(configured)
+        if not socket.exists():
+            return False, f"SSH_AUTH_SOCK points at {configured}, which does not exist"
+        if not os.access(socket, os.R_OK | os.W_OK):
+            return False, (
+                f"{configured} is not readable and writable by this user - the sidecar needs "
+                "the agent's `proxy-socket` (mode 0666), not `socket` (0600)"
+            )
+        return True, configured
 
     @staticmethod
     def _ssh_help(context: ExecutionContext, stderr: str) -> str:

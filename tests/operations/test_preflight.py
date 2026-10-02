@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Any
 
@@ -6,9 +7,24 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
+from ddev_sync.operations import preflight
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.preflight import MIN_FREE_BYTES, PreflightOperation, PreflightReport
 from ddev_sync.transport.fake import FakeCommandRunner
+
+
+@pytest.fixture(autouse=True)
+def no_container_access(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default both new probes to "not available", deterministically.
+
+    `check()` probes the web container and the ssh agent on every call. A
+    developer's machine really has /var/run/docker.sock and really has
+    SSH_AUTH_SOCK set, so without this the same test passes locally and fails
+    in CI (or the other way round) for reasons that have nothing to do with
+    what it asserts. Tests that care about either probe override it.
+    """
+    monkeypatch.setattr(preflight, "DOCKER_SOCKET", tmp_path / "absent" / "docker.sock")
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
 
 
 def make_context(runner: FakeCommandRunner, root: Path, **config: Any) -> ExecutionContext:
@@ -470,3 +486,102 @@ def test_a_preflight_report_defaults_to_no_sanitize_tables_result() -> None:
     report = PreflightReport(True, True, 50 * 1024**3)
     assert report.sanitize_tables_ok is None
     assert report.sanitize_tables_detail == ""
+
+
+def test_check_reports_a_missing_docker_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without the socket the sidecar cannot reach the web container at all,
+    # and every setup command would fail after the dump is already imported.
+    monkeypatch.setattr(preflight, "DOCKER_SOCKET", tmp_path / "docker.sock")
+    report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
+    assert report.web_ok is False
+    assert "docker.sock" in report.web_detail
+
+
+def test_check_reports_a_mounted_but_unusable_docker_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The socket is root:docker 0660 on the host and a container user's group
+    # membership does not carry over, so "present" and "usable" are different
+    # questions with different fixes.
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+    monkeypatch.setattr(preflight, "DOCKER_SOCKET", socket)
+    monkeypatch.setattr(os, "access", lambda *_args, **_kwargs: False)
+    report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
+    assert report.web_ok is False
+    assert "group_add" in report.web_detail
+
+
+def test_check_reports_a_web_container_that_does_not_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+    monkeypatch.setattr(preflight, "DOCKER_SOCKET", socket)
+    runner = healthy_runner()
+    runner.script_prefix(
+        ["docker", "exec"], returncode=1, stderr="No such container: ddev-acme-web"
+    )
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+    assert report.web_ok is False
+    assert "ddev-acme-web" in report.web_detail
+
+
+def test_check_reports_a_reachable_web_container(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+    monkeypatch.setattr(preflight, "DOCKER_SOCKET", socket)
+    runner = healthy_runner()
+    runner.script_prefix(["docker", "exec"], stdout="")
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+    assert report.web_ok is True
+    assert "ddev-acme-web" in report.web_detail
+
+
+def test_check_reports_an_unset_ssh_auth_sock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
+    assert report.agent_ok is False
+    assert "ddev auth ssh" in report.agent_detail
+
+
+def test_check_reports_an_ssh_auth_sock_that_is_not_there(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(tmp_path / "gone"))
+    report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
+    assert report.agent_ok is False
+    assert "does not exist" in report.agent_detail
+
+
+def test_check_reports_an_agent_socket_this_user_cannot_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The section 12 finding, as a check: the mounted directory holds `socket`
+    # (0600, uid 501) beside `proxy-socket` (0666). Pointing at the first
+    # works while developing as root and fails the moment the image runs as
+    # a non-root user, which is how it does run.
+    socket = tmp_path / "socket"
+    socket.touch(mode=0o600)
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(socket))
+    monkeypatch.setattr(os, "access", lambda *_args, **_kwargs: False)
+    report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
+    assert report.agent_ok is False
+    assert "proxy-socket" in report.agent_detail
+
+
+def test_check_reports_a_usable_agent_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    socket = tmp_path / "proxy-socket"
+    socket.touch(mode=0o666)
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(socket))
+    report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
+    assert report.agent_ok is True
+    assert "proxy-socket" in report.agent_detail

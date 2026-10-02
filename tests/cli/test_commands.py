@@ -450,3 +450,41 @@ def test_keep_dump_reads_the_configured_value() -> None:
 def test_keep_dump_ignores_a_non_mapping_defaults_block() -> None:
     merged = MergeResult(data={"defaults": "oops"})
     assert commands._keep_dump(merged) is False
+
+
+def test_doctor_exits_nonzero_when_the_web_container_is_unreachable(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
+
+    monkeypatch.setattr(
+        PreflightOperation,
+        "check",
+        lambda _self, _context: PreflightReport(
+            True, True, 50 * 1024**3, web_ok=False, web_detail="ddev-acme-web did not answer"
+        ),
+    )
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
+    assert "web container" in capsys.readouterr().out
+
+
+def test_doctor_exits_nonzero_when_the_agent_socket_is_unusable(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
+
+    monkeypatch.setattr(
+        PreflightOperation,
+        "check",
+        lambda _self, _context: PreflightReport(
+            True, True, 50 * 1024**3, agent_ok=False, agent_detail="SSH_AUTH_SOCK is not set"
+        ),
+    )
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
+    assert "ssh agent" in capsys.readouterr().out

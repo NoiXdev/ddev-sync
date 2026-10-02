@@ -603,3 +603,26 @@ def test_render_doctor_shows_a_failing_sanitize_tables_check() -> None:
     line = next(line for line in output.splitlines() if "sanitize tables" in line)
     assert line.strip().startswith("FAIL")
     assert "wp_users" in line
+
+
+def test_the_doctor_checklist_shows_the_web_and_agent_rows() -> None:
+    report = PreflightReport(
+        True,
+        True,
+        50 * 1024**3,
+        web_ok=False,
+        web_detail="ddev-acme-web did not answer: No such container",
+        agent_ok=True,
+        agent_detail="/home/.ssh-agent/proxy-socket",
+    )
+    output = render_doctor(report, _target())
+    assert "web container" in output
+    assert "ssh agent" in output
+    assert "No such container" in output
+    assert "proxy-socket" in output
+
+
+def test_rows_that_were_not_probed_are_left_out() -> None:
+    output = render_doctor(PreflightReport(True, True, 50 * 1024**3), _target())
+    assert "web container" not in output
+    assert "ssh agent" not in output

@@ -65,6 +65,8 @@ def doctor_command(context: RunContext, echo: Callable[[str], None]) -> int:
         and report.remote_path_ok
         and report.free_space_ok
         and report.sanitize_tables_ok is not False
+        and report.web_ok is not False
+        and report.agent_ok is not False
         else 1
     )
 

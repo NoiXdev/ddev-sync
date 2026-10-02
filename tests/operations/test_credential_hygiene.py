@@ -7,6 +7,7 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
+from ddev_sync.operations import preflight
 from ddev_sync.operations.base import ExecutionContext
 from ddev_sync.operations.database import DbDumpOperation, read_remote_credentials
 from ddev_sync.operations.preflight import PreflightOperation
@@ -122,7 +123,7 @@ def test_a_hostile_deploy_path_reaches_the_probe_as_one_argument(tmp_path: Path)
 
 
 def test_a_deploy_path_containing_a_space_does_not_break_the_test_command(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The likelier damage needs no attacker at all: an unquoted path with a
     space makes `[ -d /srv/app directory/ ]` a malformed test command (too
@@ -130,6 +131,9 @@ def test_a_deploy_path_containing_a_space_does_not_break_the_test_command(
     path does not exist" for a path that is right there, confidently and
     wrongly.
     """
+    # `check()` also probes the web container; a developer's machine really has
+    # a docker socket, which would turn this into an unscripted `docker exec`.
+    monkeypatch.setattr(preflight, "DOCKER_SOCKET", tmp_path / "absent" / "docker.sock")
     context = preflight_context(SPACEY_PATH, tmp_path)
     report = PreflightOperation().check(context)
     assert report.remote_path_ok is True
