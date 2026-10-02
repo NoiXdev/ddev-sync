@@ -172,7 +172,12 @@ class CreateAdmin:
             self._announce(user, password)
             return
         combined = f"{result.stdout}{result.stderr}".lower()
-        if any(marker in combined for marker in _ALREADY_EXISTS[driver]):
+        # `.get`, not `[driver]`: the driver is validated against
+        # `_ADMIN_DRIVERS` above, so a driver added there alone would
+        # otherwise take this lookup down with a bare KeyError traceback
+        # mid-sync. An empty default tolerates nothing, which is the safe
+        # direction - the failure below is reported rather than swallowed.
+        if any(marker in combined for marker in _ALREADY_EXISTS.get(driver, ())):
             print(f"  local admin already exists - user: {user}")
             return
         raise OperationError(

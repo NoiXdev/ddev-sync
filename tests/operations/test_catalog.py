@@ -7,7 +7,7 @@ from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations.base import ExecutionContext, OperationError
-from ddev_sync.operations.catalog import LOCAL_ADMIN_PASSWORD
+from ddev_sync.operations.catalog import _ADMIN_DRIVERS, LOCAL_ADMIN_PASSWORD
 from ddev_sync.operations.sanitize import SANITIZE_OPERATIONS, SanitizeOperation
 from ddev_sync.transport.fake import FakeCommandRunner
 
@@ -330,6 +330,24 @@ def test_an_unrelated_duplicate_key_error_is_not_swallowed(tmp_path: Path) -> No
     with pytest.raises(OperationError) as caught:
         SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     assert "Duplicate entry" in str(caught.value)
+
+
+def test_a_driver_without_tolerate_markers_still_fails_as_an_operation_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `_ADMIN_DRIVERS` and `_ALREADY_EXISTS` are two dicts keyed by the same
+    # driver names, and only the first one decides whether a driver is known -
+    # so a driver added to it alone must not take the tolerate-marker lookup
+    # down with a bare KeyError traceback mid-sync. A driver whose markers are
+    # simply unknown tolerates nothing, which is the safe direction: the
+    # failure is reported, not swallowed.
+    monkeypatch.setitem(_ADMIN_DRIVERS, "magic", ["vendor/bin/magic", "user:create"])
+    runner = FakeCommandRunner()
+    runner.script_prefix(["vendor/bin/magic"], returncode=1, stderr="user already exists")
+    config = rule_config(name="admin", operation="create_admin", driver="magic", user="ddev")
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert "already exists" in str(caught.value)
 
 
 def test_an_unknown_create_admin_driver_lists_the_valid_ones(tmp_path: Path) -> None:
