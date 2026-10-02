@@ -107,10 +107,10 @@ def test_the_resolved_destructive_command_targets_a_non_default_docroot_safely(
     reaching_the_shell` for the case where resolution itself must refuse.
     """
     runner = FakeCommandRunner()
-    runner.script_prefix(["sh"], stdout="")
+    runner.script_prefix(["docker", "exec"], stdout="")
     context = _processedfiles_context(tmp_path, runner, "httpdocs")
     ExecOperation().execute(context, _processedfiles_entry())
-    command = runner.calls[0][2]
+    command = runner.calls[0][-1]
     assert command == "rm -rf httpdocs/fileadmin/_processed_"
     assert not command.split("rm -rf ")[1].startswith("/")
     assert ".." not in command

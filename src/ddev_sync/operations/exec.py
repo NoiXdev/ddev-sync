@@ -12,6 +12,7 @@ from typing import Any
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.placeholders import expand_value
 from ddev_sync.operations.sanitize import SANITIZE_OPERATIONS, SanitizeRule
+from ddev_sync.transport.container import web_command
 
 _PREFIX = "ddev-sync:"
 
@@ -44,7 +45,14 @@ def run_command_entry(context: ExecutionContext, entry: Mapping[str, Any]) -> No
         raise OperationError(f"a command entry needs either 'run' or 'operation': {dict(entry)}")
 
     workdir = _resolve_workdir(context, entry)
-    result = context.runner.run(["sh", "-c", str(command)], cwd=workdir)
+    # `docker exec -w`, not `cwd=`: the command runs in the project's web
+    # container (see transport/container.py for why), and `-w` carries the
+    # directory without a second layer of shell quoting. `_resolve_workdir`
+    # still runs first, so a workdir escaping the project root is rejected
+    # before anything is dispatched.
+    result = context.runner.run(
+        web_command(context.project, ["sh", "-c", str(command)], workdir=workdir)
+    )
     if result.ok or bool(entry.get("allow_failure", False)):
         return
     raise OperationError(

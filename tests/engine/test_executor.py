@@ -178,7 +178,7 @@ def test_an_empty_plan_succeeds_trivially(tmp_path: Path) -> None:
 
 def context_with_post_sync(tmp_path: Path, command: str = "cleanup") -> ExecutionContext:
     runner = FakeCommandRunner()
-    runner.script_prefix(["sh"], stdout="")
+    runner.script_prefix(["docker", "exec"], stdout="")
     return ExecutionContext(
         project=DdevProject(name="acme", type="php", docroot="public", root=tmp_path),
         target=ResolvedTarget(
@@ -204,7 +204,7 @@ def test_post_sync_runs_after_a_successful_run(tmp_path: Path) -> None:
     executor.run(plan_of(step(1, StepKind.PREFLIGHT)), context)
     runner = context.runner
     assert isinstance(runner, FakeCommandRunner)
-    assert runner.calls == [("sh", "-c", "cleanup")]
+    assert [call[-3:] for call in runner.calls] == [("sh", "-c", "cleanup")]
 
 
 def test_post_sync_still_runs_after_a_failure(tmp_path: Path) -> None:
@@ -214,14 +214,14 @@ def test_post_sync_still_runs_after_a_failure(tmp_path: Path) -> None:
     assert report.failed is True
     runner = context.runner
     assert isinstance(runner, FakeCommandRunner)
-    assert runner.calls == [("sh", "-c", "cleanup")]
+    assert [call[-3:] for call in runner.calls] == [("sh", "-c", "cleanup")]
 
 
 def test_a_failing_post_sync_hook_is_reported_but_does_not_mask_the_run(
     tmp_path: Path,
 ) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["sh"], returncode=1, stderr="cleanup broke")
+    runner.script_prefix(["docker", "exec"], returncode=1, stderr="cleanup broke")
     context = ExecutionContext(
         project=DdevProject(name="acme", type="php", docroot="public", root=tmp_path),
         target=ResolvedTarget(name="p", host="h", user="u", port=22, path="/p/", stage=Stage.DEV),
@@ -238,6 +238,10 @@ def test_a_failing_post_sync_hook_is_reported_but_does_not_mask_the_run(
     reporter = executor.reporter
     assert isinstance(reporter, RecordingReporter)
     assert any("post_sync hook failed" in text for text in reporter.notices)
+    # Proves the hook really reached the scripted web-container command: an
+    # unscripted prefix would also produce a "hook failed" notice, so the
+    # message alone cannot tell the two apart.
+    assert any("cleanup broke" in text for text in reporter.notices)
 
 
 def test_no_post_sync_hooks_means_no_extra_commands(tmp_path: Path) -> None:
@@ -294,7 +298,7 @@ def test_a_hook_step_runs_its_own_command_not_its_parent_operation(tmp_path: Pat
     """
     spy = _SpyOperation()
     runner = FakeCommandRunner()
-    runner.script_prefix(["sh"], stdout="")
+    runner.script_prefix(["docker", "exec"], stdout="")
     context = ExecutionContext(
         project=DdevProject(name="acme", type="php", docroot="public", root=tmp_path),
         target=ResolvedTarget(
@@ -317,5 +321,5 @@ def test_a_hook_step_runs_its_own_command_not_its_parent_operation(tmp_path: Pat
     )
     report = executor.run(plan, context)
     assert report.failed is False
-    assert runner.calls == [("sh", "-c", "echo HOOK-RAN")]
+    assert [call[-3:] for call in runner.calls] == [("sh", "-c", "echo HOOK-RAN")]
     assert spy.calls == 1
