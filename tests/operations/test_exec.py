@@ -64,16 +64,14 @@ def test_a_run_entrys_placeholders_are_expanded(tmp_path: Path) -> None:
 
 
 def test_an_operation_entrys_placeholders_are_expanded(tmp_path: Path) -> None:
-    # `flush_cache` is a catalog operation, not a `run:` entry, so it still
-    # executes through the bare `sh` prefix rather than the web container.
     runner = FakeCommandRunner()
-    runner.script_prefix(["sh"], stdout="done")
+    runner.script_prefix(["docker", "exec"], stdout="done")
     config: dict[str, Any] = {"sanitize": {}}
     context = make_context(runner, tmp_path, **config)
     run_command_entry(
         context, {"operation": "ddev-sync:flush-cache", "command": "echo ${DDEV_SITENAME}"}
     )
-    assert runner.calls[0] == ("sh", "-c", "echo acme")
+    assert runner.calls[0][-3:] == ("sh", "-c", "echo acme")
 
 
 def test_commands_run_in_the_project_root_by_default(tmp_path: Path) -> None:
@@ -143,13 +141,13 @@ def test_operation_references_are_normalised(reference: str, expected: str) -> N
 
 def test_an_operation_entry_dispatches_into_the_catalog(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["sh"], stdout="")
+    runner.script_prefix(["docker", "exec"], stdout="")
     config: dict[str, Any] = {"sanitize": {}}
     context = make_context(runner, tmp_path, **config)
     run_command_entry(
         context, {"operation": "ddev-sync:flush-cache", "command": "vendor/bin/typo3 cache:flush"}
     )
-    assert runner.calls[0] == ("sh", "-c", "vendor/bin/typo3 cache:flush")
+    assert runner.calls[0][-3:] == ("sh", "-c", "vendor/bin/typo3 cache:flush")
 
 
 def test_an_unknown_operation_reference_lists_the_catalog(tmp_path: Path) -> None:

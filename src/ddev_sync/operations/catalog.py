@@ -12,6 +12,7 @@ from ddev_sync.operations.sanitize import (
     is_missing_table_error,
     local_mysql_argv,
 )
+from ddev_sync.transport.container import web_command
 
 LOCAL_ADMIN_PASSWORD = "Start23!"
 
@@ -110,8 +111,11 @@ class SearchReplace:
         source = _required(rule, "from")
         replacement = _required(rule, "to")
         result = context.runner.run(
-            ["wp", "search-replace", source, replacement, "--skip-columns=guid", "--quiet"],
-            cwd=context.project.docroot_path,
+            web_command(
+                context.project,
+                ["wp", "search-replace", source, replacement, "--skip-columns=guid", "--quiet"],
+                workdir=context.project.docroot_path,
+            )
         )
         if not result.ok:
             raise OperationError(
@@ -167,7 +171,12 @@ class CreateAdmin:
         user = _required(rule, "user")
         password = str(rule.params.get("password", LOCAL_ADMIN_PASSWORD))
         argv = self._argv(driver, head, user, password)
-        result = context.runner.run(argv, cwd=context.project.root)
+        # The framework CLI lives in the web container, not in this one; the
+        # project root is the same absolute path in both, so it passes
+        # through as docker's `-w` unchanged.
+        result = context.runner.run(
+            web_command(context.project, argv, workdir=context.project.root)
+        )
         if result.ok:
             self._announce(user, password)
             return
@@ -213,7 +222,9 @@ class FlushCache:
     def run(self, context: ExecutionContext, rule: SanitizeRule) -> None:
         """Run the configured command, ignoring a non-zero exit."""
         command = _required(rule, "command")
-        context.runner.run(["sh", "-c", command], cwd=context.project.root)
+        context.runner.run(
+            web_command(context.project, ["sh", "-c", command], workdir=context.project.root)
+        )
 
 
 SANITIZE_OPERATIONS["clear_mail_config"] = ClearMailConfig()

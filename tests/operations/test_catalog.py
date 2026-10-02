@@ -227,17 +227,17 @@ def test_create_admin_uses_the_configured_driver(
     tmp_path: Path, driver: str, expected_head: list[str]
 ) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix([expected_head[0]], stdout="created")
+    runner.script_prefix(["docker", "exec"], stdout="created")
     config = rule_config(name="admin", operation="create_admin", driver=driver, user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     argv = runner.calls[0]
-    assert list(argv[: len(expected_head)]) == expected_head
+    assert list(argv[argv.index("ddev-acme-web") + 1 :][: len(expected_head)]) == expected_head
     assert "ddev" in argv
 
 
 def test_create_admin_uses_the_documented_local_password(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["vendor/bin/typo3"], stdout="created")
+    runner.script_prefix(["docker", "exec"], stdout="created")
     config = rule_config(name="admin", operation="create_admin", driver="typo3", user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     assert LOCAL_ADMIN_PASSWORD in runner.calls[0]
@@ -248,7 +248,7 @@ def test_an_existing_admin_is_not_an_error(
 ) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(
-        ["vendor/bin/typo3"], returncode=1, stderr="A user with this name already exists"
+        ["docker", "exec"], returncode=1, stderr="A user with this name already exists"
     )
     config = rule_config(name="admin", operation="create_admin", driver="typo3", user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
@@ -266,7 +266,7 @@ def test_an_existing_wp_cli_admin_is_not_an_error(
     # "duplicate user" never appears anywhere in that method.
     runner = FakeCommandRunner()
     runner.script_prefix(
-        ["wp"], returncode=1, stderr="Error: The 'ddev' username is already registered."
+        ["docker", "exec"], returncode=1, stderr="Error: The 'ddev' username is already registered."
     )
     config = rule_config(name="admin", operation="create_admin", driver="wp_cli", user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
@@ -284,7 +284,7 @@ def test_an_existing_drush_admin_is_not_an_error(
     # an existing account - again, never "duplicate user".
     runner = FakeCommandRunner()
     runner.script_prefix(
-        ["vendor/bin/drush"],
+        ["docker", "exec"],
         returncode=1,
         stderr="There is already a user account with the name ddev",
     )
@@ -303,7 +303,9 @@ def test_a_drivers_tolerate_marker_is_not_honoured_for_a_different_driver(
     # tolerating it there would narrow nothing and risk swallowing a real
     # wp-cli failure that happens to share the substring.
     runner = FakeCommandRunner()
-    runner.script_prefix(["wp"], returncode=1, stderr="some unrelated error: already exists")
+    runner.script_prefix(
+        ["docker", "exec"], returncode=1, stderr="some unrelated error: already exists"
+    )
     config = rule_config(name="admin", operation="create_admin", driver="wp_cli", user="ddev")
     with pytest.raises(OperationError) as caught:
         SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
@@ -312,7 +314,7 @@ def test_a_drivers_tolerate_marker_is_not_honoured_for_a_different_driver(
 
 def test_another_create_admin_failure_is_an_error(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["vendor/bin/typo3"], returncode=1, stderr="database is gone")
+    runner.script_prefix(["docker", "exec"], returncode=1, stderr="database is gone")
     config = rule_config(name="admin", operation="create_admin", driver="typo3", user="ddev")
     with pytest.raises(OperationError) as caught:
         SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
@@ -322,7 +324,7 @@ def test_another_create_admin_failure_is_an_error(tmp_path: Path) -> None:
 def test_an_unrelated_duplicate_key_error_is_not_swallowed(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(
-        ["vendor/bin/typo3"],
+        ["docker", "exec"],
         returncode=1,
         stderr="Duplicate entry 'admin' for key 'PRIMARY'",
     )
@@ -343,7 +345,7 @@ def test_a_driver_without_tolerate_markers_still_fails_as_an_operation_error(
     # failure is reported, not swallowed.
     monkeypatch.setitem(_ADMIN_DRIVERS, "magic", ["vendor/bin/magic", "user:create"])
     runner = FakeCommandRunner()
-    runner.script_prefix(["vendor/bin/magic"], returncode=1, stderr="user already exists")
+    runner.script_prefix(["docker", "exec"], returncode=1, stderr="user already exists")
     config = rule_config(name="admin", operation="create_admin", driver="magic", user="ddev")
     with pytest.raises(OperationError) as caught:
         SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
@@ -361,25 +363,26 @@ def test_an_unknown_create_admin_driver_lists_the_valid_ones(tmp_path: Path) -> 
 
 def test_flush_cache_runs_the_profile_supplied_command(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["sh"], stdout="")
+    runner.script_prefix(["docker", "exec"], stdout="")
     config = rule_config(
         name="cache", operation="flush_cache", command="vendor/bin/typo3 cache:flush"
     )
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
-    assert runner.calls[0] == ("sh", "-c", "vendor/bin/typo3 cache:flush")
+    assert runner.calls[0][-3:] == ("sh", "-c", "vendor/bin/typo3 cache:flush")
 
 
 def test_flush_cache_runs_in_the_project_root(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["sh"], stdout="")
+    runner.script_prefix(["docker", "exec"], stdout="")
     config = rule_config(name="cache", operation="flush_cache", command="true")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
-    assert runner.invocations[0].cwd == tmp_path
+    argv = runner.calls[0]
+    assert argv[argv.index("-w") + 1] == str(tmp_path)
 
 
 def test_flush_cache_failures_are_tolerated(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["sh"], returncode=1, stderr="no cache to flush")
+    runner.script_prefix(["docker", "exec"], returncode=1, stderr="no cache to flush")
     config = rule_config(name="cache", operation="flush_cache", command="true")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
 
@@ -393,7 +396,7 @@ def test_flush_cache_without_a_command_is_rejected(tmp_path: Path) -> None:
 
 def test_search_replace_can_use_wp_cli(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["wp"], stdout="Success")
+    runner.script_prefix(["docker", "exec"], stdout="Success")
     config = rule_config(
         name="urls",
         operation="search_replace",
@@ -401,13 +404,14 @@ def test_search_replace_can_use_wp_cli(tmp_path: Path) -> None:
         **{"from": "https://acme.example", "to": "https://acme.ddev.site"},
     )
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
-    assert runner.calls[0][:2] == ("wp", "search-replace")
-    assert runner.invocations[0].cwd == tmp_path / "public"
+    argv = runner.calls[0]
+    assert argv[argv.index("ddev-acme-web") + 1 :][:2] == ("wp", "search-replace")
+    assert argv[argv.index("-w") + 1] == str(tmp_path / "public")
 
 
 def test_a_failing_wp_search_replace_is_an_error(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    runner.script_prefix(["wp"], returncode=1, stderr="Error: no wp-config.php")
+    runner.script_prefix(["docker", "exec"], returncode=1, stderr="Error: no wp-config.php")
     config = rule_config(
         name="urls",
         operation="search_replace",
@@ -417,3 +421,61 @@ def test_a_failing_wp_search_replace_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(OperationError) as caught:
         SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     assert "no wp-config.php" in str(caught.value)
+
+
+def test_create_admin_runs_the_framework_cli_in_the_web_container(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout="created")
+    config = rule_config(name="admin", operation="create_admin", driver="typo3", user="ddev")
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    argv = runner.calls[0]
+    assert argv[:2] == ("docker", "exec")
+    assert "ddev-acme-web" in argv
+    assert argv[argv.index("ddev-acme-web") + 1 :] == (
+        "vendor/bin/typo3",
+        "backend:createadmin",
+        "ddev",
+        LOCAL_ADMIN_PASSWORD,
+    )
+
+
+def test_wp_search_replace_runs_in_the_web_container_from_the_docroot(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout="Success")
+    config = rule_config(
+        name="urls",
+        operation="search_replace",
+        driver="wp_cli",
+        **{"from": "https://acme.test", "to": "https://acme.ddev.site"},
+    )
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    argv = runner.calls[0]
+    # wp-cli has to run from the docroot, where wp-config.php is; that was
+    # `cwd=` before and is docker's `-w` now.
+    assert argv[argv.index("-w") + 1] == str(tmp_path / "public")
+    assert argv[argv.index("ddev-acme-web") + 1] == "wp"
+
+
+def test_flush_cache_runs_in_the_web_container(tmp_path: Path) -> None:
+    # `flush_cache` runs a framework cache command, exactly like a setup
+    # entry does, so it belongs in the same place.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout="")
+    config = rule_config(
+        name="cache", operation="flush_cache", command="vendor/bin/typo3 cache:flush"
+    )
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    argv = runner.calls[0]
+    assert argv[:2] == ("docker", "exec")
+    assert argv[-3:] == ("sh", "-c", "vendor/bin/typo3 cache:flush")
+
+
+def test_a_sql_rule_still_runs_in_the_sidecar(tmp_path: Path) -> None:
+    # The split this task rests on: `mariadb-client` is in the sidecar
+    # image, so SQL must NOT be routed into the web container, which has no
+    # reason to carry a mysql client at all.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["mysql"], stdout="")
+    config = rule_config(name="wipe", sql="TRUNCATE TABLE cache")
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert runner.calls[0][0] == "mysql"
