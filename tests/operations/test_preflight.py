@@ -11,6 +11,7 @@ from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations import preflight
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.preflight import MIN_FREE_BYTES, PreflightOperation, PreflightReport
+from ddev_sync.transport.container import web_command
 from ddev_sync.transport.fake import FakeCommandRunner
 from ddev_sync.transport.runner import CommandResult
 
@@ -560,9 +561,17 @@ def test_check_reports_a_reachable_web_container(
     monkeypatch.setattr(preflight, "DOCKER_SOCKET", socket)
     runner = healthy_runner()
     runner.script_prefix(["docker", "exec"], stdout="")
-    report = PreflightOperation().check(make_context(runner, tmp_path))
+    context = make_context(runner, tmp_path)
+    report = PreflightOperation().check(context)
     assert report.web_ok is True
     assert "ddev-acme-web" in report.web_detail
+    # The container asked is the web one and the directory is the project
+    # root, not the docroot - `web_detail` is built from the project, not from
+    # this argv, so only an argv assertion catches a probe aimed elsewhere.
+    docker_calls = [argv for argv in runner.calls if argv[0] == "docker"]
+    assert docker_calls == [
+        tuple(web_command(context.project, ["true"], workdir=context.project.root))
+    ]
 
 
 def test_check_reports_an_unset_ssh_auth_sock(
