@@ -424,6 +424,45 @@ def test_check_reports_a_failed_table_listing_without_raising(tmp_path: Path) ->
     assert "Access denied" in report.sanitize_tables_detail
 
 
+def test_check_reports_an_unparsable_sanitize_rule_without_raising(tmp_path: Path) -> None:
+    # `parse_rules` itself can fail - a rule missing 'name' is rejected before
+    # any table is compared - and `check()` must still return a report:
+    # `doctor` renders its whole checklist only after `check()` returns, so a
+    # raise here costs the user the ssh, deploy-path and disk-space rows at
+    # exactly the moment they ran `doctor` to see them.
+    context = context_with_rules(healthy_runner(), tmp_path, [{"sql": "TRUNCATE TABLE cache"}])
+    report = PreflightOperation().check(context)
+    assert report.ssh_ok is True
+    assert report.remote_path_ok is True
+    assert report.sanitize_tables_ok is False
+    assert "missing 'name'" in report.sanitize_tables_detail
+
+
+def test_check_reports_an_unresolvable_placeholder_without_raising(tmp_path: Path) -> None:
+    # The other way `parse_rules` fails: it expands `${...}` at parse time, so
+    # a `${WP_TABLE_PREFIX}` against a credentials source that has no prefix
+    # to read (`env`, not `wp_cli`) raises inside parsing, before the table
+    # listing this used to be the only guarded call.
+    context = make_context(
+        healthy_runner(),
+        tmp_path,
+        database={"remote_credentials": "env"},
+        sanitize={
+            "rules": [
+                {
+                    "name": "anonymize-users",
+                    "sql": "UPDATE ${WP_TABLE_PREFIX}users SET user_email = 'x'",
+                    "requires_table": "${WP_TABLE_PREFIX}users",
+                }
+            ]
+        },
+    )
+    report = PreflightOperation().check(context)
+    assert report.ssh_ok is True
+    assert report.sanitize_tables_ok is False
+    assert report.sanitize_tables_detail != ""
+
+
 def test_a_preflight_report_defaults_to_no_sanitize_tables_result() -> None:
     # Every existing call site that builds a `PreflightReport` with just the
     # original three positional fields (tests and `_probe` alike) must keep

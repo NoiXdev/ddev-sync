@@ -168,17 +168,24 @@ class PreflightOperation:
         either connectivity already failed - `ssh_ok`/`remote_path_ok` above
         already cover that, and there is no remote database left to query -
         or no sanitize rule requires a table at all. Otherwise runs the same
-        probe `execute()` runs, catching the one `OperationError` that
-        `_remote_tables` can raise (the table *listing* itself failing, e.g.
-        bad credentials) instead of letting it propagate, because `check()`
-        is documented to never raise.
+        probe `execute()` runs, reporting every `OperationError` it can raise
+        rather than letting one propagate, because `check()` is documented to
+        never raise - and `doctor` renders its whole checklist only after
+        `check()` returns, so a raise here would cost the user the ssh,
+        deploy-path and disk-space rows as well.
+
+        `parse_rules` is inside the guarded block, not just `_remote_tables`:
+        it validates every rule (a rule missing 'name' is rejected there) and
+        expands `${...}` at parse time, so an unresolvable `${WP_TABLE_PREFIX}`
+        - a `wp_cli` prefix lookup that fails, or a credentials source that
+        has no prefix to read at all - fails before any table is listed.
         """
         if not (report.ssh_ok and report.remote_path_ok):
             return None, ""
-        required = _required_tables(parse_rules(context))
-        if not required:
-            return None, ""
         try:
+            required = _required_tables(parse_rules(context))
+            if not required:
+                return None, ""
             tables = _remote_tables(context)
         except OperationError as error:
             return False, str(error)
