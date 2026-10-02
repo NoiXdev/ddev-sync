@@ -31,6 +31,16 @@ class DdevProject:
         return f"ddev-{self.name}-db"
 
     @property
+    def web_container(self) -> str:
+        """The web container's name on the DDEV network.
+
+        Addressed by name rather than by id because `docker exec` accepts
+        either and DDEV's naming is stable (`ddev-<project>-web`), while a
+        container id changes on every `ddev restart`.
+        """
+        return f"ddev-{self.name}-web"
+
+    @property
     def docroot_path(self) -> Path:
         """Absolute path to the web root. Equals `root` when docroot is empty."""
         return self.root / self.docroot if self.docroot else self.root

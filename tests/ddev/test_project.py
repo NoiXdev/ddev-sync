@@ -69,3 +69,22 @@ def test_a_non_mapping_ddev_config_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as caught:
         read_ddev_project(tmp_path)
     assert "mapping" in str(caught.value)
+
+
+def test_the_web_container_name_follows_ddevs_convention() -> None:
+    project = DdevProject(name="acme", type="typo3", docroot="public", root=Path("/var/www/html"))
+    assert project.web_container == "ddev-acme-web"
+
+
+def test_the_web_and_db_container_names_differ_only_in_their_suffix() -> None:
+    # Both are derived from the same `name`, so a project renamed in
+    # .ddev/config.yaml cannot end up with one of them pointing at the old
+    # project's container.
+    project = DdevProject(
+        name="shop",
+        type="shopware6",
+        docroot="public",
+        root=Path("/var/www/html"),
+    )
+    assert project.db_container == "ddev-shop-db"
+    assert project.web_container == "ddev-shop-web"
