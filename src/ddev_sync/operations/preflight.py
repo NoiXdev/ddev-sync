@@ -60,8 +60,11 @@ class PreflightReport:
     mean the probe actually ran and found every required table present, or
     did not.
 
-    `web_ok` and `agent_ok` follow the same convention: `None` means the
-    probe was not run, and `doctor` renders no row for it. `web_ok` says
+    `web_ok` and `agent_ok` default to `None` only so that a report built with
+    the three original positional fields still renders; `doctor` renders no
+    row for a `None`. Both probes always return a bool, so a report that
+    `check()` produced never carries `None` there - `sanitize_tables_ok` is
+    the field that genuinely can be. `web_ok` says
     whether a `web` step could reach the project's DDEV web container at all;
     `agent_ok` whether the forwarded ssh agent socket is usable by this user.
     """
@@ -179,8 +182,12 @@ class PreflightOperation:
         Two failures, reported apart because the fixes differ: the socket is
         not mounted (a compose problem, in the add-on's own file), or it is
         mounted and the container is not there (the project is not running -
-        `ddev start`). Checked before a sync rather than at the first setup
-        command, which happens after the production dump is already imported.
+        `ddev start`). This is what `doctor` reports; a sync's own `execute()`
+        does not probe it, so a missing container surfaces at the first step
+        that needs it. Moving the probe into `execute()` needs a "does this
+        plan contain a web step" signal that does not exist yet, and it is not
+        reachable in practice until the compose file that mounts the socket
+        ships.
         """
         if not DOCKER_SOCKET.exists():
             return False, (

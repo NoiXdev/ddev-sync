@@ -11,9 +11,9 @@ Docker.
 
 Reaching a sibling container needs `/var/run/docker.sock` mounted into the
 sidecar, which is host-root-equivalent access to the daemon - see the base
-design's §10. `operations/preflight.py` asserts the socket is there, so a
-missing mount is a `doctor` row rather than a failure at the first setup
-command.
+design's §10. `doctor` (via `operations/preflight.py`) asserts the socket is
+there, so a missing mount is a `doctor` row. A sync does not probe it up
+front: its own failure surfaces at the first step that needs the container.
 """
 
 import os
