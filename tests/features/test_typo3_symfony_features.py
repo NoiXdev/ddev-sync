@@ -132,6 +132,23 @@ def test_a_hostile_docroot_is_rejected_rather_than_reaching_the_shell(tmp_path: 
     assert runner.calls == []
 
 
+def test_a_word_splitting_docroot_is_rejected_rather_than_reaching_the_shell(
+    tmp_path: Path,
+) -> None:
+    # The command runs through `sh -c`, where a docroot containing a space
+    # splits into two operands: "rm -rf web root/fileadmin/_processed_" would
+    # delete the project's entire `web` directory before touching anything
+    # named `_processed_`. Path traversal is not the only way this value can
+    # escape its intended target, so the rejection must cover the shell's own
+    # re-interpretation too - again before the runner sees anything.
+    runner = FakeCommandRunner()
+    context = _processedfiles_context(tmp_path, runner, "web root")
+    with pytest.raises(OperationError) as caught:
+        ExecOperation().execute(context, _processedfiles_entry())
+    assert "docroot" in str(caught.value)
+    assert runner.calls == []
+
+
 def test_the_destructive_command_does_not_set_allow_failure() -> None:
     # `rm -rf` already exits 0 on a missing path (the fresh-checkout case,
     # before the first import, that `allow_failure` used to be justified

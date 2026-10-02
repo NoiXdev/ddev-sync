@@ -59,9 +59,19 @@ def _validated_identifier(value: str, *, source: str, remedy: str | None = None)
     return value
 
 
+# Everything a docroot may contain: path segments of letters, digits, `.`,
+# `_`, `-`, joined by `/`. Deliberately a whitelist, not a blacklist of
+# dangerous characters: the value is spliced *unquoted* into a `sh -c` string
+# (features/typo3-processedfiles.yaml's `rm -rf`), so anything else - a space,
+# `$`, a backtick, `;`, `*`, `~`, a quote - is re-interpreted by the shell
+# before `rm` ever sees it. A space alone is enough: `rm -rf web root/...`
+# is two operands, and the first deletes the project's whole `web` directory.
+_SAFE_DOCROOT = re.compile(r"[A-Za-z0-9._/-]+")
+
+
 def _validated_docroot(docroot: str) -> str:
-    """Reject a docroot that could escape the project root once spliced into
-    a shell command.
+    """Reject a docroot that could escape the project root, or be rewritten by
+    the shell, once spliced into a shell command.
 
     `DdevProject.docroot` is read verbatim from `.ddev/config.yaml` and never
     normalised (`ddev/project.py::read_ddev_project`). ${DDEV_DOCROOT} ends
@@ -77,6 +87,16 @@ def _validated_docroot(docroot: str) -> str:
         raise OperationError(
             f"docroot {docroot!r} (from .ddev/config.yaml) is not safe to use "
             "in a shell command - it must be a relative path with no '..' segment"
+        )
+    # The empty docroot is legitimate (the project root is then the web root)
+    # and resolves to "." in `_substitutions`; the pattern needs at least one
+    # character, so it is checked only for a non-empty value.
+    if docroot and _SAFE_DOCROOT.fullmatch(docroot) is None:
+        raise OperationError(
+            f"docroot {docroot!r} (from .ddev/config.yaml) is not safe to use "
+            "in a shell command - only letters, digits, '.', '_', '-' and '/' "
+            "are allowed; a space or a shell metacharacter would be "
+            "reinterpreted by the shell instead of read as part of the path"
         )
     return docroot
 

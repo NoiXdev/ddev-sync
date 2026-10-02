@@ -108,6 +108,52 @@ def test_ddev_docroot_rejects_a_path_containing_dotdot(tmp_path: Path) -> None:
     assert "../../etc" in message
 
 
+@pytest.mark.parametrize(
+    "docroot",
+    [
+        # A space word-splits: `rm -rf web root/fileadmin/_processed_` is two
+        # operands to `sh -c`, and the first one deletes the project's whole
+        # `web` directory.
+        pytest.param("web root", id="space"),
+        # `sh -c` substitutes, globs and chains all of these before `rm` ever
+        # sees them.
+        pytest.param("pub$(id)", id="command-substitution"),
+        pytest.param("pub`id`", id="backticks"),
+        pytest.param("pub;rm -rf x", id="semicolon"),
+        pytest.param("pub*", id="glob"),
+        pytest.param("~/pub", id="tilde"),
+    ],
+)
+def test_ddev_docroot_rejects_a_value_the_shell_would_reinterpret(
+    tmp_path: Path, docroot: str
+) -> None:
+    # Neither of the two guards above (absolute, `..`) covers these, yet the
+    # resolved value is spliced unquoted into a `sh -c` string - so rejecting
+    # anything outside a plain relative path is what actually makes
+    # ${DDEV_DOCROOT} safe to use in a `run:` command.
+    context = make_context(FakeCommandRunner(), tmp_path, docroot=docroot)
+    with pytest.raises(OperationError) as caught:
+        expand_value("${DDEV_DOCROOT}/fileadmin", context)
+    assert "docroot" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "docroot",
+    [
+        pytest.param("public", id="plain"),
+        pytest.param("public/", id="trailing-slash"),
+        pytest.param("web/public", id="nested"),
+        pytest.param("public_html", id="underscore"),
+        pytest.param("my-site.v2", id="dash-and-dot"),
+    ],
+)
+def test_ddev_docroot_accepts_an_ordinary_relative_docroot(tmp_path: Path, docroot: str) -> None:
+    # The guard must not narrow what DDEV itself accepts: every one of these
+    # is a legitimate `docroot:` value and must still expand verbatim.
+    context = make_context(FakeCommandRunner(), tmp_path, docroot=docroot)
+    assert expand_value("${DDEV_DOCROOT}/fileadmin", context) == f"{docroot}/fileadmin"
+
+
 # --- ${WP_TABLE_PREFIX} -----------------------------------------------------
 
 WP_CLI_SOURCE: dict[str, Any] = {"database": {"remote_credentials": "wp_cli"}}
