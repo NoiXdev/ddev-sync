@@ -1,11 +1,13 @@
 """A real pull: dump over ssh, import, sync files, sanitize."""
 
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from ddev_sync.cli.main import main
+from tests.integration.paths import PROJECT_DIR
 
 pytestmark = pytest.mark.integration
 
@@ -14,8 +16,19 @@ PROFILE_ROOT = HERE.parent.parent / "profiles"
 
 
 @pytest.fixture
-def project(tmp_path: Path, ssh_key: Path) -> Path:
-    root = tmp_path / "acme"
+def project(ssh_key: Path) -> Path:
+    # Not `tmp_path`: the web container mounts PROJECT_DIR at this same
+    # absolute path (see conftest), and that mount is fixed when the stack
+    # comes up. Cleaned per test instead. Only the contents are removed, not
+    # the directory itself: a bind mount follows the directory's inode, so
+    # deleting and recreating it would leave the container looking at a
+    # stale, unlinked directory.
+    root = PROJECT_DIR
+    for entry in root.iterdir():
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
     (root / ".ddev").mkdir(parents=True)
     (root / ".ddev" / "config.yaml").write_text(
         "name: acme\ntype: typo3\ndocroot: public\n", encoding="utf-8"
@@ -33,10 +46,12 @@ def project(tmp_path: Path, ssh_key: Path) -> Path:
     )
     (root / ".env").write_text("TYPO3_DB_NAME=placeholder\n", encoding="utf-8")
     # `sanitize`'s `local-admin` rule (profiles/typo3.yaml) execs
-    # `vendor/bin/typo3 backend:createadmin ...` locally and treats anything
-    # but a zero exit (or an "already exists" message) as a hard failure. A
-    # stub that always succeeds is enough to prove the rule dispatches and
-    # runs the right argv; it is not the TYPO3 CLI's job to re-verify here.
+    # `vendor/bin/typo3 backend:createadmin ...` in the web container (the
+    # `ddev-acme-web` stand-in in docker-compose.yaml, which mounts this
+    # project at the same path) and treats anything but a zero exit (or an
+    # "already exists" message) as a hard failure. A stub that always
+    # succeeds is enough to prove the rule dispatches and runs the right
+    # argv; it is not the TYPO3 CLI's job to re-verify here.
     (root / "vendor" / "bin").mkdir(parents=True)
     stub = root / "vendor" / "bin" / "typo3"
     stub.write_text('#!/bin/sh\necho "stub typo3: $*"\nexit 0\n', encoding="utf-8")

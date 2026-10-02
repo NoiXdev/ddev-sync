@@ -74,3 +74,24 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+
+  # A stand-in for DDEV's web container: the place framework CLIs run
+  # (transport/container.py). Alpine is enough - the stubs the project
+  # fixture writes are `#!/bin/sh` scripts, and no real framework is
+  # installed here; verifying real framework commands is Plan 5's job.
+  #
+  # The project is mounted at the SAME absolute path it has on the host,
+  # because `web_command` passes a host path straight through as `docker
+  # exec -w`. In production that identity is free (both containers see
+  # /var/www/html); here it has to be arranged.
+  web:
+    image: alpine:3.21
+    container_name: ddev-acme-web
+    command: ["sleep", "infinity"]
+    volumes:
+      - ${DDEV_SYNC_PROJECT_DIR}:${DDEV_SYNC_PROJECT_DIR}
+    healthcheck:
+      test: ["CMD-SHELL", "test -d ${DDEV_SYNC_PROJECT_DIR}"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

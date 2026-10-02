@@ -1,11 +1,18 @@
 """Bring the integration stack up once per session."""
 
 import os
+import shutil
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+# The integration project lives at a fixed, fixture-owned path rather than in
+# `tmp_path`: the web container mounts it at this same absolute path, and a
+# bind mount has to be known when the stack comes up, not when a test runs.
+# Defined in `paths.py` so the test module and this file cannot disagree.
+from tests.integration.paths import PROJECT_DIR
 
 HERE = Path(__file__).parent
 COMPOSE = ["docker", "compose", "-f", str(HERE / "docker-compose.yaml")]
@@ -17,7 +24,13 @@ COMPOSE_NETWORK = "ddev-sync-integration_default"
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        argv,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "DDEV_SYNC_PROJECT_DIR": str(PROJECT_DIR)},
+    )
 
 
 _BREW_OPT_CANDIDATES = (
@@ -108,6 +121,7 @@ import subprocess
 import sys
 
 BASE_TEMP = {base_temp!r}
+PROJECT_DIR = {project_dir!r}
 NETWORK = {network!r}
 IMAGE = "mariadb:11"
 
@@ -117,6 +131,7 @@ def main() -> int:
         "docker", "run", "--rm",
         "--network", NETWORK,
         "-v", f"{{BASE_TEMP}}:{{BASE_TEMP}}",
+        "-v", f"{{PROJECT_DIR}}:{{PROJECT_DIR}}",
         "--entrypoint", {entrypoint!r},
         IMAGE,
         *sys.argv[1:],
@@ -149,9 +164,10 @@ def dockerized_mysql_clients(tmp_path_factory: pytest.TempPathFactory) -> Iterat
     full reasoning. Generating wrapper scripts that run the real client
     inside a throwaway container on that network, ahead of anything else on
     `PATH`, solves both gaps in one place, identically on macOS and Linux.
-    Every test here uses `tmp_path`, so bind-mounting the shared pytest base
-    temp directory at the same path covers `source <dump>` wherever it ends
-    up.
+    `source <dump>` reads the dump from inside the project, which lives at
+    `PROJECT_DIR`, so that directory is bind-mounted at its own path; the
+    shared pytest base temp directory is mounted the same way for anything
+    a test still keeps in `tmp_path`.
     """
     base_temp = tmp_path_factory.getbasetemp().resolve()
     bin_dir = HERE / ".keys" / "mysql-wrappers"
@@ -160,7 +176,10 @@ def dockerized_mysql_clients(tmp_path_factory: pytest.TempPathFactory) -> Iterat
         script = bin_dir / tool
         script.write_text(
             _MYSQL_WRAPPER_TEMPLATE.format(
-                base_temp=str(base_temp), network=COMPOSE_NETWORK, entrypoint=entrypoint
+                base_temp=str(base_temp),
+                project_dir=str(PROJECT_DIR),
+                network=COMPOSE_NETWORK,
+                entrypoint=entrypoint,
             ),
             encoding="utf-8",
         )
@@ -277,6 +296,7 @@ def stack(ssh_key: Path, remote_layout: Path) -> Iterator[None]:
     """
     if _run(["docker", "info"]).returncode != 0:
         pytest.skip("docker is not available")
+    PROJECT_DIR.mkdir(parents=True, exist_ok=True)
     up = _run([*COMPOSE, "up", "-d", "--wait"])
     if up.returncode != 0:
         pytest.fail(f"could not start the integration stack:\n{up.stderr}")
@@ -284,6 +304,7 @@ def stack(ssh_key: Path, remote_layout: Path) -> Iterator[None]:
         yield
     finally:
         _run([*COMPOSE, "down", "-v"])
+        shutil.rmtree(PROJECT_DIR, ignore_errors=True)
 
 
 @pytest.fixture(scope="session", autouse=True)
