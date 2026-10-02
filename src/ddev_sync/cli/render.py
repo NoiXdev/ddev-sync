@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import CollectedTarget
 from ddev_sync.engine.plan import Plan, PlannedStep
-from ddev_sync.operations.preflight import MIN_FREE_BYTES, PreflightReport
+from ddev_sync.operations.preflight import PreflightReport
 
 _KIND_WIDTH = 14
 _WHERE_WIDTH = 7
@@ -157,7 +157,7 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget) -> str:
         ("deploy path", report.remote_path_ok, target.path),
         (
             "disk space",
-            report.free_bytes >= MIN_FREE_BYTES,
+            report.free_space_ok,
             f"{report.free_bytes // 1024**3} GB free",
         ),
     ]

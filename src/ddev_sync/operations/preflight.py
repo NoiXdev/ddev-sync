@@ -54,6 +54,19 @@ class PreflightReport:
     sanitize_tables_ok: bool | None = None
     sanitize_tables_detail: str = ""
 
+    @property
+    def free_space_ok(self) -> bool:
+        """Whether `free_bytes` clears the threshold `execute` insists on.
+
+        A property on the report rather than the comparison written out at
+        each call site: `cli/render.py` renders the row, `cli/commands.py`
+        decides `doctor`'s exit code, and `execute` above aborts a sync -
+        three readings of one threshold, which is how the exit code came to
+        say "fine" about the very condition the row next to it said FAIL
+        about and a real sync refuses outright.
+        """
+        return self.free_bytes >= MIN_FREE_BYTES
+
 
 class PreflightOperation:
     """Verifies ssh access, the remote deploy path and local disk space."""

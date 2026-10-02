@@ -231,6 +231,30 @@ def test_doctor_exits_nonzero_when_the_sanitize_table_probe_fails(
     assert "sanitize tables" in output
 
 
+def test_doctor_exits_nonzero_when_only_the_disk_space_check_fails(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ssh and the deploy path are fine, but the project volume is below
+    # `MIN_FREE_BYTES` - which `PreflightOperation.execute` refuses outright,
+    # so a sync gated on this command's exit status would be allowed to start
+    # and then abort in preflight. The rendered row already says FAIL; the
+    # exit code has to agree with it.
+    from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
+
+    monkeypatch.setattr(
+        PreflightOperation,
+        "check",
+        lambda _self, _context: PreflightReport(True, True, 1024**3),
+    )
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
+    output = capsys.readouterr().out
+    assert "disk space" in output
+    assert "FAIL" in output
+
+
 def test_doctor_exits_zero_when_the_sanitize_table_probe_has_nothing_to_report(
     project: Path,
     tmp_path: Path,

@@ -52,12 +52,19 @@ def doctor_command(context: RunContext, echo: Callable[[str], None]) -> int:
     execution = _execution_context(context, assume_yes=True)
     report = PreflightOperation().check(execution)
     echo(render_doctor(report, context.target))
+    # Every check the rendered checklist can show as FAIL has to fail the
+    # command: low disk space is one `PreflightOperation.execute` refuses
+    # outright, so leaving it out let a script gated on this exit status
+    # start a sync that then aborted in preflight.
     # `sanitize_tables_ok is False` is the one condition that is checked (not
     # merely skipped) and failed - `None` means nothing to report (see
     # `PreflightReport`'s own docstring) and must not fail the command.
     return (
         0
-        if report.ssh_ok and report.remote_path_ok and report.sanitize_tables_ok is not False
+        if report.ssh_ok
+        and report.remote_path_ok
+        and report.free_space_ok
+        and report.sanitize_tables_ok is not False
         else 1
     )
 
