@@ -6,4 +6,6 @@
 .hypothesis
 .coverage
 tests/integration/.project
+tests/integration/.keys/
+tests/integration/fixtures/remote/
 **/__pycache__

@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1
 
 # The builder carries uv and the sources; the runtime carries neither. What
-# ships is an interpreter, the installed wheel and five binaries - no build
-# tools, no compiler, no uv.
+# ships is an interpreter, the installed wheel and the binaries the engine
+# invokes (from five packages) - no build tools, no compiler, no uv.
 FROM python:3.13-alpine@sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059 AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Digest-pinned like the base image, so the build does not move under us. This
+# was `latest` when the digest was resolved; bump it deliberately.
+COPY --from=ghcr.io/astral-sh/uv@sha256:f513a91fc62fe7c17567eee97230dd198e43edb8a9fbecca843714a4358fe1bc /uv /usr/local/bin/uv
 
 WORKDIR /src
 # `uv build` installs no dependencies, so the lock file is not needed here -
@@ -16,13 +18,20 @@ RUN uv build --wheel --out-dir /dist
 
 FROM python:3.13-alpine@sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059
 
-# The five binaries the engine shells out to, and nothing else:
+# The packages that provide every binary the engine runs locally, and nothing else:
 # - openssh-client-default  transport/ssh.py (ssh, scp, and the -J jump host).
 #                           `openssh-client` is only a virtual name this
 #                           package provides, so `apk policy` cannot resolve a
 #                           version for it; the real package is pinned instead.
 # - rsync           the files steps; the client side of an rsync-over-ssh pull
-# - mariadb-client  operations/database.py and the preflight table probe
+# - mariadb-client  `mysql` (the dump import in operations/database.py and the
+#                   SQL sanitize rules in operations/sanitize.py) and
+#                   `mysqladmin` (the drop/create in operations/database.py).
+#                   `mysqldump` and the preflight `SHOW TABLES` run on the
+#                   remote host through ssh, so they are not why this is here;
+#                   the package carries `mysqldump` anyway. Alpine's package
+#                   is free to drop the `mysql`/`mysqladmin` compatibility
+#                   names, which is why CI checks each one.
 # - rclone          operations/s3.py
 # - docker-cli      transport/container.py, for `docker exec` into the web
 #                   container; the sidecar deliberately has no PHP, because

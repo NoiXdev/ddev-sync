@@ -1,8 +1,9 @@
 name: CI
 
 on:
+  # Every branch, not just main: this repository merges fast-forward without
+  # pull requests, so a main-only push trigger would run only after the merge.
   push:
-    branches: [main]
   pull_request:
 
 permissions:
@@ -74,11 +75,14 @@ jobs:
 
       # One binary per `command -v`: busybox's builtin looks only at its first
       # argument and exits 0 on it, so a single multi-argument call would
-      # assert nothing about the other four.
-      - name: It carries every binary the engine shells out to
+      # assert nothing about the others. These are the binaries invoked inside
+      # the sidecar: `mysql` and `mysqladmin` for the import, drop/create and
+      # sanitize rules, `scp` and `ssh` for transport. `mysqldump` also runs on
+      # the remote host, but the image carries it for local use.
+      - name: It carries every binary the engine runs locally
         run: |
           docker run --rm --network none --entrypoint sh ddev-sync:ci -c \
-            'for b in ssh rsync mysqldump rclone docker; do
+            'for b in ssh scp rsync mysql mysqladmin mysqldump rclone docker; do
                command -v "$b" || { echo "MISSING: $b"; exit 1; }
              done'
 
