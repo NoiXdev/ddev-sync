@@ -27,6 +27,16 @@ on:
 permissions:
   contents: read
 
+# One matrix at a time per ref: a manual dispatch that overlaps the nightly run
+# would otherwise start twelve 20-minute cell jobs at once. A newer run queues
+# behind the running one instead of cancelling it, because a half-finished
+# matrix verifies nothing. The key is a literal prefix, not `github.workflow`,
+# which names the *caller* when this file runs as a reusable workflow and would
+# put the nightly run and a dispatch in different groups.
+concurrency:
+  group: verification-matrix-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   # The one place the image under test is named. Each cell is its own job on
   # its own runner, so a caller-supplied image has to be pullable; the default
@@ -106,7 +116,12 @@ jobs:
         if: ${{ inputs.image == '' }}
         uses: actions/upload-artifact@v7
         with:
-          name: matrix-image
+          # Per attempt: "Re-run failed jobs" re-runs `prepare` inside the same
+          # run, and upload-artifact refuses a name that already exists, so a
+          # fixed name would fail the re-run in `prepare` instead of in the
+          # cell that failed. `run_attempt` also keeps the cells of an attempt
+          # from loading the previous attempt's image.
+          name: matrix-image-${{ github.run_attempt }}
           path: matrix-image.tar
           retention-days: 1
           if-no-files-found: error
@@ -137,7 +152,7 @@ jobs:
         if: ${{ inputs.image == '' }}
         uses: actions/download-artifact@v8
         with:
-          name: matrix-image
+          name: matrix-image-${{ github.run_attempt }}
 
       - name: Load the image built by this run
         if: ${{ inputs.image == '' }}
