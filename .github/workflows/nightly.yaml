@@ -1,0 +1,20 @@
+name: Nightly verification
+
+on:
+  schedule:
+    # 03:17 UTC, deliberately off the hour: every workflow scheduled on the
+    # hour competes for the same runner pool.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    # An empty image makes the matrix build one from this ref, so this run and
+    # a release run share one definition of a cell and differ only in where
+    # the image comes from.
+    uses: ./.github/workflows/matrix.yaml
+    with:
+      image: ""

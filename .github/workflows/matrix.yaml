@@ -1,0 +1,181 @@
+name: Verification matrix
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: >-
+          The image to verify, as a reference every runner can pull. Empty
+          builds one from this ref.
+        type: string
+        default: ""
+      cells:
+        description: >-
+          Space-separated cell names to run. Empty runs every cell in
+          tests/matrix/cells.py.
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      cells:
+        description: >-
+          Space-separated cell names to run. Empty runs every cell in
+          tests/matrix/cells.py.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  # The one place the image under test is named. Each cell is its own job on
+  # its own runner, so a caller-supplied image has to be pullable; the default
+  # is the tag `prepare` builds and hands over as an artifact.
+  DDEV_SYNC_MATRIX_IMAGE: ${{ inputs.image || 'ddev-sync:matrix' }}
+
+jobs:
+  prepare:
+    # Two jobs of work, both once per run rather than once per cell: decide
+    # which cells exist, and - when no image was passed - build the single
+    # image every cell then verifies. Six separate builds would be six chances
+    # for a nightly run to verify something different from itself.
+    name: Plan the cells, build the image
+    runs-on: ubuntu-latest
+    outputs:
+      cells: ${{ steps.plan.outputs.cells }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      # The job matrix is read from the registry the tests parametrise over,
+      # so a cell added to `CELLS` is run here without touching this file. A
+      # name that is not in the registry fails the run instead of selecting
+      # nothing: a narrowed dispatch that silently verified zero cells would
+      # look green.
+      - name: Read the cells from the registry
+        id: plan
+        env:
+          REQUESTED: ${{ inputs.cells }}
+        run: |
+          uv run python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import sys
+
+          from tests.matrix.cells import CELLS
+
+          known = [cell.name for cell in CELLS]
+          requested = os.environ["REQUESTED"].replace(",", " ").split()
+          unknown = [name for name in requested if name not in known]
+          if unknown:
+              sys.exit(f"unknown cell(s) {unknown}; the registry has {known}")
+          chosen = [name for name in known if not requested or name in requested]
+          print(f"cells={json.dumps(chosen)}")
+          PY
+
+      - name: Set up Buildx
+        if: ${{ inputs.image == '' }}
+        uses: docker/setup-buildx-action@v4
+
+      # amd64 only, loaded into the runner's daemon, never pushed: this image
+      # exists to be verified, and publishing it is the release pipeline's job
+      # once the matrix is green.
+      - name: Build the image when none was passed
+        if: ${{ inputs.image == '' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ env.DDEV_SYNC_MATRIX_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Hand the built image to the cells
+        if: ${{ inputs.image == '' }}
+        run: docker save "$DDEV_SYNC_MATRIX_IMAGE" --output matrix-image.tar
+
+      - name: Upload the built image
+        if: ${{ inputs.image == '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: matrix-image
+          path: matrix-image.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  cell:
+    # One job per cell: `composer create-project` dominates the runtime, so
+    # the cells run in parallel, and a red cell names its variant in the job
+    # list instead of hiding inside a combined log.
+    name: ${{ matrix.cell }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.prepare.outputs.cells) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - name: Fetch the image built by this run
+        if: ${{ inputs.image == '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: matrix-image
+
+      - name: Load the image built by this run
+        if: ${{ inputs.image == '' }}
+        run: docker load --input matrix-image.tar
+
+      # Pulled up front so an image the runner cannot reach fails here, by
+      # name, instead of as a compose error deep inside the first test.
+      - name: Pull the image that was passed in
+        if: ${{ inputs.image != '' }}
+        run: docker pull "$DDEV_SYNC_MATRIX_IMAGE"
+
+      # `-k <cell>` installs only that cell: the stacks are lazy. The cell
+      # names are `mx` plus letters and digits on purpose, because `-k` parses
+      # its argument as an expression and a hyphen would select nothing.
+      # `--no-cov` because the coverage gate in addopts belongs to the unit
+      # suite: these tests drive the engine inside a container, so the host
+      # process measures nothing and would fail the 100 % threshold after
+      # every test had passed. A cell that selects nothing exits 5 and fails.
+      #
+      # The docker socket needs no arrangement here: the engine container is
+      # started with `--group-add` of the gid the socket has *inside a
+      # container* (tests/matrix/stack.py::_socket_group), which on a runner is
+      # the `docker` group the runner user already belongs to.
+      - name: Run the cell
+        env:
+          CELL: ${{ matrix.cell }}
+        run: uv run pytest -m matrix -k "$CELL" --no-cov -v
+
+      # A green cell is evidence for exactly one VERIFIED.md row. The row is
+      # emitted, not committed: a workflow writing that file would need push
+      # access to main and would break the fast-forward-only convention.
+      - name: Emit the VERIFIED.md row
+        if: success()
+        env:
+          CELL: ${{ matrix.cell }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          uv run python tools/apply_verified_rows.py --emit "$CELL" \
+            --image "$DDEV_SYNC_MATRIX_IMAGE" \
+            --run "$RUN_URL" \
+            >> "$GITHUB_STEP_SUMMARY"
