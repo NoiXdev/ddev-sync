@@ -150,7 +150,9 @@ _ADMIN_DRIVERS: dict[str, list[str]] = {
 # - "is already registered": wp-cli's `user create`, verified against
 #   wp-cli/entity-command's `src/User_Command.php::create()` (default branch
 #   `main`, checked 2026-10-01) - `username_exists()` fails with exactly
-#   "The '<login>' username is already registered."
+#   "The '<login>' username is already registered." Observed against wp-cli
+#   2.12.0 on WordPress 7.1.2: a second `wp user create ddev ...` exits 1 and
+#   prints `Error: The 'ddev' username is already registered.` on stderr.
 # - "already a user account": drush's `user:create`, verified against
 #   drush-ops/drush's `src/Commands/user/UserCreateCommand.php::doExecute()`
 #   (default branch `14.x` - drush has no `main`; checked 2026-10-01) -
