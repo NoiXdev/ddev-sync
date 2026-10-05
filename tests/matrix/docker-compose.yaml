@@ -1,0 +1,90 @@
+# One stack, parameterised per cell by the environment. The service names are
+# DDEV's, because that is what the engine addresses: `ddev-<cell>-web` by
+# container name (docker exec takes a name, not an alias) and `ddev-<cell>-db`
+# by network alias (the engine passes `--host=ddev-<cell>-db` to the client).
+#
+# `${MATRIX_PROJECT_DIR}` is mounted at its own absolute path, because
+# `transport/container.py::web_command` passes a host path straight through
+# as `docker exec -w`. In production that identity is free - DDEV mounts the
+# project at /var/www/html in every container - and here it is arranged.
+name: ddev-sync-matrix-${MATRIX_CELL}
+
+services:
+  web:
+    # Built rather than pulled: a bare `php:*-cli` has no composer, no PDO
+    # MySQL driver and no git, so neither the installers nor the profile's own
+    # setup commands could run in it. See web/Dockerfile.
+    build:
+      context: ./web
+      args:
+        PHP_IMAGE: ${MATRIX_PHP_IMAGE}
+    image: ddev-sync-matrix-${MATRIX_CELL}-web
+    container_name: ddev-${MATRIX_CELL}-web
+    command: ["sleep", "infinity"]
+    user: "${MATRIX_UID}:${MATRIX_GID}"
+    working_dir: ${MATRIX_PROJECT_DIR}
+    environment:
+      # composer, wp-cli and drush all write caches under $HOME; without a
+      # writable one they fail in ways that read like network errors.
+      - HOME=/tmp
+    volumes:
+      - ${MATRIX_PROJECT_DIR}:${MATRIX_PROJECT_DIR}
+    healthcheck:
+      test: ["CMD-SHELL", "php -v > /dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  local-db:
+    image: mariadb:11
+    environment:
+      - MARIADB_ROOT_PASSWORD=root
+      - MARIADB_DATABASE=db
+      - MARIADB_USER=db
+      - MARIADB_PASSWORD=db
+    networks:
+      default:
+        aliases:
+          - ddev-${MATRIX_CELL}-db
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  remote-db:
+    image: mariadb:11
+    environment:
+      - MARIADB_ROOT_PASSWORD=root
+      - MARIADB_DATABASE=acme_prod
+      - MARIADB_USER=acme
+      - MARIADB_PASSWORD=s3cret
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  remote:
+    image: linuxserver/openssh-server:latest
+    environment:
+      - PUBLIC_KEY_FILE=/keys/id_ed25519.pub
+      - USER_NAME=deploy
+      - SUDO_ACCESS=false
+      - PASSWORD_ACCESS=false
+      # The remote needs a mysql client for the dump and rsync for the files
+      # step; `universal-package-install` is the generic mod that installs an
+      # arbitrary package list at startup.
+      - DOCKER_MODS=linuxserver/mods:universal-package-install
+      - INSTALL_PACKAGES=mariadb-client|rsync
+    volumes:
+      - ${MATRIX_KEYS_DIR}:/keys:ro
+      - ${MATRIX_REMOTE_DIR}:/srv/app
+    healthcheck:
+      # Checking the installed client, not just the port: the mod finishes
+      # well after sshd starts listening, and a dump that races it fails with
+      # "mysqldump: not found".
+      test: ["CMD-SHELL", "test -s /config/.ssh/authorized_keys && command -v mysqldump && command -v rsync && nc -z localhost 2222"]
+      interval: 3s
+      timeout: 5s
+      retries: 60

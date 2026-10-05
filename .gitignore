@@ -10,3 +10,6 @@ dist/
 tests/integration/.keys/
 tests/integration/fixtures/remote/
 tests/integration/.project/
+
+tests/matrix/.work/
+tests/matrix/.keys/
