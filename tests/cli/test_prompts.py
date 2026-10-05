@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 import questionary
 
@@ -77,6 +79,7 @@ def test_select_asks_questionary_and_returns_the_answer(monkeypatch: pytest.Monk
         seen["choices"] = choices
         return _FakeQuestion("b")
 
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(questionary, "select", fake_select)
     assert prompts._select("pick one", ["a", "b"]) == "b"
     assert seen == {"question": "pick one", "choices": ["a", "b"]}
@@ -92,9 +95,30 @@ def test_checkbox_asks_questionary_with_checked_defaults(
         seen["choices"] = choices
         return _FakeQuestion(["a"])
 
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(questionary, "checkbox", fake_checkbox)
     assert prompts._checkbox("pick some", ["a", "b"], ["a"]) == ["a"]
     choices = seen["choices"]
     assert isinstance(choices, list)
     assert [choice.title for choice in choices] == ["a", "b"]
     assert [choice.checked for choice in choices] == [True, False]
+
+
+def test_no_prompt_is_attempted_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A prompt with nowhere to read from blocks forever; return instead.
+
+    This is the same case `operations/base.py::confirm` catches as `EOFError`:
+    a script, a cron job, CI. questionary does not raise there - it waits on a
+    terminal that will never answer, so the run hung with no output at all,
+    which is the worst way for a tool to fail.
+    """
+
+    def explode(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("questionary must not be reached without a terminal")
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(questionary, "select", explode)
+    monkeypatch.setattr(questionary, "checkbox", explode)
+
+    assert prompts._select("pick one", ["a", "b"]) is None
+    assert prompts._checkbox("tick some", ["a", "b"], ["a"]) is None

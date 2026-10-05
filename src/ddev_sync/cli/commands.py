@@ -117,7 +117,10 @@ def resolve_selection(steps: str | None, assume_yes: bool) -> list[str]:
         return sorted(SELECTION_GROUPS)
     chosen = choose_steps(sorted(SELECTION_GROUPS))
     if chosen is None:
-        raise DdevSyncError("no steps selected")
+        raise DdevSyncError(
+            "no steps selected. Without a terminal there is nothing to ask, so pass "
+            f"--steps ({','.join(sorted(SELECTION_GROUPS))}) or --yes for all of them."
+        )
     return chosen
 
 
@@ -131,7 +134,10 @@ def resolve_target_name(explicit: str | None, project_root: Path, home: Path) ->
         raise TargetError("no sync targets are defined; run 'ddev sync init' to create one")
     chosen = choose_target(names, described)
     if chosen is None:
-        raise DdevSyncError("no target selected")
+        raise DdevSyncError(
+            "no target selected. Without a terminal there is nothing to ask, so pass "
+            "--target; `ddev-sync targets` lists the ones this project knows."
+        )
     return chosen
 
 
