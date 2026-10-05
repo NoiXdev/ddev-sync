@@ -53,6 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       cells: ${{ steps.plan.outputs.cells }}
+      image_artifact: ${{ steps.artifact.outputs.name }}
     steps:
       - uses: actions/checkout@v7
 
@@ -112,16 +113,23 @@ jobs:
         if: ${{ inputs.image == '' }}
         run: docker save "$DDEV_SYNC_MATRIX_IMAGE" --output matrix-image.tar
 
+      # The name is decided once, here, and handed to the cells as a job
+      # output - not recomputed from `github.run_attempt` in each cell. "Re-run
+      # failed jobs" does not re-run a job that succeeded, so a green `prepare`
+      # keeps its attempt-1 output (and its attempt-1 artifact) while the
+      # re-run cell jobs see `run_attempt` 2; a name recomputed there would
+      # ask for an artifact that does not exist. "Re-run all jobs" re-runs
+      # `prepare`, and the per-attempt name is what stops upload-artifact
+      # refusing the name the first attempt already took.
+      - name: Name the image artifact
+        id: artifact
+        run: echo "name=matrix-image-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
       - name: Upload the built image
         if: ${{ inputs.image == '' }}
         uses: actions/upload-artifact@v7
         with:
-          # Per attempt: "Re-run failed jobs" re-runs `prepare` inside the same
-          # run, and upload-artifact refuses a name that already exists, so a
-          # fixed name would fail the re-run in `prepare` instead of in the
-          # cell that failed. `run_attempt` also keeps the cells of an attempt
-          # from loading the previous attempt's image.
-          name: matrix-image-${{ github.run_attempt }}
+          name: ${{ steps.artifact.outputs.name }}
           path: matrix-image.tar
           retention-days: 1
           if-no-files-found: error
@@ -152,7 +160,7 @@ jobs:
         if: ${{ inputs.image == '' }}
         uses: actions/download-artifact@v8
         with:
-          name: matrix-image-${{ github.run_attempt }}
+          name: ${{ needs.prepare.outputs.image_artifact }}
 
       - name: Load the image built by this run
         if: ${{ inputs.image == '' }}
