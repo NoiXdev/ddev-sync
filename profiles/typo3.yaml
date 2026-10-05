@@ -8,9 +8,26 @@ detect:
   version_from:
     composer_package: typo3/cms-core
 
+# `strategy: none`, because a composer-installed TYPO3 has no `.env` file: a
+# stock `typo3/cms-base-distribution` 13.4.35 ships none and its installer
+# writes `config/system/settings.php`. DDEV's TYPO3 integration generates
+# `config/system/additional.php` with the local database credentials itself
+# (DDEV's documented behaviour, not exercised by the matrix), so those do not
+# depend on this step. With `patch_keys` the step raised "no environment file found" right
+# after the production database had been imported, and the executor skips
+# every later step once one fails - so the sync stopped *before* sanitize,
+# leaving real addresses and password hashes in the local database. Verified
+# against a real 13.4.35 install by the matrix cell `mxtypo313`.
+#
+# The `set:` block below is kept as the record of what to patch. A project that
+# uses `helhum/dotenv-connector` (the `TYPO3_*` convention this profile's keys
+# follow) does have a `.env` and can opt back in with `env.strategy:
+# patch_keys` in its own `.ddev/ddev-sync.yaml`. The engine itself still fails
+# on a missing env file under `patch_keys`: for Laravel and Symfony a missing
+# `.env` is a genuine misconfiguration.
 env:
   file: [.env.local, .env]
-  strategy: patch_keys
+  strategy: none
   set:
     TYPO3_DB_HOST: "ddev-${DDEV_SITENAME}-db"
     TYPO3_DB_USER: db
@@ -111,6 +128,13 @@ sanitize:
       table: be_users
       column: password
       value: "$argon2i$disabled"
+    # `driver: typo3` runs core's `vendor/bin/typo3 backend:user:create
+    # --username=... --password=... --admin` (checked with `--help` against
+    # 12.4.45 and 13.4.35). It is not typo3_console's `backend:createadmin`,
+    # which a stock install does not have. typo3@9 and typo3@10 override this
+    # with `driver: console`. Core's command does not exist in 11.5.41 (its
+    # `typo3 list` has only backend:lock, resetpassword and unlock), so
+    # typo3@11, which inherits this rule, is not covered by this verification.
     - name: local-admin
       operation: create_admin
       driver: typo3
@@ -122,6 +146,19 @@ sanitize:
 setup:
   commands:
     - run: "composer install --no-interaction"
-    - run: "vendor/bin/typo3 database:updateschema"
-      allow_failure: true
+    # `extension:setup` is the core command that brings the database schema in
+    # line with the installed code. The previous `database:updateschema` is
+    # helhum/typo3-console's: a stock TYPO3 13.4.35 has no `database`
+    # namespace at all, and because the step was `allow_failure` the engine
+    # printed it as OK while doing nothing. Verified against a real install by
+    # dropping `tt_content.header_link` and running it: the column came back,
+    # and so did a changed column length, while a stray extra column and an
+    # extra table were left alone - it adds and alters, it does not drop.
+    # Per its own `--help` it also does "static data import, distribution files
+    # import etc." and is meant to be run after extensions change via
+    # Composer; run twice in a row it exits 0 both times. No other command in
+    # a stock 13.4.35 `typo3 list` does only the schema update. It exists in
+    # 11.5.41 and 12.4.45 as well. `allow_failure` is gone: a failing schema step should
+    # stop the sync, and a wrong spelling must not be able to hide again.
+    - run: "vendor/bin/typo3 extension:setup"
     - run: "vendor/bin/typo3 cache:flush"

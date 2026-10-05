@@ -84,3 +84,27 @@ def test_the_no_variant_version_deltas_still_prevent_a_wrong_nearest_lower_match
     assert resolved.label == "typo3@13"
     commands = [entry["run"] for entry in resolved.data["setup"]["commands"]]
     assert not any("typo3cms" in command for command in commands)
+
+
+@pytest.mark.parametrize("major", ["11", "12", "13"])
+def test_the_modern_era_updates_the_schema_with_a_core_command(
+    registry: ProfileRegistry, major: str
+) -> None:
+    # `database:updateschema` is helhum/typo3-console's: a stock install has no
+    # `database` namespace, and as an `allow_failure` step the engine printed
+    # the missing command as OK. `extension:setup` is core's, and is not
+    # allowed to fail silently.
+    resolved = registry.resolve("typo3", major)
+    entries = {entry["run"]: entry for entry in resolved.data["setup"]["commands"]}
+    assert "vendor/bin/typo3 database:updateschema" not in entries
+    assert "allow_failure" not in entries["vendor/bin/typo3 extension:setup"]
+
+
+def test_the_env_step_is_off_but_keeps_what_it_would_patch(registry: ProfileRegistry) -> None:
+    # A composer-installed TYPO3 has no `.env`, and `patch_keys` raises when it
+    # finds none - after the production import and before sanitize. The keys
+    # stay in the profile as the record of what a `helhum/dotenv-connector`
+    # project would opt back in to.
+    env = registry.resolve("typo3", "13").data["env"]
+    assert env["strategy"] == "none"
+    assert env["set"]["TYPO3_DB_HOST"] == "ddev-${DDEV_SITENAME}-db"
