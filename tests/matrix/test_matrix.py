@@ -187,12 +187,12 @@ def test_artisan_migrate_applied_the_pending_migration(stack: Stack, cell: Cell)
 def test_the_typo3_schema_step_restored_the_missing_column(stack: Stack, cell: Cell) -> None:
     # The claim: the profile's `vendor/bin/typo3 extension:setup` really brings
     # the imported schema in line with the code. The install drops
-    # `tt_content.header_link` (see cells/mxtypo313/install.sh), the remote dump
-    # therefore lacks it, and the column exists after the sync only if the
-    # step re-added it. The step used to be `database:updateschema` under
-    # `allow_failure`, which the engine printed as OK while doing nothing: the
-    # effect is what would have shown that, so it stays asserted.
-    if cell.profile != "typo3@13":
+    # `tt_content.header_link` (see the install.sh of each TYPO3 cell), the
+    # remote dump therefore lacks it, and the column exists after the sync
+    # only if the step re-added it. The step used to be `database:updateschema`
+    # under `allow_failure`, which the engine printed as OK while doing
+    # nothing: the effect is what would have shown that, so it stays asserted.
+    if cell.project_type != "typo3":
         pytest.skip("extension:setup is TYPO3's")
     assert stack.sql("SHOW COLUMNS FROM tt_content LIKE 'header_link'").startswith("header_link"), (
         "the missing column was not restored: the schema step did not take effect"

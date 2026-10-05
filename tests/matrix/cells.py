@@ -104,4 +104,18 @@ CELLS: tuple[Cell, ...] = (
         identity_column="username",
         seeded_users=("editor.hofer", "editor.kalb"),
     ),
+    Cell(
+        name="mxtypo312",
+        profile="typo3@12",
+        project_type="typo3",
+        docroot="public",
+        php_image="php:8.2-cli",
+        required_tables=("be_sessions", "sys_log", "be_users"),
+        admin_user="ddev",
+        password_column=("be_users", "password"),
+        production_url=None,
+        truncated_tables=("be_sessions", "sys_log", "fe_sessions"),
+        identity_column="username",
+        seeded_users=("editor.hofer", "editor.kalb"),
+    ),
 )
