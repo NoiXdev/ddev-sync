@@ -30,6 +30,16 @@ class Cell:
     profile has no such rule - which is itself part of what the cell states.
     """
 
+    # `mx` + letters and digits only, for three independent reasons:
+    # - `name` becomes the DDEV project name in `.ddev/config.yaml`, from which
+    #   the engine derives `ddev-<name>-web`; a plain `laravel` would claim
+    #   the container name of a developer's real project, and the engine's
+    #   `docker exec` could then run `composer`/`artisan` in *their* project.
+    #   The prefix keeps the cell out of that namespace.
+    # - no hyphen: `pytest -k typo3-13` selects nothing, because `-k` parses
+    #   its argument as an expression and the hyphen is not a substring match.
+    # - no underscore: the name ends up in the network alias `ddev-<name>-db`,
+    #   which the engine passes to the mysql client as a hostname.
     name: str
     profile: str
     project_type: str
@@ -46,7 +56,7 @@ class Cell:
 # a failure names the variant directly.
 CELLS: tuple[Cell, ...] = (
     Cell(
-        name="laravel",
+        name="mxlaravel",
         profile="laravel",
         project_type="laravel",
         docroot="public",

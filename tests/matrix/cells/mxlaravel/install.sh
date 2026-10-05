@@ -6,9 +6,9 @@ composer create-project --no-interaction --prefer-dist laravel/laravel .
 
 cat > .env <<'ENV'
 APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-APP_URL=https://laravel.ddev.site
+APP_URL=https://mxlaravel.ddev.site
 DB_CONNECTION=mysql
-DB_HOST=ddev-laravel-db
+DB_HOST=ddev-mxlaravel-db
 DB_PORT=3306
 DB_DATABASE=db
 DB_USERNAME=db

@@ -141,7 +141,7 @@ def test_storage_link_created_the_public_symlink(stack: Stack, cell: Cell) -> No
 def test_artisan_migrate_applied_the_pending_migration(stack: Stack, cell: Cell) -> None:
     # The claim: the profile's `php artisan migrate --force` runs against the
     # real project and applies what production lacks. The install leaves one
-    # migration unapplied (see cells/laravel/install.sh) and the remote dump
+    # migration unapplied (see cells/mxlaravel/install.sh) and the remote dump
     # does not contain its table, so after the sync the table exists only if
     # migrate ran. The profile allows that command to fail, so neither the
     # sync's exit status nor `migrate:status` alone could say.
