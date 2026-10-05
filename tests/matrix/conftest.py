@@ -114,11 +114,17 @@ def _seed(stack: Stack, cell: Cell) -> None:
     only that the guess matches itself.
 
     A cell may also list, in `keep-data.txt`, tables whose **rows** are
-    framework state rather than content (Laravel's `migrations`). A real
-    production database carries them, and without them the setup step's
-    migrate command would run against a schema it believes is empty and
-    fail - a failure `allow_failure` then hides, which is how a harness
-    deviating from production could make the profile look verified.
+    framework state rather than content: Laravel's `migrations`, Symfony's
+    `doctrine_migration_versions`, Drupal's `config` and `key_value`,
+    WordPress's `mxwp_options`. A real production database carries them, and
+    without them the setup step's migrate command would run against a schema
+    it believes is empty and fail - a failure `allow_failure` then hides,
+    which is how a harness deviating from production could make the profile
+    look verified. Some are also load-bearing for a test's own premise:
+    Drupal's `key_value` holds the recorded schema version that
+    `test_drush_updatedb_applied_the_pending_update` needs to be 10000, and
+    WordPress's `mxwp_options` holds the production URL that
+    `test_the_production_url_is_gone` asserts is rewritten.
     """
     parts = [_dump(stack, cell, "--no-data", "db")]
     keep = cell_dir(cell.name) / "keep-data.txt"

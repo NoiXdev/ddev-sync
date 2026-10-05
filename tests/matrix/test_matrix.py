@@ -24,6 +24,10 @@ PRODUCTION_ADDRESS = re.compile(r"@acme-production\.example")
 # The local parts of the seeded addresses. A rule that rewrote only the domain
 # (`alice.hofer@example.invalid`) still leaks who the customer is.
 PRODUCTION_NAMES = re.compile(r"alice\.hofer|bruno\.kalb")
+# The first line of a printed plan, `  Plan for target 'production'        typo3@12`
+# (`cli/render.py::render_header`): the label of the profile variant the engine
+# resolved, which is what `Cell.profile` is the VERIFIED.md row key for.
+PROFILE_HEADER = re.compile(r"^\s*Plan for target '[^']*'\s+(?P<label>\S+)\s*$", re.MULTILINE)
 
 
 @pytest.fixture(params=CELLS, ids=lambda cell: cell.name)
@@ -31,6 +35,16 @@ def cell(request: pytest.FixtureRequest) -> Cell:
     """The variant under test."""
     parameter: Cell = request.param
     return parameter
+
+
+def _admin_rows(stack: Stack, cell: Cell) -> str:
+    """How many rows of the users table carry the cell's local admin."""
+    assert cell.admin_user is not None
+    assert cell.password_column is not None and cell.identity_column is not None
+    table, _column = cell.password_column
+    return stack.sql(
+        f"SELECT COUNT(*) FROM `{table}` WHERE `{cell.identity_column}` = '{cell.admin_user}'"
+    )
 
 
 def test_the_required_tables_exist_where_preflight_looks(stack: Stack, cell: Cell) -> None:
@@ -54,8 +68,34 @@ def test_a_whole_sync_succeeds(stack: Stack, cell: Cell) -> None:
     # The headline claim: every command this profile declares exists and
     # exits 0 against a real installation - the setup commands included,
     # which run in the web container via `docker exec`.
-    result = stack.engine("--target", "production", "--steps", "db,files,sanitize,setup", "--yes")
+    steps = "db,files,sanitize,setup"
+    result = stack.engine("--target", "production", "--steps", steps, "--yes")
     assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+    # Which profile variant ran is part of the claim: `Cell.profile` keys the
+    # VERIFIED.md row, and every other assertion would still pass if detection
+    # fell back to a neighbouring variant (`typo3@12` has no overrides, so it
+    # resolves to the same commands as `typo3` or `typo3@13`) - and the row
+    # would then certify a variant that was never the one resolved. Only a
+    # dry run prints the label (`render_header`; a real run starts at the first
+    # step), and it resolves the profile exactly as the run above did.
+    plan = stack.engine("--target", "production", "--steps", steps, "--dry-run")
+    assert plan.returncode == 0, f"stdout:\n{plan.stdout}\n\nstderr:\n{plan.stderr}"
+    header = PROFILE_HEADER.search(plan.stdout)
+    resolved = header.group("label") if header else None
+    assert resolved == cell.profile, (
+        f"{cell.name} resolved the profile {resolved!r} but is registered as "
+        f"{cell.profile!r}: a green cell would certify the wrong VERIFIED.md row\n{plan.stdout}"
+    )
+    if cell.admin_user is not None:
+        # The create path, attributable to this run: the `db` step above
+        # replaced the database with production's, which seeds no such account,
+        # so the row exists only if `create_admin` really created it. The
+        # output names the user whether the account was created or merely found
+        # to exist, which is why the row, not the output, is read.
+        assert _admin_rows(stack, cell) == "1", (
+            f"{cell.admin_user!r} is not exactly one row after the whole sync: "
+            "the CLI did not create it"
+        )
 
 
 def test_the_files_step_pulled_the_remote_tree(stack: Stack, cell: Cell) -> None:
@@ -113,29 +153,30 @@ def test_every_seeded_password_was_reset_to_the_profiles_value(stack: Stack, cel
     assert "disabled" in hashes[0], f"the reset value is not the profile's: {hashes[0]!r}"
 
 
-def test_the_local_admin_was_created(stack: Stack, cell: Cell) -> None:
+def test_an_existing_local_admin_is_tolerated(stack: Stack, cell: Cell) -> None:
     if cell.admin_user is None:
         pytest.skip(f"{cell.profile} declares no create_admin rule")
-    # What this settles: the driver's argv is the real CLI's. A wrong
-    # subcommand name fails here and nowhere else in the suite.
-    result = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
-    assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
-    assert cell.admin_user in result.stdout
-    # A second run finds the account already there. The engine tolerates that
-    # only by recognising the real CLI's refusal message, which is observed
-    # here rather than assumed: a marker that does not match what the CLI
-    # prints would fail every second sync of a developer's project.
+    # What this settles, and no more: the duplicate-tolerance path. By file
+    # order the whole sync has already created the account, so both runs below
+    # find it there and neither exercises the create path - which is why
+    # nothing here may be read as evidence that the CLI created it.
+    # `test_a_whole_sync_succeeds` carries that claim: its `db` step replaces
+    # the database with production's, which holds no such account, so the row
+    # it asserts can only be that run's own. A wrong subcommand name fails
+    # there.
+    first = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
+    assert first.returncode == 0, f"stdout:\n{first.stdout}\n\nstderr:\n{first.stderr}"
+    assert cell.admin_user in first.stdout
+    # The engine tolerates a duplicate only by recognising the real CLI's
+    # refusal message, which is observed here rather than assumed: a marker that
+    # does not match what the CLI prints would fail every repeated sync of a
+    # developer's project.
     again = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
     assert again.returncode == 0, f"stdout:\n{again.stdout}\n\nstderr:\n{again.stderr}"
     assert "already exists" in again.stdout, again.stdout
-    # The output names the user whether the account was created or merely found
-    # to exist, so the row itself is what shows the CLI really created it.
-    assert cell.password_column is not None and cell.identity_column is not None
-    table, _column = cell.password_column
-    count = stack.sql(
-        f"SELECT COUNT(*) FROM `{table}` WHERE `{cell.identity_column}` = '{cell.admin_user}'"
+    assert _admin_rows(stack, cell) == "1", (
+        f"{cell.admin_user!r} is not exactly one row after repeated syncs"
     )
-    assert count == "1", f"{cell.admin_user!r} is not exactly one row of {table}: {count}"
 
 
 def test_every_truncate_rule_emptied_its_table(stack: Stack, cell: Cell) -> None:
@@ -233,7 +274,12 @@ def test_doctrine_migrate_applied_the_pending_migration(stack: Stack, cell: Cell
     # misspelling, not an abbreviation, makes this fail.
     if cell.profile != "symfony":
         pytest.skip("doctrine migrations are Symfony's")
-    assert stack.remote_sql("SHOW TABLES LIKE 'matrix_marker'").stdout.strip() == "", (
+    # The returncode first: an empty stdout from a failed query would satisfy
+    # the check below vacuously, and Symfony has no second remote query whose
+    # failure would show it.
+    absent = stack.remote_sql("SHOW TABLES LIKE 'matrix_marker'")
+    assert absent.returncode == 0, absent.stderr
+    assert absent.stdout.strip() == "", (
         "the remote already has the marker table: the seed carried the migration in"
     )
     assert stack.sql("SHOW TABLES LIKE 'matrix_marker'") == "matrix_marker", (
@@ -447,7 +493,7 @@ def test_the_flush_cache_rule_removed_the_planted_cache_row(stack: Stack, cell: 
     # remove it.
     marker = cell.flush_marker
     if marker is None:
-        pytest.skip(f"{cell.profile} has no observable flush_cache effect in the database")
+        pytest.skip(f"{cell.profile} declares no flush_cache rule")
     count = f"SELECT COUNT(*) FROM `{marker.table}` WHERE {marker.where}"
     stack.sql(marker.insert)
     assert stack.sql(count) == "1", "the cache row was not planted"
@@ -489,7 +535,11 @@ def test_the_drupal_admin_holds_the_administrator_role(stack: Stack, cell: Cell)
     )
     first = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
     assert first.returncode == 0, f"stdout:\n{first.stdout}\n\nstderr:\n{first.stderr}"
-    assert stack.sql(roles) == "administrator", "the account was created without the role"
+    # By file order the whole sync has already created the account, so this
+    # run finds it there: what it shows is that the role is in place after a
+    # sync, not that a *newly created* account gets it. The role being
+    # re-applied on the duplicate path is what the removal below isolates.
+    assert stack.sql(roles) == "administrator", "the account does not hold the role after a sync"
     # The path every later sync takes: the account exists, `user:create` is
     # refused, and the role must still be (re)applied. Taking it away first, by
     # drush rather than SQL so Drupal's entity caches agree, is what makes the
