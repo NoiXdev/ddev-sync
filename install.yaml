@@ -7,44 +7,32 @@ ddev_version_constraint: ">= v1.24.0"
 project_files:
   - ddev-sync/ddev-sync.example.yaml
   - docker-compose.ddev-sync.yaml
+  - config.ddev-sync.yaml
+  - ddev-sync/prepare-sidecar.sh
 
-pre_install_actions:
+# The per-machine facts (the docker socket's group and a passwd entry for the
+# developer's uid) are not discovered here but by the pre-start hook in
+# config.ddev-sync.yaml: .ddev/ is shared between machines, an install is not.
+removal_actions:
   - |
-    #ddev-description:Discover the group that owns the docker socket
-    # The sidecar needs this gid to reach the web container, where framework
-    # commands run. It differs between hosts, so it is looked up here and
-    # handed to the compose file through .ddev/.env.
-    #
-    # It is read from inside a container, not from the host: what matters is
-    # the group the socket has where the sidecar will see it. On a typical
-    # Linux that is the host's `docker` group, but under Docker Desktop the
-    # host path is a symlink whose own group (daemon) means nothing - the
-    # daemon runs in a VM where the same socket belongs to root, gid 0, and
-    # only that gid grants access. A host-side `stat` was verified to answer
-    # 1 there, which fails with a permission error that reads like a bug in
-    # the tool. ddev/ddev-utilities is the image DDEV itself already uses for
-    # one-off commands, so it is normally present.
-    gid="$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-      ddev/ddev-utilities stat -c '%g' /var/run/docker.sock 2>/dev/null)"
-    case "${gid}" in
-      ''|*[!0-9]*)
-        echo "Could not read the group of /var/run/docker.sock - is Docker running?" >&2
-        exit 1
-        ;;
-    esac
-    # Replace rather than append, so installing again does not pile up lines.
-    # Through a temporary file, so a failure cannot truncate the project's
-    # existing .ddev/.env.
+    #ddev-description:Remove the values the pre-start hook generated
+    # `removal_actions` run before DDEV deletes the files above, so the hook
+    # is still in place here, but nothing will run it again. The passwd file is
+    # not in `project_files` (it is generated), so it is removed here, and the
+    # gid line goes out of the project's own .ddev/.env. The edit goes through
+    # `cat >` to keep that file's mode and any symlink in its place.
+    rm -f "${DDEV_APPROOT}/.ddev/ddev-sync/passwd"
     env_file="${DDEV_APPROOT}/.ddev/.env"
-    tmp="$(mktemp "${env_file}.XXXXXX")" || exit 1
-    if { [ ! -f "${env_file}" ] || grep -v '^DDEV_SYNC_DOCKER_GID=' "${env_file}" || [ $? -eq 1 ]; } > "${tmp}" \
-      && echo "DDEV_SYNC_DOCKER_GID=${gid}" >> "${tmp}" \
-      && mv "${tmp}" "${env_file}"; then
-      echo "Docker socket group is ${gid}."
-    else
-      rm -f "${tmp}"
-      echo "Could not write DDEV_SYNC_DOCKER_GID to .ddev/.env" >&2
-      exit 1
+    if [ -f "${env_file}" ]; then
+      tmp="$(mktemp "${env_file}.XXXXXX")" || exit 1
+      if { grep -v '^DDEV_SYNC_DOCKER_GID=' "${env_file}" || [ $? -eq 1 ]; } > "${tmp}" \
+        && cat "${tmp}" > "${env_file}"; then
+        rm -f "${tmp}"
+      else
+        rm -f "${tmp}"
+        echo "Could not remove DDEV_SYNC_DOCKER_GID from .ddev/.env" >&2
+        exit 1
+      fi
     fi
 
 post_install_actions:
