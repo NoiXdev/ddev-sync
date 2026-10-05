@@ -1,9 +1,7 @@
 name: ddev-sync
 
-# The sidecar mounts the docker socket and uses `ddev auth ssh`'s forwarded
-# agent, both of which were verified against DDEV v1.25.4 (base design §12).
-# An older DDEV may name the agent's socket differently, which would fail at
-# the first dump rather than at install time - so the floor is explicit.
+# The floor is the oldest DDEV this add-on is meant to run on; it is only
+# checked at install time.
 ddev_version_constraint: ">= v1.24.0"
 
 project_files:
@@ -12,14 +10,29 @@ project_files:
 post_install_actions:
   - |
     #ddev-description:Copy the configuration template into place
-    # Only when the project has no configuration yet: this file belongs to
-    # the project, so an existing one is never overwritten. DDEV does not add
-    # the generated-file marker itself - the template carries it - so the copy
-    # drops that line again: a file holding the marker would be treated as ours
-    # and deleted by `ddev add-on remove`.
-    if [ ! -f "${DDEV_APPROOT}/.ddev/ddev-sync.yaml" ]; then
-      sed '1{/^#ddev-generated$/d;}' \
-        "${DDEV_APPROOT}/.ddev/ddev-sync/ddev-sync.example.yaml" \
-        > "${DDEV_APPROOT}/.ddev/ddev-sync.yaml"
-      echo "Wrote .ddev/ddev-sync.yaml - edit it, then run 'ddev sync doctor'."
+    # Only when the project has no configuration yet: .ddev/ddev-sync.yaml
+    # belongs to the project, so an existing one is never overwritten.
+    #
+    # Two things keep it safe from `ddev add-on remove`: it is not listed in
+    # `project_files` (DDEV only deletes listed paths), and it carries no
+    # generated-file marker (DDEV only deletes files that contain one). DDEV
+    # does not add that marker itself, so the template carries it and the copy
+    # drops it again, together with the template's own header up to the first
+    # blank line.
+    #
+    # The copy goes through a temporary file: a failed sed must not leave a
+    # partial .ddev/ddev-sync.yaml behind, because the existence check above
+    # would then stop every later install from repairing it.
+    target="${DDEV_APPROOT}/.ddev/ddev-sync.yaml"
+    if [ ! -f "${target}" ]; then
+      tmp="$(mktemp "${target}.XXXXXX")" || exit 1
+      if sed '/^#ddev-generated$/,/^$/d' \
+          "${DDEV_APPROOT}/.ddev/ddev-sync/ddev-sync.example.yaml" > "${tmp}" \
+        && chmod 644 "${tmp}" && mv "${tmp}" "${target}"; then
+        echo "Wrote .ddev/ddev-sync.yaml - edit it, then run 'ddev sync doctor'."
+      else
+        rm -f "${tmp}"
+        echo "Could not write .ddev/ddev-sync.yaml" >&2
+        exit 1
+      fi
     fi

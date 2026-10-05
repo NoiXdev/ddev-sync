@@ -1,8 +1,11 @@
 #ddev-generated
-# Copy this to .ddev/ddev-sync.yaml and edit it. That file is yours: the
-# add-on never overwrites it, and `ddev add-on remove` leaves it alone,
-# because it carries no generated-file marker. (The first line of this
-# template is that marker; the copy step strips it.)
+# Reference copy of the configuration template, installed by the ddev-sync
+# add-on and replaced whenever the add-on is updated: do not edit it. Your
+# own configuration is .ddev/ddev-sync.yaml, which was created from this
+# template once. Everything above the blank line is left out of that copy.
+
+# Configuration for ddev-sync in this project. This file is yours: the add-on
+# never overwrites it, and `ddev add-on remove` leaves it alone.
 #
 # Targets usually belong in ~/.ddev/ddev-sync/config.yaml instead, so that
 # your hosts and users are not committed with the project. Keep here what
@@ -20,8 +23,15 @@ version: 1
 
 # Where the remote's database credentials come from:
 #   env      - read from a .env on the remote (the default)
-#   explicit - from `credentials:` below; put those in
-#              .ddev/ddev-sync.local.yaml, which is not committed
+#   explicit - from `database.credentials` below; they are secrets, so put
+#              them in .ddev/ddev-sync.local.yaml and make sure your
+#              repository ignores that file - nothing here does that for you
 #   wp_cli   - ask the remote's WP-CLI (WordPress; also reads the table prefix)
 # database:
 #   remote_credentials: env
+#   credentials:              # only read when remote_credentials is explicit
+#     host: db.internal
+#     port: 3306
+#     name: app
+#     user: app
+#     password: change-me
