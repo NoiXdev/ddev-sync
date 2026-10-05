@@ -79,6 +79,7 @@ PHP
 # the whole environment (PHP, composer, framework) the row in VERIFIED.md will
 # claim to have been verified against.
 composer show symfony/framework-bundle | grep -E '^(name|versions) '
+composer show doctrine/orm | grep -E '^(name|versions) '
 composer show symfony/skeleton 2>/dev/null | grep -E '^(name|versions) ' || true
 php bin/console --version
 php -v | head -1

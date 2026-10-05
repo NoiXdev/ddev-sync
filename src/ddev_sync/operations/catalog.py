@@ -123,13 +123,14 @@ class SearchReplace:
             )
 
 
-# `typo3` is TYPO3 core's own `backend:user:create` (core since v12, checked
-# against a stock typo3/cms-base-distribution 13.4.35 with `--help`). It takes
-# options, not positionals, and `--admin` is what makes the account an
-# administrator. `backend:createadmin` - what this driver used to call - is
-# helhum/typo3-console's command, which a stock install does not have: there
-# it fails with `Command "backend:createadmin" is not defined`. The `console`
-# driver keeps it because that is exactly what `typo3cms` provides.
+# `typo3` is TYPO3 core's own `backend:user:create` (core in 12.4+: it ran
+# against stock typo3/cms-base-distribution 12.4.45 and 13.4.35, and its options
+# were read from `--help` on 13.4.35). It takes options, not positionals, and
+# `--admin` is what makes the account an administrator. `backend:createadmin` -
+# what this driver used to call - is helhum/typo3-console's command, which a
+# stock install does not have: there it fails with `Command
+# "backend:createadmin" is not defined`. The `console` driver keeps it because
+# that is exactly what `typo3cms` provides.
 _ADMIN_DRIVERS: dict[str, list[str]] = {
     "typo3": ["vendor/bin/typo3", "backend:user:create"],
     "console": ["vendor/bin/typo3cms", "backend:createadmin"],
