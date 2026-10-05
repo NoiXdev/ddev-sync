@@ -60,6 +60,15 @@ sanitize:
       table: users_field_data
       column: pass
       value: "$argon2i$disabled"
+    # `drush user:create` cannot assign a role, so the drush driver follows it
+    # with `drush user:role:add <role> <user>`. The role defaults to
+    # `administrator`, which Drupal's `standard` install profile creates; other
+    # install profiles may not have it, and the engine stops with an error
+    # naming the role if it does not exist. A rule-level `role: <machine name>`
+    # is accepted, but a project cannot override just this rule: its
+    # `sanitize.rules` extends this list by default, so changing the role means
+    # replacing the whole list (`mode: replace`) and carrying the other rules
+    # along.
     - name: local-admin
       operation: create_admin
       driver: drush

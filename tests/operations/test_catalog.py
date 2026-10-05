@@ -228,7 +228,9 @@ def test_create_admin_uses_the_configured_driver(
 ) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["docker", "exec"], stdout="created")
-    runner.script_prefix(["docker", "exec"], stdout="role added")
+    if driver == "drush":
+        # The only driver that goes on to a second command (the role).
+        runner.script_prefix(["docker", "exec"], stdout="role added")
     config = rule_config(name="admin", operation="create_admin", driver=driver, user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     argv = runner.calls[0]
@@ -373,7 +375,12 @@ def test_an_existing_drush_account_still_gets_the_role(tmp_path: Path) -> None:
     config = rule_config(name="admin", operation="create_admin", driver="drush", user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     assert len(runner.calls) == 2
-    assert _drush_role_command(runner)[1] == "user:role:add"
+    assert _drush_role_command(runner) == [
+        "vendor/bin/drush",
+        "user:role:add",
+        "administrator",
+        "ddev",
+    ]
 
 
 def test_a_failing_drush_role_assignment_is_an_error(tmp_path: Path) -> None:
@@ -395,6 +402,22 @@ def test_a_failing_drush_role_assignment_is_an_error(tmp_path: Path) -> None:
     message = str(caught.value)
     assert "nosuchrole" in message
     assert "Unable to load the user_role" in message
+    # Actionable: it says the role must exist and names the one override route
+    # there is (no per-rule override exists; the list has to be replaced).
+    assert "must exist" in message
+    assert "mode: replace" in message
+
+
+@pytest.mark.parametrize("role", ["", "  "])
+def test_an_empty_drush_role_is_rejected_before_anything_runs(tmp_path: Path, role: str) -> None:
+    runner = FakeCommandRunner()
+    config = rule_config(
+        name="admin", operation="create_admin", driver="drush", user="ddev", role=role
+    )
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert "'role'" in str(caught.value)
+    assert runner.calls == []
 
 
 def test_a_failed_drush_create_does_not_try_to_assign_the_role(tmp_path: Path) -> None:

@@ -139,25 +139,32 @@ _ADMIN_DRIVERS: dict[str, list[str]] = {
 
 # A driver whose create command cannot make the account an administrator needs
 # a second command to give it the role. Only drush is in this position:
-# `typo3` has `--admin` and `wp_cli` has `--role`. Observed against drush 13.8.0
-# on Drupal 11.4.8: `user:create` has no role option (an account made with it
-# has only `authenticated`), and `user:role:add <role> <names>` takes the role's
-# machine name first and a comma-delimited list of user names second. Given a
-# role the user already has, it exits 0 and prints `Added administrator role to
-# ddev` again, so a re-sync needs no tolerance here; given a role that does not
-# exist it exits 1 (`Unable to load the user_role: <role>`), and that is a real
-# failure, because an account without the role is exactly what this exists to
-# prevent. It lives here rather than in a profile's `setup.commands` so the user
-# name is written once.
+# `typo3` has `--admin`, `wp_cli` has `--role`, and `console`'s
+# `backend:createadmin` creates an administrator by definition. Observed
+# against drush 13.8.0 on Drupal 11.4.8: `user:create` has no role option (an
+# account made with it has only `authenticated`), and `user:role:add <role>
+# <names>` takes the role's machine name first and a comma-delimited list of
+# user names second. Given a role the user already has, it exits 0 and prints
+# `Added administrator role to ddev` again, so a re-sync needs no tolerance
+# here; given a role that does not exist it exits 1 (`Unable to load the
+# user_role: <role>`), and that is a real failure, because an account without
+# the role is exactly what this exists to prevent. It lives here rather than
+# in a profile's `setup.commands` so the user name is written once.
 _ADMIN_ROLE_COMMANDS: dict[str, list[str]] = {
     "drush": ["vendor/bin/drush", "user:role:add"],
 }
 
 # The role the `drush` driver grants, unless the rule's `role` parameter says
 # otherwise. `administrator` is the machine name Drupal's `standard` install
-# profile creates; the `minimal` profile has no such role, so a project on it
-# (or on a profile with a differently named one) sets `role` on its
-# `create_admin` rule instead of editing the shipped profile.
+# profile creates (checked against a stock install); other install profiles
+# may not have such a role, and nothing here has been run against one.
+#
+# Changing it is not a one-line override. A project's `sanitize.rules` extends
+# the profile's list by default, so a second `create_admin` rule with another
+# `role` would run *after* the profile's own, which would still fail on the
+# missing role first. The only mechanism there is is `mode: replace` on
+# `sanitize.rules`, which swaps the whole list - the project then has to carry
+# the profile's other rules itself.
 _DEFAULT_ADMIN_ROLE = "administrator"
 
 # Each marker is tied to one real CLI's observed output, not a guess, and
@@ -211,6 +218,8 @@ class CreateAdmin:
             )
         user = _required(rule, "user")
         password = str(rule.params.get("password", LOCAL_ADMIN_PASSWORD))
+        # Before anything runs, so a bad `role` does not leave an account made.
+        role = self._role(rule) if driver in _ADMIN_ROLE_COMMANDS else None
         argv = self._argv(driver, head, user, password)
         # The framework CLI lives in the web container, not in this one; the
         # project root is the same absolute path in both, so it passes
@@ -235,21 +244,45 @@ class CreateAdmin:
             print(f"  local admin already exists - user: {user}")
         # Also for an account that already existed: it may have been made by an
         # earlier sync, or by hand, without the role.
-        self._grant_role(context, rule, driver, user)
+        self._grant_role(context, rule, driver, user, role)
 
     @staticmethod
-    def _grant_role(context: ExecutionContext, rule: SanitizeRule, driver: str, user: str) -> None:
-        head = _ADMIN_ROLE_COMMANDS.get(driver)
-        if head is None:
-            return
+    def _role(rule: SanitizeRule) -> str:
         role = str(rule.params.get("role", _DEFAULT_ADMIN_ROLE))
+        if not role.strip():
+            raise OperationError(
+                f"sanitize rule {rule.name!r}: the 'role' parameter is empty; name the "
+                f"machine name of an existing role, or leave it out for "
+                f"{_DEFAULT_ADMIN_ROLE!r}"
+            )
+        return role
+
+    @staticmethod
+    def _grant_role(
+        context: ExecutionContext, rule: SanitizeRule, driver: str, user: str, role: str | None
+    ) -> None:
+        # `role` is only set for a driver in `_ADMIN_ROLE_COMMANDS` (see `run`).
+        if role is None:
+            return
         result = context.runner.run(
-            web_command(context.project, [*head, role, user], workdir=context.project.root)
+            web_command(
+                context.project,
+                [*_ADMIN_ROLE_COMMANDS[driver], role, user],
+                workdir=context.project.root,
+            )
         )
         if not result.ok:
             raise OperationError(
                 f"sanitize rule {rule.name!r}: giving {user!r} the role {role!r} failed: "
-                f"{result.stderr.strip()}"
+                f"{result.stderr.strip()}\n"
+                f"The role {role!r} must exist in this site; the default, "
+                f"{_DEFAULT_ADMIN_ROLE!r}, is the one Drupal's 'standard' install profile "
+                "creates. For another role name, replace the whole sanitize.rules list "
+                "(`mode: replace`) in the project's ddev-sync.yaml with the profile's rules "
+                "copied over and `role:` set on the create_admin rule - a second "
+                "create_admin rule added with the default `extend` mode would run after "
+                "this one and not instead of it. The database is already imported and the "
+                "rules before this one have run."
             )
 
     @staticmethod
