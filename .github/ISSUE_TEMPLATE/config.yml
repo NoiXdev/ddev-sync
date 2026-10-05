@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/NoiXdev/ddev-sync/discussions
+    about: For general questions please use GitHub Discussions instead of opening an issue.
+  - name: Something went wrong with production data
+    url: https://github.com/NoiXdev/ddev-sync/security/advisories/new
+    about: >
+      If a sync left production data somewhere it should not be, report it privately
+      as a security advisory rather than in a public issue.

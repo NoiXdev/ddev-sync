@@ -1,0 +1,111 @@
+name: Bug Report
+description: Something is not working as expected
+labels: [bug]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as possible.
+
+        **Before you paste anything:** this tool talks to production. Redact hostnames,
+        usernames, passwords and anything out of a database dump before it goes into a
+        public issue. `ddev sync doctor` prints a target's host and path, so give it the
+        same read-through.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: Running `ddev sync --steps=db` fails at the import step with ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. `ddev sync --target=production --steps=db,sanitize`
+        2. The database import finishes
+        3. The sanitize step fails with ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      placeholder: What should have happened?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: project_type
+    attributes:
+      label: Project type
+      description: The `type` in your `.ddev/config.yaml`.
+      options:
+        - typo3
+        - laravel
+        - symfony
+        - wordpress
+        - drupal
+        - shopware6
+        - other / none of these
+    validations:
+      required: true
+
+  - type: input
+    id: framework_version
+    attributes:
+      label: Framework version
+      description: Which major, and the exact release if you know it.
+      placeholder: e.g. TYPO3 13.4.35, Laravel 12.4
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ddev-sync version
+      description: From `ddev sync --version`, or `ddev-sync --version` without the add-on.
+      placeholder: e.g. 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: ddev_version
+    attributes:
+      label: DDEV version
+      description: From `ddev version`.
+      placeholder: e.g. v1.25.4
+    validations:
+      required: true
+
+  - type: dropdown
+    id: steps_selected
+    attributes:
+      label: Which steps were selected?
+      multiple: true
+      options:
+        - db
+        - files
+        - s3
+        - sanitize
+        - setup
+        - all of them (no --steps given)
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `ddev sync doctor`
+      description: Redact the host and path first. This is rendered as a code block.
+      render: text
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: The failing command's output, a dry run (`--dry-run`), or anything else that helps.

@@ -1,0 +1,53 @@
+name: Feature Request
+description: Suggest a new feature, a profile, or an improvement
+labels: [enhancement]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea to make ddev-sync better? Describe it below.
+
+        Proposing support for a framework ddev-sync does not cover yet? That is a
+        profile, and the most useful thing you can bring is the exact commands it
+        needs — read from the framework's own CLI rather than from memory, because
+        every profile command in this repository has to be verified against a real
+        installation before it is trusted.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation where you feel something is missing.
+      placeholder: When I sync a ... project, I always have to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like it to work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: commands
+    attributes:
+      label: Commands involved, if this is about a profile
+      description: >
+        The setup commands and sanitize rules the framework needs, and how you know
+        they exist — the output of its `list`/`help` is ideal.
+      render: text
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you have thought about?
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Links to the framework's documentation, related issues, anything else.
