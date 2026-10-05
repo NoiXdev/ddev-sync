@@ -208,6 +208,29 @@ YAML
   grep -q '^DDEV_SYNC_IMAGE=ddev-sync$' .ddev/.env
 }
 
+# The sidecar mounts the volume of DDEV's ssh agent, which DDEV declares only
+# while the agent is not omitted. Without the pre-start hook's check the whole
+# project would refuse to start with "refers to undefined volume", which names
+# neither the add-on nor the cause. The omission is set for this project only,
+# so the test leaves the developer's global DDEV configuration alone.
+@test "refuses to start with a message when DDEV's ssh agent is switched off" {
+  set -eu -o pipefail
+  cd "${TESTDIR}"
+
+  run ddev add-on get "${DIR}"
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+
+  ddev config --omit-containers=ddev-ssh-agent >/dev/null
+
+  run ddev restart -y
+  echo "${output}"
+  [ "${status}" -ne 0 ]
+  # The remedy, verbatim, and the reason: both are what the user needs.
+  [[ "${output}" == *"ddev config global --omit-containers="* ]] || false
+  [[ "${output}" == *"ddev-sync needs it"* ]] || false
+}
+
 # bats test_tags=release
 @test "install from release" {
   set -eu -o pipefail

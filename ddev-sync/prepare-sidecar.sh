@@ -74,6 +74,37 @@ env_tmp="${tmp}"
 echo "DDEV_SYNC_DOCKER_GID=${gid}" >> "${env_tmp}"
 cmp -s "${env_tmp}" "${env_file}" 2>/dev/null || cat "${env_tmp}" > "${env_file}"
 
+# --- DDEV's ssh agent ----------------------------------------------------------
+# The sidecar authenticates to remote hosts through the agent DDEV forwards,
+# and the compose file mounts that agent's socket volume. DDEV declares the
+# volume only while the agent is not omitted (`omit_containers` in the global
+# config, the project's, or any config.*.yaml), and a service that mounts an
+# undeclared volume makes DDEV refuse the whole project with "service ... refers
+# to undefined volume ddev-ssh-agent_socket_dir: invalid compose project". That
+# reads like a bug in the add-on and stops every `ddev start`, so it is caught
+# here, where the cause can be named.
+#
+# The question is put to DDEV itself because the omission can come from several
+# places and only DDEV merges them. The probe needs DDEV_SYNC_DOCKER_GID, which
+# the section above has just written, or the compose file would fail on that
+# instead. A failure that does not mention the agent's volume is ignored on
+# purpose: it is not ours to explain, and DDEV will report it on its own a
+# moment later.
+#
+# The volume's absence is no substitute: before the first start the agent has
+# not created it yet even when nothing is omitted. Declaring the volume
+# `external` in the compose file does not help either: with the agent omitted
+# it would be accepted and then either fail at `up` on a machine that never ran
+# the agent, or start against a stale socket on one that did, and the second is
+# a failure that surfaces only in `ddev sync doctor`.
+if ! compose_out="$(cd "${approot}" && ddev utility compose-config 2>&1)"; then
+  case "${compose_out}" in
+    *ddev-ssh-agent_socket_dir*)
+      fail "DDEV's ssh agent is switched off, and ddev-sync needs it: the sidecar authenticates to remote hosts through the agent DDEV forwards, and without it there is nothing to authenticate with." ""         "Switch the agent on with: ddev config global --omit-containers=   (if it is only omitted for this project, remove ddev-ssh-agent from omit_containers in .ddev/config.yaml), then start again. Note that a CI setup action may have switched it off for you."
+      ;;
+  esac
+fi
+
 # --- The sidecar's user: a passwd entry and a home directory -----------------
 # The sidecar runs as the developer's uid so that files it writes belong to
 # them, but the image only knows its own user. OpenSSH calls getpwuid() before
