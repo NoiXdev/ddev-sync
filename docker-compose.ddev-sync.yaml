@@ -42,6 +42,12 @@ services:
       - DDEV_PRIMARY_URL
     volumes:
       - ../:/var/www/html
+      # DDEV runs a service's custom commands from /mnt/ddev_config/commands/
+      # and mounts nothing there for a service it does not know: without this
+      # line `ddev sync` fails with "not found" (exit 127), which reads like a
+      # missing interpreter. Read-only, because the container has no reason to
+      # change the project's DDEV configuration.
+      - ./:/mnt/ddev_config:ro
       # The image only knows its own user, and OpenSSH aborts when the running
       # uid has no passwd entry. The file is the image's own plus one line for
       # this uid, written by ddev-sync/prepare-sidecar.sh on every start.
