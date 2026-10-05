@@ -17,6 +17,11 @@
 setup() {
   set -eu -o pipefail
 
+  # The release test only skips; building an image and configuring a project
+  # for it would be wasted time, and a failure here would fail a test that is
+  # meant to be skipped.
+  case "${BATS_TEST_DESCRIPTION}" in *release*) return 0 ;; esac
+
   export DIR="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." >/dev/null 2>&1 && pwd)"
   export PROJNAME="ddevsync-bats"
   export DDEV_NONINTERACTIVE=true
@@ -50,10 +55,15 @@ setup() {
 
 # Unconditional on purpose: it must clean up after a failed assertion and after
 # a failed setup alike, or every red CI run would leak a project and its
-# containers. Nothing here may abort before the directory is removed, so there
-# is no `set -e`, and every step tolerates the thing it removes being absent.
+# containers. Nothing here may abort before the directory is removed, so the
+# `set -eu` that setup left active in this shell is switched off, and every
+# step tolerates the thing it removes being absent. Setup returns early for the
+# release test, so PROJNAME and TESTDIR may both be unset.
 teardown() {
-  ddev delete -Oy "${PROJNAME}" >/dev/null 2>&1 || true
+  set +eu
+  if [ -n "${PROJNAME:-}" ]; then
+    ddev delete -Oy "${PROJNAME}" >/dev/null 2>&1 || true
+  fi
   cd "${HOME}" || true
   if [ -n "${TESTDIR:-}" ]; then
     rm -rf "${TESTDIR}"
@@ -121,10 +131,14 @@ entries_in() {
   # only runs it there if it sits in commands/sync/; the engine's version
   # string cannot come from anywhere else, since the host and the web
   # container have no `ddev-sync`.
+  # Every `[[ ]]` below ends in `|| false` on purpose: bash before 4.1, which
+  # includes the 3.2 that macOS ships and that bats runs under there, does not
+  # apply errexit to a failing `[[ ]]` unless it is the last command of the
+  # test, so a bare one is a silent no-op on a developer's machine.
   run ddev sync --version
   echo "${output}"
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *"ddev-sync, version "* ]]
+  [[ "${output}" == *"ddev-sync, version "* ]] || false
 
   # What the sidecar exists to provide. `doctor` needs a target to run at all,
   # so the project's configuration (which is the test's to edit; it is not
@@ -148,9 +162,9 @@ YAML
   run ddev sync doctor
   echo "${output}"
   [ "${status}" -ne 0 ]
-  [[ "${output}" =~ FAIL\ +ssh\ connection ]]
-  [[ "${output}" =~ OK\ +web\ container ]]
-  [[ "${output}" =~ OK\ +ssh\ agent ]]
+  [[ "${output}" =~ FAIL\ +ssh\ connection ]] || false
+  [[ "${output}" =~ OK\ +web\ container ]] || false
+  [[ "${output}" =~ OK\ +ssh\ agent ]] || false
 
   # ssh must be able to run as the developer's uid. The image knows uid 1000
   # only, and the container runs as the developer's uid, so OpenSSH used to
@@ -160,7 +174,7 @@ YAML
   run ddev exec -s sync ssh -G example.com
   echo "${output}"
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *"hostname example.com"* ]]
+  [[ "${output}" == *"hostname example.com"* ]] || false
 
   run ddev add-on remove ddev-sync
   echo "${output}"
