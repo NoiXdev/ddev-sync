@@ -118,4 +118,29 @@ CELLS: tuple[Cell, ...] = (
         identity_column="username",
         seeded_users=("editor.hofer", "editor.kalb"),
     ),
+    Cell(
+        name="mxsymfony",
+        profile="symfony",
+        project_type="symfony",
+        docroot="public",
+        php_image="php:8.3-cli",
+        # The resolved name, not `${SYMFONY_USER_TABLE}`: the cell's config
+        # sets `database.symfony_user_table` to the table the install really
+        # creates, and the assertion proves resolution agreed with it.
+        required_tables=("app_user",),
+        admin_user=None,
+        password_column=("app_user", "password"),
+        production_url=None,
+        # No `truncated_tables`: the profile's only truncate rule empties
+        # `messenger_messages`, which a stock `symfony/orm-pack` installation
+        # does not have - Doctrine Messenger creates it lazily on first use,
+        # and Messenger is not even among the pack's packages. So the rule's
+        # `tolerate_missing_table` is what this cell exercises, and the table
+        # cannot be asserted empty.
+        # Not `email`: the profile's sanitize rules rewrite it. `id` is
+        # preserved by the import, and a MakerBundle-shaped user table has no
+        # login column to use instead.
+        identity_column="id",
+        seeded_users=("1", "2"),
+    ),
 )

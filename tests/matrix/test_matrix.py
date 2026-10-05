@@ -197,3 +197,50 @@ def test_the_typo3_schema_step_restored_the_missing_column(stack: Stack, cell: C
     assert stack.sql("SHOW COLUMNS FROM tt_content LIKE 'header_link'").startswith("header_link"), (
         "the missing column was not restored: the schema step did not take effect"
     )
+
+
+def test_a_placeholder_table_resolved_to_the_real_one(stack: Stack, cell: Cell) -> None:
+    if cell.name != "mxsymfony":
+        pytest.skip("only the symfony profile declares a placeholder requires_table")
+    # `${SYMFONY_USER_TABLE}` resolves at parse time from
+    # `database.symfony_user_table`. Had resolution fallen back to the default
+    # `user`, the preflight probe would abort on a table this installation does
+    # not have. A real run rather than `--dry-run`: a dry run renders the plan
+    # and never reaches the probe, so it passes whichever table the placeholder
+    # resolved to - verified by deleting the override from the cell's config.
+    result = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+    # The two SHOW TABLES lines make the claim specific: the default table does
+    # not exist here, so only `app_user` can have been the one the rules used.
+    assert stack.sql("SHOW TABLES LIKE 'user'") == ""
+    assert stack.sql("SHOW TABLES LIKE 'app_user'") == "app_user"
+    # The effect, not just the exit status: `anonymize-users` rewrote the rows
+    # of the resolved table.
+    emails = stack.sql("SELECT email FROM app_user ORDER BY id").splitlines()
+    assert emails == ["user1@example.invalid", "user2@example.invalid"], emails
+
+
+def test_doctrine_migrate_applied_the_pending_migration(stack: Stack, cell: Cell) -> None:
+    # The claim: the profile's `php bin/console doctrine:migrations:migrate`
+    # runs against the real project and applies what production lacks. The
+    # install leaves one migration unapplied (see cells/mxsymfony/install.sh)
+    # and the remote dump does not contain its table, so after the sync the
+    # table exists only if the command ran. The profile allows that command to
+    # fail, so neither the sync's exit status nor the engine's "OK" line could
+    # say - and Symfony's console runs an unambiguous prefix of a command name
+    # (`doctrine:migrations:migrat` still migrates), so only a real
+    # misspelling, not an abbreviation, makes this fail.
+    if cell.profile != "symfony":
+        pytest.skip("doctrine migrations are Symfony's")
+    assert stack.remote_sql("SHOW TABLES LIKE 'matrix_marker'").stdout.strip() == "", (
+        "the remote already has the marker table: the seed carried the migration in"
+    )
+    assert stack.sql("SHOW TABLES LIKE 'matrix_marker'") == "matrix_marker", (
+        "the pending migration was not applied: `doctrine:migrations:migrate` did not take effect"
+    )
+    # Doctrine's own bookkeeping agrees: the version was recorded as executed.
+    recorded = stack.sql(
+        "SELECT COUNT(*) FROM doctrine_migration_versions "
+        "WHERE version LIKE '%Version20260102000000'"
+    )
+    assert recorded == "1", f"the migration is not recorded as executed: {recorded}"

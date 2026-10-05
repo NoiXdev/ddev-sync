@@ -1,0 +1,22 @@
+# `remote_credentials: explicit` keeps the cell from depending on a .env on
+# the remote: this cell is about the profile's commands, not about credential
+# discovery, which the unit suite already covers exhaustively.
+version: 1
+targets:
+  production:
+    host: remote
+    user: deploy
+    port: 2222
+    path: /srv/app/
+    stage: production
+database:
+  remote_credentials: explicit
+  # The override the placeholder exists for: this installation's user table
+  # is `app_user`, not MakerBundle's conventional `user`.
+  symfony_user_table: app_user
+  credentials:
+    name: acme_prod
+    user: acme
+    password: s3cret
+    host: remote-db
+    port: "3306"
