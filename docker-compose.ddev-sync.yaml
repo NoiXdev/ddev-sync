@@ -1,0 +1,45 @@
+#ddev-generated
+# The engine runs beside the project rather than inside the web container,
+# so that it does not depend on the project's PHP, its extensions or its
+# composer state - and so that a broken project can still be synced.
+#
+# It deliberately carries no PHP itself. Framework commands run in the web
+# container through the docker socket below, because the PHP a project needs
+# is the project's own, not this image's.
+services:
+  sync:
+    image: ${DDEV_SYNC_IMAGE:-noixdev/ddev-sync}:${DDEV_SYNC_VERSION:-0.1.0}
+    container_name: ddev-${DDEV_SITENAME}-sync
+    # The image's entrypoint is the engine itself, so a `command:` would be
+    # handed to it as arguments ("No such command 'sleep'") and the container
+    # would exit. The service only has to stay up for `ddev sync` to exec into
+    # it, so the entrypoint is replaced rather than the command set.
+    entrypoint: ["sleep", "infinity"]
+    # As the developer, so that a dump, a rewritten .env and rsynced files
+    # end up owned by them rather than by root.
+    user: "$DDEV_UID:$DDEV_GID"
+    # The gid that owns the socket, discovered at install time - see
+    # install.yaml's pre_install_actions for why it cannot be a constant.
+    group_add:
+      - "${DDEV_SYNC_DOCKER_GID:-0}"
+    working_dir: /var/www/html
+    environment:
+      # `proxy-socket`, not `socket`: the forwarded agent directory holds
+      # both, and only the proxy is world-accessible (0666). Pointing at
+      # `socket` (0600, uid 501) appears to work while developing as root
+      # and then fails the moment the image runs as a non-root user, which
+      # is how it does run. Verified against DDEV v1.25.4 - base design §12.
+      - SSH_AUTH_SOCK=/home/.ssh-agent/proxy-socket
+      - DDEV_SITENAME
+      - DDEV_PRIMARY_URL
+    volumes:
+      - ../:/var/www/html
+      - ddev-global-cache:/mnt/ddev-global-cache
+      - ddev-ssh-agent_socket_dir:/home/.ssh-agent
+      # Framework commands run in the web container, which means talking to
+      # the daemon. This is host-root-equivalent access and is documented as
+      # such in SECURITY.md; the alternative, installing the engine into the
+      # web image, means a local image build on every first start.
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      com.ddev.site-name: ${DDEV_SITENAME}

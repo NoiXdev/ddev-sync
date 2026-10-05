@@ -6,6 +6,46 @@ ddev_version_constraint: ">= v1.24.0"
 
 project_files:
   - ddev-sync/ddev-sync.example.yaml
+  - docker-compose.ddev-sync.yaml
+
+pre_install_actions:
+  - |
+    #ddev-description:Discover the group that owns the docker socket
+    # The sidecar needs this gid to reach the web container, where framework
+    # commands run. It differs between hosts, so it is looked up here and
+    # handed to the compose file through .ddev/.env.
+    #
+    # It is read from inside a container, not from the host: what matters is
+    # the group the socket has where the sidecar will see it. On a typical
+    # Linux that is the host's `docker` group, but under Docker Desktop the
+    # host path is a symlink whose own group (daemon) means nothing - the
+    # daemon runs in a VM where the same socket belongs to root, gid 0, and
+    # only that gid grants access. A host-side `stat` was verified to answer
+    # 1 there, which fails with a permission error that reads like a bug in
+    # the tool. ddev/ddev-utilities is the image DDEV itself already uses for
+    # one-off commands, so it is normally present.
+    gid="$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+      ddev/ddev-utilities stat -c '%g' /var/run/docker.sock 2>/dev/null)"
+    case "${gid}" in
+      ''|*[!0-9]*)
+        echo "Could not read the group of /var/run/docker.sock - is Docker running?" >&2
+        exit 1
+        ;;
+    esac
+    # Replace rather than append, so installing again does not pile up lines.
+    # Through a temporary file, so a failure cannot truncate the project's
+    # existing .ddev/.env.
+    env_file="${DDEV_APPROOT}/.ddev/.env"
+    tmp="$(mktemp "${env_file}.XXXXXX")" || exit 1
+    if { [ ! -f "${env_file}" ] || grep -v '^DDEV_SYNC_DOCKER_GID=' "${env_file}" || [ $? -eq 1 ]; } > "${tmp}" \
+      && echo "DDEV_SYNC_DOCKER_GID=${gid}" >> "${tmp}" \
+      && mv "${tmp}" "${env_file}"; then
+      echo "Docker socket group is ${gid}."
+    else
+      rm -f "${tmp}"
+      echo "Could not write DDEV_SYNC_DOCKER_GID to .ddev/.env" >&2
+      exit 1
+    fi
 
 post_install_actions:
   - |
@@ -23,16 +63,23 @@ post_install_actions:
     # The copy goes through a temporary file: a failed sed must not leave a
     # partial .ddev/ddev-sync.yaml behind, because the existence check above
     # would then stop every later install from repairing it.
+    #
+    # The header strip is a range that runs to the end of the file if the
+    # template ever loses the blank line after its header, and sed still exits
+    # 0. The result must therefore contain the template's `version:` line
+    # before it is moved into place; an empty file would be just as
+    # unrepairable.
     target="${DDEV_APPROOT}/.ddev/ddev-sync.yaml"
     if [ ! -f "${target}" ]; then
       tmp="$(mktemp "${target}.XXXXXX")" || exit 1
       if sed '/^#ddev-generated$/,/^$/d' \
           "${DDEV_APPROOT}/.ddev/ddev-sync/ddev-sync.example.yaml" > "${tmp}" \
+        && grep -q '^version:' "${tmp}" \
         && chmod 644 "${tmp}" && mv "${tmp}" "${target}"; then
         echo "Wrote .ddev/ddev-sync.yaml - edit it, then run 'ddev sync doctor'."
       else
         rm -f "${tmp}"
-        echo "Could not write .ddev/ddev-sync.yaml" >&2
+        echo "Could not write .ddev/ddev-sync.yaml (is the template intact?)" >&2
         exit 1
       fi
     fi
