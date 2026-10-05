@@ -10,6 +10,22 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class FlushMarker:
+    """A cache row a cell plants so its `flush_cache` rule can be seen working.
+
+    The engine discards the result of a `flush_cache` command on purpose, so a
+    command that does not exist never fails a sync and no exit status says it
+    ran. The effect does: `insert` puts a row into a cache table that no other
+    sanitize rule touches, `where` selects exactly that row in `table`, and the
+    rule must have removed it once the sync is over.
+    """
+
+    table: str
+    insert: str
+    where: str
+
+
+@dataclass(frozen=True)
 class Cell:
     """One profile variant, installed for real and synced end to end.
 
@@ -36,6 +52,10 @@ class Cell:
     is genuinely not the reset value, so "every row was reset" cannot be
     asserted - "every *seeded* row was reset" can, and still fails when the
     reset never ran. The admin is found through the same column.
+
+    `flush_marker` is the row the cell's `flush_cache` rule must remove. `None`
+    means the profile has no such rule, or that nothing observable lives in the
+    database for it to clear.
 
     `remote_packages` is what the stand-in production host installs at start
     (`|`-separated, the format of the sshd image's `INSTALL_PACKAGES`). The
@@ -68,6 +88,7 @@ class Cell:
     truncated_tables: tuple[str, ...] = ()
     identity_column: str | None = None
     seeded_users: tuple[str, ...] = ()
+    flush_marker: FlushMarker | None = None
     remote_packages: str = "mariadb-client|rsync"
 
 
@@ -112,6 +133,16 @@ CELLS: tuple[Cell, ...] = (
         truncated_tables=("be_sessions", "sys_log", "fe_sessions"),
         identity_column="username",
         seeded_users=("editor.hofer", "editor.kalb"),
+        flush_marker=FlushMarker(
+            table="cache_hash",
+            # `expires` far in the future, so an expiry sweep cannot be what
+            # removes the row; only `cache:flush` does.
+            insert=(
+                "INSERT INTO cache_hash (identifier, expires, content) "
+                "VALUES ('matrix_marker', 2000000000, 'present')"
+            ),
+            where="identifier = 'matrix_marker'",
+        ),
     ),
     Cell(
         name="mxtypo312",
@@ -126,6 +157,16 @@ CELLS: tuple[Cell, ...] = (
         truncated_tables=("be_sessions", "sys_log", "fe_sessions"),
         identity_column="username",
         seeded_users=("editor.hofer", "editor.kalb"),
+        flush_marker=FlushMarker(
+            table="cache_hash",
+            # `expires` far in the future, so an expiry sweep cannot be what
+            # removes the row; only `cache:flush` does.
+            insert=(
+                "INSERT INTO cache_hash (identifier, expires, content) "
+                "VALUES ('matrix_marker', 2000000000, 'present')"
+            ),
+            where="identifier = 'matrix_marker'",
+        ),
     ),
     Cell(
         name="mxsymfony",
@@ -197,5 +238,15 @@ CELLS: tuple[Cell, ...] = (
         # Not `mail`: the profile's sanitize rules rewrite it.
         identity_column="name",
         seeded_users=("alice", "bruno"),
+        flush_marker=FlushMarker(
+            table="cache_default",
+            # `expire` -1 is Drupal's CACHE_PERMANENT, so only a flush removes it.
+            insert=(
+                "INSERT INTO cache_default "
+                "(cid, data, expire, created, serialized, tags, checksum) "
+                "VALUES ('matrix_marker', 'present', -1, 0, 0, '', 0)"
+            ),
+            where="cid = 'matrix_marker'",
+        ),
     ),
 )

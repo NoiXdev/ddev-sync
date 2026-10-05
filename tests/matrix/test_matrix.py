@@ -438,24 +438,22 @@ def test_drush_updatedb_applied_the_pending_update(stack: Stack, cell: Cell) -> 
     assert "No database updates required" in status.stdout + status.stderr, status.stdout
 
 
-def test_drush_cache_rebuild_emptied_the_cache(stack: Stack, cell: Cell) -> None:
+def test_the_flush_cache_rule_removed_the_planted_cache_row(stack: Stack, cell: Cell) -> None:
     # The claim: the profile's `flush-cache` rule really clears the cache. The
     # engine ignores that rule's exit status on purpose (`FlushCache` tolerates
-    # failure), so a mistyped command could never fail the sync, and the
-    # effect is the only evidence. A row is planted in a cache bin the sanitize
-    # rules do not touch, and only the flush can remove it.
-    if cell.profile != "drupal":
-        pytest.skip("`drush cache:rebuild` is Drupal's")
-    stack.sql(
-        "INSERT INTO cache_default (cid, data, expire, created, serialized, tags, checksum) "
-        "VALUES ('matrix_marker', 'present', -1, 0, 0, '', 0)"
-    )
-    assert stack.sql("SELECT COUNT(*) FROM cache_default WHERE cid = 'matrix_marker'") == "1"
+    # failure), so a command that does not exist could never fail the sync, and
+    # the effect is the only evidence. A row is planted in a cache table that no
+    # other sanitize rule touches (see `FlushMarker`); only the flush can
+    # remove it.
+    marker = cell.flush_marker
+    if marker is None:
+        pytest.skip(f"{cell.profile} has no observable flush_cache effect in the database")
+    count = f"SELECT COUNT(*) FROM `{marker.table}` WHERE {marker.where}"
+    stack.sql(marker.insert)
+    assert stack.sql(count) == "1", "the cache row was not planted"
     result = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
     assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
-    assert stack.sql("SELECT COUNT(*) FROM cache_default WHERE cid = 'matrix_marker'") == "0", (
-        "the cache entry survived: `flush-cache` did not take effect"
-    )
+    assert stack.sql(count) == "0", "the cache row survived: `flush-cache` did not take effect"
 
 
 def test_drupal_clear_watchdog_removed_the_production_log(stack: Stack, cell: Cell) -> None:
