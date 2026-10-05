@@ -110,9 +110,11 @@ def _seed_remote_files(cell: Cell) -> None:
 
     A profile's `files.paths` name directories that exist on any real
     deployment, and the files step fails outright (rsync exit 23) when one is
-    missing. The tree comes from the cell's `remote/` directory rather than
-    being derived, so a profile that names a path the framework never creates
-    shows up as a failure here instead of being papered over.
+    missing. The tree comes from the cell's `remote/` directory, so it is
+    hand-written: it states what production has, and it is **not** evidence
+    that the framework creates those directories. That evidence is the local
+    side - the installed project must have the directory the profile maps
+    onto, or the pull has nowhere to land.
     """
     tree = cell_dir(cell.name) / "remote"
     if tree.is_dir():

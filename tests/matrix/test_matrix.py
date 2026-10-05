@@ -20,6 +20,9 @@ pytestmark = pytest.mark.matrix
 # rather than as a placeholder: a sanitize rule that rewrote nothing leaves
 # these behind, and that is exactly what must not survive.
 PRODUCTION_ADDRESS = re.compile(r"@acme-production\.example")
+# The local parts of the seeded addresses. A rule that rewrote only the domain
+# (`alice.hofer@example.invalid`) still leaks who the customer is.
+PRODUCTION_NAMES = re.compile(r"alice\.hofer|bruno\.kalb")
 
 
 @pytest.fixture(params=CELLS, ids=lambda cell: cell.name)
@@ -80,6 +83,9 @@ def test_no_production_address_survives(stack: Stack, cell: Cell) -> None:
     assert not PRODUCTION_ADDRESS.search(rows), (
         f"a production address survived in {table}: {rows[:400]}"
     )
+    assert not PRODUCTION_NAMES.search(rows), (
+        f"the local part of a production address survived in {table}: {rows[:400]}"
+    )
 
 
 def test_every_password_was_reset_to_the_profiles_value(stack: Stack, cell: Cell) -> None:
@@ -100,3 +106,50 @@ def test_the_local_admin_was_created(stack: Stack, cell: Cell) -> None:
     result = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
     assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
     assert cell.admin_user in result.stdout
+
+
+def test_every_truncate_rule_emptied_its_table(stack: Stack, cell: Cell) -> None:
+    # The claim: each table a truncate rule names - the tolerated ones too -
+    # is empty after the sync. `tolerate_missing_table` only decides what
+    # happens when the table is absent; Laravel's migrations create all three,
+    # so a rule that never ran must show up as a row left behind. The remote
+    # is checked first, so removing a row from the seed cannot make this pass
+    # vacuously.
+    if not cell.truncated_tables:
+        pytest.skip(f"{cell.profile} declares no truncate rules")
+    for table in cell.truncated_tables:
+        seeded = stack.remote_sql(f"SELECT COUNT(*) FROM `{table}`")
+        assert seeded.returncode == 0, seeded.stderr
+        assert seeded.stdout.strip() != "0", f"the seed put no row into {table}"
+        assert stack.sql(f"SELECT COUNT(*) FROM `{table}`") == "0", (
+            f"{table} still has rows: its truncate rule did not take effect"
+        )
+
+
+def test_storage_link_created_the_public_symlink(stack: Stack, cell: Cell) -> None:
+    # The claim: `php artisan storage:link` - which the profile allows to
+    # fail, and which the engine then reports as OK - really created
+    # `public/storage`. Asserted on its effect, because the exit status of an
+    # allow_failure command is invisible to every other test.
+    if cell.profile != "laravel":
+        pytest.skip("storage:link is Laravel's")
+    link = work_dir(cell.name) / "public" / "storage"
+    assert link.is_symlink(), "public/storage is not a symlink: storage:link did not run"
+    assert link.resolve() == (work_dir(cell.name) / "storage" / "app" / "public").resolve()
+
+
+def test_artisan_migrate_applied_the_pending_migration(stack: Stack, cell: Cell) -> None:
+    # The claim: the profile's `php artisan migrate --force` runs against the
+    # real project and applies what production lacks. The install leaves one
+    # migration unapplied (see cells/laravel/install.sh) and the remote dump
+    # does not contain its table, so after the sync the table exists only if
+    # migrate ran. The profile allows that command to fail, so neither the
+    # sync's exit status nor `migrate:status` alone could say.
+    if cell.profile != "laravel":
+        pytest.skip("artisan is Laravel's")
+    assert stack.sql("SHOW TABLES LIKE 'matrix_marker'") == "matrix_marker", (
+        "the pending migration was not applied: `migrate --force` did not take effect"
+    )
+    status = stack.web(["php", "artisan", "migrate:status"])
+    assert status.returncode == 0, f"stdout:\n{status.stdout}\n\nstderr:\n{status.stderr}"
+    assert "Pending" not in status.stdout, status.stdout

@@ -140,7 +140,12 @@ class Stack:
         return self.compose("exec", "-T", "web", *argv)
 
     def sql(self, query: str) -> str:
-        """Query the cell's local database. `-N` strips the column headers."""
+        """Query the cell's local database. `-N` strips the column headers.
+
+        Raises on a failed query: several assertions read an empty result as
+        "no rows", and a query that errored (a missing table, a typo) must
+        not be able to pass for that.
+        """
         result = self.compose(
             "exec",
             "-T",
@@ -153,6 +158,8 @@ class Stack:
             "-e",
             query,
         )
+        if result.returncode != 0:
+            raise RuntimeError(f"local query failed ({query!r}):\n{result.stderr}")
         return result.stdout.strip()
 
     def remote_sql(self, query: str) -> subprocess.CompletedProcess[str]:

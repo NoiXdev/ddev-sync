@@ -18,6 +18,12 @@ class Cell:
     is deliberately absent: asserting it would turn an intended tolerance into
     a false failure.
 
+    `truncated_tables` lists the tables a profile's truncate rules empty,
+    **including** the ones marked `tolerate_missing_table`: the tolerance only
+    decides what happens when the table is absent, and a cell whose install
+    creates the table must still see it emptied. Defaulted so a profile with
+    no such rules states nothing.
+
     `password_column` is the (table, column) a `reset_passwords` rule
     rewrites, `admin_user` the login a `create_admin` rule creates, and
     `production_url` the URL a sanitize rule must remove. `None` means the
@@ -33,6 +39,7 @@ class Cell:
     admin_user: str | None
     password_column: tuple[str, str] | None
     production_url: str | None
+    truncated_tables: tuple[str, ...] = ()
 
 
 # `name` is both the directory under `cells/` and the pytest parameter id, so
@@ -50,5 +57,6 @@ CELLS: tuple[Cell, ...] = (
         admin_user=None,
         password_column=("users", "password"),
         production_url=None,
+        truncated_tables=("sessions", "jobs", "failed_jobs"),
     ),
 )

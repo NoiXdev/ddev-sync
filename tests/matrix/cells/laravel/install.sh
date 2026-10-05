@@ -17,7 +17,17 @@ ENV
 
 php artisan migrate --force --no-interaction
 
-# Printed into the report: this is the version the row in VERIFIED.md will
+# A migration that exists in the project but has run nowhere, as it would on a
+# branch ahead of production. The dump taken from the local database below
+# therefore lacks its table, and the only thing that can create it after the
+# sync is the profile's own `php artisan migrate --force` - which is
+# `allow_failure`, so its effect is the only evidence it ran.
+php artisan make:migration create_matrix_marker_table --create=matrix_marker --no-interaction
+
+# Printed last, because conftest shows the tail of the output: these lines are
+# the whole environment (PHP, composer, framework) the row in VERIFIED.md will
 # claim to have been verified against.
 composer show laravel/framework | grep -E '^(name|versions) '
 php artisan --version
+php -v | head -1
+composer --version
