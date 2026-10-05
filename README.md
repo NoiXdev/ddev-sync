@@ -14,11 +14,39 @@ cache:flush` where Laravel wants `php artisan optimize:clear`.
 
 ## Status
 
-**Not yet installable as a DDEV add-on.** The engine, the profiles and the
-container image exist and are tested; the add-on packaging that turns them
-into `ddev sync` — the manifest, the sidecar service and the command — is the
-next piece of work. Until it lands, this repository is useful to read and to
-develop against, not to install.
+**Installable as a DDEV add-on from a checkout; there is no published release
+yet.** The engine, the profiles, the container image and the add-on packaging
+(the manifest, the sidecar service and the `ddev sync` command) all exist.
+What does not exist is a published image or a tagged release, so
+`ddev add-on get noixdev/ddev-sync` does not work yet: you install from a clone
+and build the image yourself.
+
+```bash
+git clone https://github.com/NoiXdev/ddev-sync /path/to/ddev-sync
+docker build -t ddev-sync:dev /path/to/ddev-sync
+
+cd /your/project
+ddev add-on get /path/to/ddev-sync
+printf 'DDEV_SYNC_IMAGE=ddev-sync\nDDEV_SYNC_VERSION=dev\n' >> .ddev/.env
+ddev auth ssh
+ddev restart
+ddev sync doctor
+```
+
+**The order matters.** A pre-start hook runs on every project start and reads
+the image, so the image has to exist and `.ddev/.env` has to name it *before*
+the first `ddev restart`. Get it wrong and the whole project refuses to start,
+not just the sidecar. The add-on also needs DDEV's ssh agent: if
+`ddev-ssh-agent` is listed in `omit_containers` anywhere, no project with the
+add-on installed will start, and the hook says what to remove.
+
+Installation, the first sync and removal are walked through in the
+documentation at <https://docs.noix.dev/ddev-sync/getting-started/installation/>.
+
+Only macOS with Docker Desktop and DDEV v1.25.4 has been exercised. Linux,
+Colima, OrbStack, rootless Docker and DDEV 1.24.x have not, and no real sync
+against a real remote host has yet been run through the add-on. The CI workflow
+that tests the add-on has not run yet either.
 
 ## What it syncs
 
@@ -115,7 +143,7 @@ evidence. A cell installs the real framework, seeds a stand-in production
 database from that installation's own schema, and runs a whole sync against
 it with the shipped image. It takes about twenty minutes for six cells.
 
-User-facing documentation will live in `NoiXdev/noix-docs`; this README stays
+User-facing documentation lives in `NoiXdev/noix-docs`; this README stays
 short on purpose.
 
 ## License

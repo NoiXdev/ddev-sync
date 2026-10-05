@@ -50,12 +50,18 @@ of them worse is very welcome.
   temporary `--defaults-extra-file` on the remote, which reintroduces the remote
   temporary file that streaming removed. Revisit if a target environment makes
   process-list exposure unacceptable.
-- **The sync sidecar will mount the Docker socket.** Framework commands run in the
+- **The sync sidecar mounts the Docker socket.** Framework commands run in the
   project's own web container via `docker exec`, which requires
   `/var/run/docker.sock` inside the sidecar. Anything that can talk to that socket
   can start a privileged container on the host. The alternative — installing the
   engine into the web image — was rejected because it means a local image build on
   every developer's first start.
+
+  The socket's group is discovered at every project start, from inside a
+  container, rather than assumed: the sidecar is added to whichever group owns the
+  socket where it will see it. On Docker Desktop that group is root (gid 0) inside
+  the VM, so the sidecar is granted root-group access to the daemon there, not
+  merely membership of a `docker` group.
 
 ## What sanitize rules do and do not guarantee
 
