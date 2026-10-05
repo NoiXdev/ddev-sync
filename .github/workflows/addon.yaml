@@ -53,6 +53,11 @@ jobs:
           git clone --quiet --depth 1 --branch v1.14.0 \
             https://github.com/bats-core/bats-core.git "$RUNNER_TEMP/bats-core"
           sudo "$RUNNER_TEMP/bats-core/install.sh" /usr/local
+
+      # So that a failure below can be read against the versions that produced
+      # it.
+      - name: Show the tool versions
+        run: |
           bats --version
           ddev version
 
@@ -60,10 +65,9 @@ jobs:
       # is nothing to pass in. It is the add-on under test, not the image, and
       # a mismatch between them is exactly what this job should catch.
       #
-      # Two selections, because the release test can only skip until Plan 8
-      # publishes something and must not be run in the same breath as the
-      # test that really installs: the skip stays visible on its own line, and
-      # the day it stops skipping it is already wired in.
+      # Two selections, so that the release test's skip reads as a step of its
+      # own instead of one line among the real results, and so that it is
+      # already wired in the day it stops skipping (Plan 8).
       - name: Install from the checkout, use it, remove it
         run: bats tests/test.bats --filter-tags '!release' --print-output-on-failure
 
