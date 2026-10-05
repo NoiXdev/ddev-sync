@@ -1,0 +1,27 @@
+#ddev-generated
+# Copy this to .ddev/ddev-sync.yaml and edit it. That file is yours: the
+# add-on never overwrites it, and `ddev add-on remove` leaves it alone,
+# because it carries no generated-file marker. (The first line of this
+# template is that marker; the copy step strips it.)
+#
+# Targets usually belong in ~/.ddev/ddev-sync/config.yaml instead, so that
+# your hosts and users are not committed with the project. Keep here what
+# the whole team shares.
+version: 1
+
+# targets:
+#   production:
+#     host: web01.example
+#     user: deploy
+#     port: 22
+#     path: /srv/app/
+#     stage: production       # production | staging | testing | dev
+#     layout: plain           # plain | deployer
+
+# Where the remote's database credentials come from:
+#   env      - read from a .env on the remote (the default)
+#   explicit - from `credentials:` below; put those in
+#              .ddev/ddev-sync.local.yaml, which is not committed
+#   wp_cli   - ask the remote's WP-CLI (WordPress; also reads the table prefix)
+# database:
+#   remote_credentials: env

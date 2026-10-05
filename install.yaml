@@ -1,0 +1,25 @@
+name: ddev-sync
+
+# The sidecar mounts the docker socket and uses `ddev auth ssh`'s forwarded
+# agent, both of which were verified against DDEV v1.25.4 (base design §12).
+# An older DDEV may name the agent's socket differently, which would fail at
+# the first dump rather than at install time - so the floor is explicit.
+ddev_version_constraint: ">= v1.24.0"
+
+project_files:
+  - ddev-sync/ddev-sync.example.yaml
+
+post_install_actions:
+  - |
+    #ddev-description:Copy the configuration template into place
+    # Only when the project has no configuration yet: this file belongs to
+    # the project, so an existing one is never overwritten. DDEV does not add
+    # the generated-file marker itself - the template carries it - so the copy
+    # drops that line again: a file holding the marker would be treated as ours
+    # and deleted by `ddev add-on remove`.
+    if [ ! -f "${DDEV_APPROOT}/.ddev/ddev-sync.yaml" ]; then
+      sed '1{/^#ddev-generated$/d;}' \
+        "${DDEV_APPROOT}/.ddev/ddev-sync/ddev-sync.example.yaml" \
+        > "${DDEV_APPROOT}/.ddev/ddev-sync.yaml"
+      echo "Wrote .ddev/ddev-sync.yaml - edit it, then run 'ddev sync doctor'."
+    fi
