@@ -6,10 +6,12 @@ definition of a cell, two callers - a nightly run must never silently verify a
 different artifact than a release run does.
 """
 
+import contextlib
 import os
 import shutil
+import stat
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -50,6 +52,27 @@ def _write_project_config(cell: Cell) -> None:
         encoding="utf-8",
     )
     shutil.copy(cell_dir(cell.name) / "ddev-sync.yaml", ddev / "ddev-sync.yaml")
+
+
+def _make_writable_and_retry(
+    function: Callable[..., object], path: str, _error: BaseException
+) -> None:
+    """Let `rmtree` delete what an installer deliberately made read-only.
+
+    Drupal's installer takes the write bit off `web/sites/default` and its
+    `settings.php` as soon as it finishes, so a plain `rmtree` of the project
+    fails with "permission denied" - at teardown (silently, under
+    `ignore_errors`) and then again at the next run's start, which wipes the
+    previous tree first. Deleting a file needs write permission on its
+    *directory*, so the parent is opened up before the failed call is retried.
+    """
+    parent = Path(path).parent
+    parent.chmod(parent.stat().st_mode | stat.S_IWUSR)
+    function(path)
+
+
+def _remove_tree(path: Path) -> None:
+    shutil.rmtree(path, onexc=_make_writable_and_retry)
 
 
 def _install(stack: Stack, cell: Cell) -> None:
@@ -158,7 +181,7 @@ class Stacks:
     def _start(self, cell: Cell) -> None:
         project = work_dir(cell.name)
         if project.exists():
-            shutil.rmtree(project)
+            _remove_tree(project)
         project.mkdir(parents=True)
         remote_dir(cell.name).mkdir(parents=True, exist_ok=True)
         stack = up(cell, MATRIX_IMAGE)
@@ -177,8 +200,12 @@ class Stacks:
         # so a failing cell can be inspected after the run.
         if not os.environ.get("DDEV_SYNC_MATRIX_KEEP"):
             for name in self._running:
-                shutil.rmtree(work_dir(name), ignore_errors=True)
-                shutil.rmtree(remote_dir(name), ignore_errors=True)
+                # Best effort, as before: the stand-in remote's bind mount may
+                # hold files this user cannot remove, and that must not turn a
+                # finished run into an error.
+                for tree in (work_dir(name), remote_dir(name)):
+                    with contextlib.suppress(OSError):
+                        _remove_tree(tree)
 
 
 @pytest.fixture(scope="session")

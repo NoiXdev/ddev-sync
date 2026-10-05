@@ -1,0 +1,19 @@
+# `remote_credentials: explicit` is what profiles/VERIFIED.md says this profile
+# needs: Drupal keeps its credentials in settings.php rather than in a .env
+# this tool can parse. This cell is the first thing to run that path.
+version: 1
+targets:
+  production:
+    host: remote
+    user: deploy
+    port: 2222
+    path: /srv/app/
+    stage: production
+database:
+  remote_credentials: explicit
+  credentials:
+    name: acme_prod
+    user: acme
+    password: s3cret
+    host: remote-db
+    port: "3306"

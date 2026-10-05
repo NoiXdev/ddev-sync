@@ -373,3 +373,102 @@ def test_the_wordpress_prefix_comes_from_production_not_from_a_default(
     assert result.returncode != 0, result.stdout
     assert "requires table 'zz_users'" in result.stdout, result.stdout
     assert "Nothing was downloaded or imported" in result.stdout, result.stdout
+
+
+def test_drupal_rules_rewrote_users_field_data_not_users(stack: Stack, cell: Cell) -> None:
+    if cell.profile != "drupal":
+        pytest.skip("the `users` / `users_field_data` split is Drupal's")
+    # The premise: `users` holds only the uuid and langcode, so the mail and
+    # pass columns the rules rewrite can only be in `users_field_data`. Checked
+    # on this installation rather than assumed, because a rule aimed at `users`
+    # would fail with an unknown column instead of quietly doing nothing.
+    columns = stack.sql(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'db' AND table_name = 'users' ORDER BY ordinal_position"
+    )
+    assert columns.splitlines() == ["uid", "uuid", "langcode"], columns
+    # The seed put production's data into both tables, so the rewritten values
+    # below cannot be leftovers of the installer.
+    seeded = stack.remote_sql("SELECT uid, mail FROM users_field_data WHERE uid IN (11, 12)")
+    assert seeded.returncode == 0, seeded.stderr
+    assert "alice.hofer@acme-production.example" in seeded.stdout, seeded.stdout
+    # The effect of `anonymize-users`: `CONCAT('user', uid, '@example.invalid')`
+    # on the rows the cell seeded, and of `reset-user-passwords` on the column
+    # that table holds.
+    rewritten = stack.sql(
+        "SELECT uid, mail, pass FROM users_field_data WHERE uid IN (11, 12) ORDER BY uid"
+    ).splitlines()
+    assert rewritten == [
+        "11\tuser11@example.invalid\t$argon2i$disabled",
+        "12\tuser12@example.invalid\t$argon2i$disabled",
+    ], rewritten
+    # `users` is where the import left it: the rules never touched it.
+    uuids = stack.sql("SELECT uid, uuid, langcode FROM users WHERE uid IN (11, 12) ORDER BY uid")
+    assert uuids.splitlines() == [
+        "11\taaaaaaaa-1111-4111-8111-aaaaaaaaaaaa\ten",
+        "12\tbbbbbbbb-2222-4222-8222-bbbbbbbbbbbb\ten",
+    ], uuids
+
+
+def test_drush_updatedb_applied_the_pending_update(stack: Stack, cell: Cell) -> None:
+    # The claim: the profile's `vendor/bin/drush updatedb --yes` runs against
+    # the real project and applies what production lacks. The install leaves
+    # one update unapplied (see cells/mxdrupal/install.sh): production's
+    # recorded schema version for `matrix_marker` is 10000 while the code
+    # carries an update 10001, which creates a table. The profile allows the
+    # command to fail and the engine then prints OK, so the table is the only
+    # evidence it ran.
+    if cell.profile != "drupal":
+        pytest.skip("drush updatedb is Drupal's")
+    schema_version = (
+        "SELECT value FROM key_value WHERE collection = 'system.schema' AND name = 'matrix_marker'"
+    )
+    # The preconditions: the seed carries neither the table nor the new version.
+    assert stack.remote_sql("SHOW TABLES LIKE 'matrix_marker'").stdout.strip() == "", (
+        "the remote already has the marker table: the seed carried the update in"
+    )
+    assert stack.remote_sql(schema_version).stdout.strip() == "i:10000;"
+    assert stack.sql("SHOW TABLES LIKE 'matrix_marker'") == "matrix_marker", (
+        "the pending update was not applied: `drush updatedb` did not take effect"
+    )
+    # Drupal's own bookkeeping agrees: the update is recorded as run.
+    assert stack.sql(schema_version) == "i:10001;"
+    status = stack.web(["vendor/bin/drush", "updatedb:status"])
+    assert status.returncode == 0, f"stdout:\n{status.stdout}\n\nstderr:\n{status.stderr}"
+    assert "No database updates required" in status.stdout + status.stderr, status.stdout
+
+
+def test_drush_cache_rebuild_emptied_the_cache(stack: Stack, cell: Cell) -> None:
+    # The claim: the profile's `flush-cache` rule really clears the cache. The
+    # engine ignores that rule's exit status on purpose (`FlushCache` tolerates
+    # failure), so a mistyped command could never fail the sync, and the
+    # effect is the only evidence. A row is planted in a cache bin the sanitize
+    # rules do not touch, and only the flush can remove it.
+    if cell.profile != "drupal":
+        pytest.skip("`drush cache:rebuild` is Drupal's")
+    stack.sql(
+        "INSERT INTO cache_default (cid, data, expire, created, serialized, tags, checksum) "
+        "VALUES ('matrix_marker', 'present', -1, 0, 0, '', 0)"
+    )
+    assert stack.sql("SELECT COUNT(*) FROM cache_default WHERE cid = 'matrix_marker'") == "1"
+    result = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+    assert stack.sql("SELECT COUNT(*) FROM cache_default WHERE cid = 'matrix_marker'") == "0", (
+        "the cache entry survived: `flush-cache` did not take effect"
+    )
+
+
+def test_drupal_clear_watchdog_removed_the_production_log(stack: Stack, cell: Cell) -> None:
+    # The claim: the `clear-watchdog` rule empties `watchdog` - which, unlike
+    # the other cells' truncated tables, is not empty afterwards: the setup step
+    # runs after the sanitize step and one of its commands logs a row of its
+    # own ("Maintenance mode disabled."). So the check is that the row the seed
+    # put there is gone, not that the table has no rows.
+    if cell.profile != "drupal":
+        pytest.skip("`watchdog` is Drupal's")
+    seeded = stack.remote_sql("SELECT COUNT(*) FROM watchdog WHERE type = 'matrix'")
+    assert seeded.returncode == 0, seeded.stderr
+    assert seeded.stdout.strip() == "1", f"the seed put no row into watchdog: {seeded.stdout}"
+    assert stack.sql("SELECT COUNT(*) FROM watchdog WHERE type = 'matrix'") == "0", (
+        "the production log row survived: `clear-watchdog` did not take effect"
+    )

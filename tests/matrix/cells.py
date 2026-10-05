@@ -177,4 +177,25 @@ CELLS: tuple[Cell, ...] = (
         # init script in `remote-init/` adds wp-cli on top of it.
         remote_packages="mariadb-client|rsync|php83|php83-phar|php83-mbstring|php83-openssl|php83-iconv|php83-ctype",
     ),
+    Cell(
+        name="mxdrupal",
+        profile="drupal",
+        project_type="drupal",
+        docroot="web",
+        php_image="php:8.3-cli",
+        required_tables=("users_field_data",),
+        admin_user="ddev",
+        password_column=("users_field_data", "pass"),
+        production_url=None,
+        # No `truncated_tables`, although the profile has two truncate rules:
+        # `sessions` does not exist after a stock Drupal 11.4.8 install (observed
+        # with SHOW TABLES), so `clear-sessions` runs on its
+        # `tolerate_missing_table`; and `watchdog` cannot be asserted empty,
+        # because a setup command, which runs after the sanitize step, writes a
+        # log row of its own ("Maintenance mode disabled."). Its rule is checked by
+        # `test_drupal_clear_watchdog_removed_the_production_log` instead.
+        # Not `mail`: the profile's sanitize rules rewrite it.
+        identity_column="name",
+        seeded_users=("alice", "bruno"),
+    ),
 )
