@@ -470,3 +470,34 @@ def test_drupal_clear_watchdog_removed_the_production_log(stack: Stack, cell: Ce
     assert stack.sql("SELECT COUNT(*) FROM watchdog WHERE type = 'matrix'") == "0", (
         "the production log row survived: `clear-watchdog` did not take effect"
     )
+
+
+def test_the_drupal_admin_holds_the_administrator_role(stack: Stack, cell: Cell) -> None:
+    # The claim: the `local-admin` rule produces an administrator, not just a
+    # login. `drush user:create` has no role option, so the engine follows it
+    # with `user:role:add`; the evidence is the row Drupal keeps for a user's
+    # roles (`user__roles`: `entity_id` is the uid, `roles_target_id` the role's
+    # machine name - both read off this installation), because a command that
+    # ran proves nothing about the account.
+    if cell.profile != "drupal":
+        pytest.skip("`user:role:add` is drush's")
+    assert cell.admin_user is not None
+    roles = (
+        "SELECT r.roles_target_id FROM user__roles r "
+        "JOIN users_field_data u ON u.uid = r.entity_id "
+        f"WHERE u.name = '{cell.admin_user}'"
+    )
+    first = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
+    assert first.returncode == 0, f"stdout:\n{first.stdout}\n\nstderr:\n{first.stderr}"
+    assert stack.sql(roles) == "administrator", "the account was created without the role"
+    # The path every later sync takes: the account exists, `user:create` is
+    # refused, and the role must still be (re)applied. Taking it away first, by
+    # drush rather than SQL so Drupal's entity caches agree, is what makes the
+    # row below evidence of this run and not a leftover of the first.
+    removed = stack.web(["vendor/bin/drush", "user:role:remove", "administrator", cell.admin_user])
+    assert removed.returncode == 0, f"stdout:\n{removed.stdout}\n\nstderr:\n{removed.stderr}"
+    assert stack.sql(roles) == "", "the role could not be taken away"
+    again = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
+    assert again.returncode == 0, f"stdout:\n{again.stdout}\n\nstderr:\n{again.stderr}"
+    assert "already exists" in again.stdout, again.stdout
+    assert stack.sql(roles) == "administrator", "an existing account was not given the role again"
