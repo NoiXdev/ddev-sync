@@ -42,8 +42,11 @@ def _write_project_config(cell: Cell) -> None:
     """
     ddev = work_dir(cell.name) / ".ddev"
     ddev.mkdir(parents=True, exist_ok=True)
+    # The docroot is quoted, as DDEV writes it (`docroot: ""` for a project
+    # whose root is its web root). Unquoted, an empty value is YAML null and
+    # the engine reads it as the string "None", a directory that does not exist.
     (ddev / "config.yaml").write_text(
-        f"name: {cell.name}\ntype: {cell.project_type}\ndocroot: {cell.docroot}\n",
+        f'name: {cell.name}\ntype: {cell.project_type}\ndocroot: "{cell.docroot}"\n',
         encoding="utf-8",
     )
     shutil.copy(cell_dir(cell.name) / "ddev-sync.yaml", ddev / "ddev-sync.yaml")
