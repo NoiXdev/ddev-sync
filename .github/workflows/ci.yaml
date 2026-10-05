@@ -77,8 +77,12 @@ jobs:
       # argument and exits 0 on it, so a single multi-argument call would
       # assert nothing about the others. These are the binaries invoked inside
       # the sidecar: `mysql` and `mysqladmin` for the import, drop/create and
-      # sanitize rules, `scp` and `ssh` for transport. `mysqldump` also runs on
-      # the remote host, but the image carries it for local use.
+      # sanitize rules, `scp` and `ssh` for transport, `rsync` for the files
+      # steps, `rclone` for S3 and `docker` for the web container. `mysqldump`
+      # is checked too, but it is the one exception: every call is built
+      # through `ssh_command`, so it runs on the remote host - the image just
+      # happens to carry it, because `mariadb-client` ships it alongside the
+      # two binaries above that really are needed here.
       - name: It carries every binary the engine runs locally
         run: |
           docker run --rm --network none --entrypoint sh ddev-sync:ci -c \
