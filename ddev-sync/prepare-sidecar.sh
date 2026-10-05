@@ -32,8 +32,10 @@ new_tmp() {
 }
 
 # fail MESSAGE [FILE [HINT]]: the message, FILE's content indented under it,
-# and a hint saying what to do about it. The hook runs before the containers
-# start, so a failure here stops the whole project, not just the sidecar.
+# and a hint saying what to do about it. The message is printed before DDEV
+# carries on: a failed pre-start hook does not abort the start (that is
+# `fail_on_hook_fail`, which is the user's to set), so DDEV's own error for the
+# same problem may follow it as the last line.
 fail() {
   echo "ddev-sync: $1" >&2
   if [ -n "${2:-}" ] && [ -s "$2" ]; then sed 's/^/ddev-sync:   /' "$2" >&2; fi
@@ -97,10 +99,11 @@ cmp -s "${env_tmp}" "${env_file}" 2>/dev/null || cat "${env_tmp}" > "${env_file}
 # it would be accepted and then either fail at `up` on a machine that never ran
 # the agent, or start against a stale socket on one that did, and the second is
 # a failure that surfaces only in `ddev sync doctor`.
-if ! compose_out="$(cd "${approot}" && ddev utility compose-config 2>&1)"; then
+if ! compose_out="$(cd "${approot}" && ddev debug compose-config 2>&1)"; then
   case "${compose_out}" in
     *ddev-ssh-agent_socket_dir*)
-      fail "DDEV's ssh agent is switched off, and ddev-sync needs it: the sidecar authenticates to remote hosts through the agent DDEV forwards, and without it there is nothing to authenticate with." ""         "Switch the agent on with: ddev config global --omit-containers=   (if it is only omitted for this project, remove ddev-ssh-agent from omit_containers in .ddev/config.yaml), then start again. Note that a CI setup action may have switched it off for you."
+      fail "DDEV's ssh agent is switched off, and ddev-sync needs it: the sidecar authenticates to remote hosts through the agent DDEV forwards, and without it there is nothing to authenticate with." "" \
+        "Remove ddev-ssh-agent from omit_containers wherever it is listed: the global config (~/.ddev/global_config.yaml), .ddev/config.yaml, or a .ddev/config.*.yaml file. Edit the list rather than clearing it: 'ddev config global --omit-containers=' would also switch back on anything else omitted globally, such as ddev-router. Then start again."
       ;;
   esac
 fi

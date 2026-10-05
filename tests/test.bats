@@ -226,8 +226,10 @@ YAML
   run ddev restart -y
   echo "${output}"
   [ "${status}" -ne 0 ]
-  # The remedy, verbatim, and the reason: both are what the user needs.
-  [[ "${output}" == *"ddev config global --omit-containers="* ]] || false
+  # What the user needs: the reason, and which list to take the agent out of.
+  # The blanket `ddev config global --omit-containers=` is deliberately not the
+  # advice, since it would also switch back on anything else omitted globally.
+  [[ "${output}" == *"Remove ddev-ssh-agent from omit_containers"* ]] || false
   [[ "${output}" == *"ddev-sync needs it"* ]] || false
 }
 
