@@ -33,6 +33,16 @@ jobs:
         with:
           autostart: false
 
+      # The setup action runs `ddev config global --omit-containers=
+      # ddev-ssh-agent` to save a container nobody on a CI runner needs. This
+      # add-on's sidecar does need it: it authenticates to remote hosts through
+      # the agent DDEV forwards, and mounts that agent's socket volume, which
+      # DDEV only declares while the agent is not omitted. Left omitted, DDEV
+      # refuses to start the project and `ddev sync doctor` has no agent socket
+      # to find, so the omission is undone before the suite creates its project.
+      - name: Switch DDEV's ssh agent back on
+        run: ddev config global --omit-containers=
+
       # Built from source at a fixed tag, not from apt: `ubuntu-latest` moves
       # between Ubuntu releases and their bats ranges from 1.2 (22.04) to 1.10
       # (24.04), while the suite needs 1.8 or newer for `test_tags` and
