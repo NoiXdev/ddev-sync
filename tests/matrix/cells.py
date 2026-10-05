@@ -143,4 +143,25 @@ CELLS: tuple[Cell, ...] = (
         identity_column="id",
         seeded_users=("1", "2"),
     ),
+    Cell(
+        name="mxwordpress",
+        profile="wordpress",
+        project_type="wordpress",
+        # DDEV writes `docroot: ""` for WordPress: the project root is the web
+        # root, so wp-cli runs there.
+        docroot="",
+        php_image="php:8.3-cli",
+        # The resolved name, not `${WP_TABLE_PREFIX}`. The install chooses
+        # `mxwp_` rather than WordPress's default `wp_`, and the cell's config
+        # sets `database.wp_table_prefix` to match - see that file for why the
+        # prefix is configured rather than read from production's wp-config.php.
+        required_tables=("mxwp_users",),
+        admin_user="ddev",
+        password_column=("mxwp_users", "user_pass"),
+        production_url="https://acme-production.example",
+        # No `truncated_tables`: the profile has no truncate rule.
+        # Not `user_email`: the profile's sanitize rules rewrite it.
+        identity_column="user_login",
+        seeded_users=("alice", "bruno"),
+    ),
 )

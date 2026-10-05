@@ -1,0 +1,39 @@
+# The profile's own credentials source is `wp_cli`: the engine runs
+# `wp config get ...` on production over ssh to read the connection settings
+# and the table prefix. The stand-in production host is a minimal sshd image
+# with neither PHP nor wp-cli, so with that source the sync stops at preflight
+# with `sh: wp: not found`. This cell therefore uses the documented fallback -
+# explicit credentials plus `database.wp_table_prefix` - and what it proves is
+# the *override* of `${WP_TABLE_PREFIX}`, not its resolution from production's
+# wp-config.php.
+version: 1
+targets:
+  production:
+    host: remote
+    user: deploy
+    port: 2222
+    path: /srv/app/
+    stage: production
+database:
+  remote_credentials: explicit
+  # The prefix the install chose (see install.sh), and not WordPress's default
+  # `wp_`, so a profile that ignored the override would probe `wp_users`.
+  wp_table_prefix: mxwp_
+  credentials:
+    name: acme_prod
+    user: acme
+    password: s3cret
+    host: remote-db
+    port: "3306"
+sanitize:
+  rules:
+    # The per-project override VERIFIED.md says this profile needs: the
+    # shipped rule carries `https://REPLACE-ME.example`, a placeholder by
+    # design, because no profile can know a project's production URL. A list
+    # in the project config *extends* the profile's rules, so this runs in
+    # addition to that placeholder rule rather than instead of it.
+    - name: rewrite-site-url
+      operation: search_replace
+      driver: wp_cli
+      from: https://acme-production.example
+      to: https://mxwordpress.ddev.site

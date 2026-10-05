@@ -10,6 +10,7 @@ import re
 
 import pytest
 
+from ddev_sync.operations.catalog import LOCAL_ADMIN_PASSWORD
 from tests.matrix.cells import CELLS, Cell
 from tests.matrix.paths import cell_dir, work_dir
 from tests.matrix.stack import Stack
@@ -244,3 +245,103 @@ def test_doctrine_migrate_applied_the_pending_migration(stack: Stack, cell: Cell
         "WHERE version LIKE '%Version20260102000000'"
     )
     assert recorded == "1", f"the migration is not recorded as executed: {recorded}"
+
+
+def test_the_production_url_is_gone(stack: Stack, cell: Cell) -> None:
+    if cell.production_url is None:
+        pytest.skip(f"{cell.profile} rewrites no URL")
+    assert cell.password_column is not None
+    # The options table shares the users table's prefix, which the cell
+    # chose; deriving it keeps the test from hardcoding `wp_`.
+    options = cell.password_column[0].removesuffix("users") + "options"
+    query = (
+        f"SELECT option_name, option_value FROM `{options}` "
+        "WHERE option_name IN ('siteurl', 'home')"
+    )
+    # The precondition: production really carries the URL. Without it the
+    # assertions below would pass for a seed that never planted it.
+    seeded = stack.remote_sql(query)
+    assert seeded.returncode == 0, seeded.stderr
+    assert seeded.stdout.count(cell.production_url) == 2, seeded.stdout
+    # Asserted against `siteurl` and `home` rather than the whole database,
+    # because they are the two values WordPress actually reads - a rewrite
+    # that missed them would leave the local site pointed at production,
+    # which is the failure the rule exists to prevent.
+    local = stack.sql(query).splitlines()
+    # DDEV serves a project at `<name>.ddev.site`, which is where the rewrite
+    # has to point.
+    local_url = f"https://{cell.name}.ddev.site"
+    assert sorted(local) == [f"home\t{local_url}", f"siteurl\t{local_url}"], local
+
+
+def test_the_wordpress_prefix_override_reached_the_rules(stack: Stack, cell: Cell) -> None:
+    if cell.profile != "wordpress":
+        pytest.skip("`${WP_TABLE_PREFIX}` is WordPress's")
+    assert cell.password_column is not None and cell.identity_column is not None
+    table, _column = cell.password_column
+    # This installation chose a prefix other than WordPress's default, so the
+    # default table does not exist and only the configured one can have been
+    # named by the rules - which is what makes the next query meaningful.
+    assert stack.sql("SHOW TABLES LIKE 'wp\\_users'") == ""
+    logins = ", ".join(f"'{user}'" for user in cell.seeded_users)
+    where = f"`{cell.identity_column}` IN ({logins})"
+    # The effect of `anonymize-users` on the resolved table: every seeded row
+    # carries the rewritten address, and the rows are really there to be
+    # counted.
+    rewritten = stack.sql(
+        f"SELECT COUNT(*) FROM `{table}` "
+        f"WHERE {where} AND user_email = CONCAT('user', ID, '@example.invalid')"
+    )
+    assert rewritten == str(len(cell.seeded_users)), rewritten
+
+
+def test_the_wordpress_admin_is_an_administrator_with_the_documented_password(
+    stack: Stack, cell: Cell
+) -> None:
+    if cell.profile != "wordpress":
+        pytest.skip("`wp user create` is WordPress's")
+    assert cell.admin_user is not None
+    # A fresh import first, so the account is the one this very sync created.
+    # Re-running `sanitize` alone would not do: `reset-user-passwords` rewrites
+    # every row of the users table, the admin created by an earlier run
+    # included, and `create_admin` then finds the account already there and
+    # leaves its hash alone.
+    # The object cache is flushed first because this site has a persistent one
+    # and the engine flushes it only in `setup`, *after* `create_admin`: with an
+    # entry for `ddev` left over from an earlier run, `wp user create` believes
+    # the account exists, reports "already registered" - which the engine
+    # tolerates - and the freshly imported database has no such user. Reported
+    # with the cell; this line keeps the assertions below about the argv.
+    flushed = stack.web(["wp", "cache", "flush"])
+    assert flushed.returncode == 0, flushed.stderr
+    result = stack.engine("--target", "production", "--steps", "db,sanitize", "--yes")
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+    # `--role` and `--user_pass` are two of the tokens `CreateAdmin` builds for
+    # the wp_cli driver; the row existing (asserted elsewhere) shows neither.
+    roles = stack.web(["wp", "user", "get", cell.admin_user, "--field=roles"])
+    assert roles.returncode == 0, roles.stderr
+    assert roles.stdout.strip() == "administrator", roles.stdout
+    accepted = stack.web(["wp", "user", "check-password", cell.admin_user, LOCAL_ADMIN_PASSWORD])
+    assert accepted.returncode == 0, f"the documented password does not log in: {accepted.stderr}"
+    # `check-password` must be able to say no, or the line above proves nothing.
+    refused = stack.web(["wp", "user", "check-password", cell.admin_user, "not-the-password"])
+    assert refused.returncode != 0
+
+
+def test_wp_cache_flush_emptied_the_object_cache(stack: Stack, cell: Cell) -> None:
+    # The claim: the profile's `wp cache flush` really flushes. It is the
+    # profile's only setup command and it is `allow_failure`, so the engine
+    # prints OK whatever the command did; the effect is the only evidence.
+    # The install gives the site a persistent object cache (see
+    # cells/mxwordpress/install.sh) - without one the command has nothing to
+    # act on outside its own process.
+    if cell.profile != "wordpress":
+        pytest.skip("`wp cache flush` is WordPress's")
+    stored = stack.web(["wp", "cache", "set", "matrix_marker", "present", "matrix"])
+    assert stored.returncode == 0, stored.stderr
+    present = stack.web(["wp", "cache", "get", "matrix_marker", "matrix"])
+    assert present.stdout.strip() == "present", "the entry did not persist before the flush"
+    result = stack.engine("--target", "production", "--steps", "setup", "--yes")
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+    gone = stack.web(["wp", "cache", "get", "matrix_marker", "matrix"])
+    assert gone.returncode != 0, f"the entry survived `wp cache flush`: {gone.stdout}"

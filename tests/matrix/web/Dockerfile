@@ -21,3 +21,15 @@ RUN apt-get update \
  && docker-php-ext-install -j"$(nproc)" pdo_mysql mysqli intl zip gd
 
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+
+# wp-cli, on the PATH rather than downloaded by a recipe: the engine reaches
+# it by `docker exec` (`wp search-replace`, `wp user create`, `wp cache
+# flush`), and an exec'd process sees the image's PATH, not whatever an
+# install recipe exported. A real DDEV web container ships it for the same
+# reason. Taken from the wp-cli project's own build repository; the WordPress
+# cell's recipe prints the version it resolved to. It needs nothing beyond the
+# `mysqli` extension built above and a larger memory limit: a bare `php:*-cli`
+# has no php.ini, so PHP's built-in 128M applies, and `wp core download` runs
+# out of it while extracting WordPress. DDEV's own web container raises it too.
+ADD --chmod=0755 https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar /usr/local/bin/wp
+RUN echo 'memory_limit = 512M' > /usr/local/etc/php/conf.d/zz-matrix-memory.ini
