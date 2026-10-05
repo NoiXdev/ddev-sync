@@ -158,7 +158,11 @@ _ADMIN_DRIVERS: dict[str, list[str]] = {
 #   (default branch `14.x` - drush has no `main`; checked 2026-10-01) -
 #   raises "There is already a user account with the name <name>" (or
 #   "... with the email <mail>", not reachable here since this driver never
-#   passes --mail).
+#   passes --mail). Observed against drush 13.8.0 on Drupal 11.4.8, where the
+#   check is `UserCommands::createValidate()` instead: a second
+#   `vendor/bin/drush user:create ddev --password=...` exits 1 with nothing on
+#   stdout and, on stderr, `In UserCommands.php line 258:` followed by
+#   `There is already a user account with the name ddev`.
 # The tuple used to also carry "already in use" and "duplicate user" -
 # neither string appears anywhere in either source; they were invented, not
 # observed, and have been replaced with the two verified markers above.

@@ -308,8 +308,9 @@ def test_an_existing_drush_admin_is_not_an_error(
 ) -> None:
     # Verified against drush-ops/drush's src/Commands/user/UserCreateCommand.
     # php::doExecute() (default branch `14.x` - drush has no `main`; checked
-    # 2026-10-01): raises exactly this text when `user_load_by_name()` finds
-    # an existing account - again, never "duplicate user".
+    # 2026-10-01) and observed against drush 13.8.0 on Drupal 11.4.8, where a
+    # second `user:create ddev` exits 1 and prints exactly this text on stderr
+    # (stdout is empty): the account exists - again, never "duplicate user".
     runner = FakeCommandRunner()
     runner.script_prefix(
         ["docker", "exec"],
