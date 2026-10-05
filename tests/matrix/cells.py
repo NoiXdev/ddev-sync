@@ -36,6 +36,14 @@ class Cell:
     is genuinely not the reset value, so "every row was reset" cannot be
     asserted - "every *seeded* row was reset" can, and still fails when the
     reset never ran. The admin is found through the same column.
+
+    `remote_packages` is what the stand-in production host installs at start
+    (`|`-separated, the format of the sshd image's `INSTALL_PACKAGES`). The
+    default is what every sync needs - a mysqldump client and rsync. A profile
+    whose commands run on production itself needs more: WordPress's `wp_cli`
+    credentials source runs `wp` over ssh, so its cell adds PHP. It is a field,
+    not a shared default, because the packages are installed from the network
+    at every start and the other cells should not pay for them.
     """
 
     # `mx` + letters and digits only, for three independent reasons:
@@ -60,6 +68,7 @@ class Cell:
     truncated_tables: tuple[str, ...] = ()
     identity_column: str | None = None
     seeded_users: tuple[str, ...] = ()
+    remote_packages: str = "mariadb-client|rsync"
 
 
 # `name` is both the directory under `cells/` and the pytest parameter id, so
@@ -152,9 +161,10 @@ CELLS: tuple[Cell, ...] = (
         docroot="",
         php_image="php:8.3-cli",
         # The resolved name, not `${WP_TABLE_PREFIX}`. The install chooses
-        # `mxwp_` rather than WordPress's default `wp_`, and the cell's config
-        # sets `database.wp_table_prefix` to match - see that file for why the
-        # prefix is configured rather than read from production's wp-config.php.
+        # `mxwp_` rather than WordPress's default `wp_`; the engine reads that
+        # prefix from production's wp-config.php (cells/mxwordpress/remote-only/)
+        # over ssh, because the cell's config keeps the profile's `wp_cli`
+        # credentials source and sets no `database.wp_table_prefix`.
         required_tables=("mxwp_users",),
         admin_user="ddev",
         password_column=("mxwp_users", "user_pass"),
@@ -163,5 +173,8 @@ CELLS: tuple[Cell, ...] = (
         # Not `user_email`: the profile's sanitize rules rewrite it.
         identity_column="user_login",
         seeded_users=("alice", "bruno"),
+        # `wp config get` runs on production itself, so that host needs PHP; the
+        # init script in `remote-init/` adds wp-cli on top of it.
+        remote_packages="mariadb-client|rsync|php83|php83-phar|php83-mbstring|php83-openssl|php83-iconv|php83-ctype",
     ),
 )

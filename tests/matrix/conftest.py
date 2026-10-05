@@ -118,10 +118,15 @@ def _seed_remote_files(cell: Cell) -> None:
     that the framework creates those directories. That evidence is the local
     side - the installed project must have the directory the profile maps
     onto, or the pull has nowhere to land.
+
+    A cell may also have a `remote-only/` directory: files that exist on the
+    production host but belong to no mapped path (WordPress's wp-config.php),
+    so a sync never pulls them and no test expects it to.
     """
-    tree = cell_dir(cell.name) / "remote"
-    if tree.is_dir():
-        shutil.copytree(tree, remote_dir(cell.name), dirs_exist_ok=True)
+    for name in ("remote", "remote-only"):
+        tree = cell_dir(cell.name) / name
+        if tree.is_dir():
+            shutil.copytree(tree, remote_dir(cell.name), dirs_exist_ok=True)
 
 
 class Stacks:

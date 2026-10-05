@@ -12,7 +12,7 @@ import pytest
 
 from ddev_sync.operations.catalog import LOCAL_ADMIN_PASSWORD
 from tests.matrix.cells import CELLS, Cell
-from tests.matrix.paths import cell_dir, work_dir
+from tests.matrix.paths import cell_dir, remote_dir, work_dir
 from tests.matrix.stack import Stack
 
 pytestmark = pytest.mark.matrix
@@ -274,14 +274,17 @@ def test_the_production_url_is_gone(stack: Stack, cell: Cell) -> None:
     assert sorted(local) == [f"home\t{local_url}", f"siteurl\t{local_url}"], local
 
 
-def test_the_wordpress_prefix_override_reached_the_rules(stack: Stack, cell: Cell) -> None:
+def test_the_wordpress_prefix_read_from_production_reached_the_rules(
+    stack: Stack, cell: Cell
+) -> None:
     if cell.profile != "wordpress":
         pytest.skip("`${WP_TABLE_PREFIX}` is WordPress's")
     assert cell.password_column is not None and cell.identity_column is not None
     table, _column = cell.password_column
     # This installation chose a prefix other than WordPress's default, so the
-    # default table does not exist and only the configured one can have been
-    # named by the rules - which is what makes the next query meaningful.
+    # default table does not exist and only the prefix production's wp-config.php
+    # states can have been named by the rules - which is what makes the next
+    # query meaningful.
     assert stack.sql("SHOW TABLES LIKE 'wp\\_users'") == ""
     logins = ", ".join(f"'{user}'" for user in cell.seeded_users)
     where = f"`{cell.identity_column}` IN ({logins})"
@@ -345,3 +348,28 @@ def test_wp_cache_flush_emptied_the_object_cache(stack: Stack, cell: Cell) -> No
     assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
     gone = stack.web(["wp", "cache", "get", "matrix_marker", "matrix"])
     assert gone.returncode != 0, f"the entry survived `wp cache flush`: {gone.stdout}"
+
+
+def test_the_wordpress_prefix_comes_from_production_not_from_a_default(
+    stack: Stack, cell: Cell
+) -> None:
+    if cell.profile != "wordpress":
+        pytest.skip("`${WP_TABLE_PREFIX}` is WordPress's")
+    # The control for the test above, which passes whichever way the prefix
+    # reached the rules as long as it is `mxwp_`. Here production's wp-config.php
+    # is changed to a prefix no table has, and the sync must follow it: the
+    # preflight probe then names `zz_users`. A resolver that ignored the remote
+    # (a default, the local wp-config.php) would still find `mxwp_users` and
+    # let the sync through. The remote directory is a bind mount, so the edit
+    # is seen at once; it is put back whatever happens.
+    config = remote_dir(cell.name) / "wp-config.php"
+    original = config.read_text(encoding="utf-8")
+    assert "$table_prefix = 'mxwp_';" in original
+    try:
+        config.write_text(original.replace("'mxwp_'", "'zz_'"), encoding="utf-8")
+        result = stack.engine("--target", "production", "--steps", "db,sanitize", "--yes")
+    finally:
+        config.write_text(original, encoding="utf-8")
+    assert result.returncode != 0, result.stdout
+    assert "requires table 'zz_users'" in result.stdout, result.stdout
+    assert "Nothing was downloaded or imported" in result.stdout, result.stdout

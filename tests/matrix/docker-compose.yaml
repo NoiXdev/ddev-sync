@@ -76,15 +76,20 @@ services:
       # step; `universal-package-install` is the generic mod that installs an
       # arbitrary package list at startup.
       - DOCKER_MODS=linuxserver/mods:universal-package-install
-      - INSTALL_PACKAGES=mariadb-client|rsync
+      # Per cell: the default is what every sync needs, and a cell whose
+      # profile runs commands on production (WordPress's `wp` over ssh) adds
+      # what they need - see `Cell.remote_packages`.
+      - INSTALL_PACKAGES=${MATRIX_REMOTE_PACKAGES:-mariadb-client|rsync}
     volumes:
       - ${MATRIX_KEYS_DIR}:/keys:ro
       - ${MATRIX_REMOTE_DIR}:/srv/app
+      # Installs wp-cli when - and only when - the cell asked for PHP.
+      - ./remote-init:/custom-cont-init.d:ro
     healthcheck:
       # Checking the installed client, not just the port: the mod finishes
       # well after sshd starts listening, and a dump that races it fails with
-      # "mysqldump: not found".
-      test: ["CMD-SHELL", "test -s /config/.ssh/authorized_keys && command -v mysqldump && command -v rsync && nc -z localhost 2222"]
+      # "mysqldump: not found". Likewise `wp`, for the cell that has PHP.
+      test: ["CMD-SHELL", "test -s /config/.ssh/authorized_keys && command -v mysqldump && command -v rsync && { ! command -v php83 || command -v wp; } && nc -z localhost 2222"]
       interval: 3s
       timeout: 5s
       retries: 60

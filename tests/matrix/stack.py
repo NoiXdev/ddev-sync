@@ -102,6 +102,7 @@ def _env(cell: Cell) -> dict[str, str]:
         "MATRIX_PROJECT_DIR": str(work_dir(cell.name)),
         "MATRIX_KEYS_DIR": str(KEYS_DIR),
         "MATRIX_REMOTE_DIR": str(remote_dir(cell.name)),
+        "MATRIX_REMOTE_PACKAGES": cell.remote_packages,
         "MATRIX_UID": str(os.getuid()),
         "MATRIX_GID": str(os.getgid()),
     }
