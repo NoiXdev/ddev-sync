@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.matrix.cells import CELLS, Cell
+from tests.matrix.cells import Cell
 from tests.matrix.paths import KEYS_DIR, WORK_ROOT, cell_dir, remote_dir, work_dir
 from tests.matrix.stack import Stack, up
 
@@ -124,42 +124,72 @@ def _seed_remote_files(cell: Cell) -> None:
         shutil.copytree(tree, remote_dir(cell.name), dirs_exist_ok=True)
 
 
-@pytest.fixture(scope="session")
-def stacks(ssh_key: Path) -> Iterator[dict[str, Stack]]:
-    """Install, seed and start every cell once per session.
+class Stacks:
+    """The cells' stacks, each brought up the first time a test asks for it.
 
-    Session-scoped on purpose: `composer create-project` dominates the
-    runtime, so a per-test install would make the matrix unaffordable.
+    Lazy because a CI job runs one cell (`-k <cell>`) and must not pay for the
+    other frameworks' installs: an eager loop over `CELLS` installed all of
+    them whichever tests were selected. Whatever was started is kept so the
+    session's teardown closes it, and a cell whose setup failed keeps failing
+    with the same error instead of being installed again for every test.
     """
-    WORK_ROOT.mkdir(parents=True, exist_ok=True)
-    running: dict[str, Stack] = {}
-    try:
-        for cell in CELLS:
-            project = work_dir(cell.name)
-            if project.exists():
-                shutil.rmtree(project)
-            project.mkdir(parents=True)
-            remote_dir(cell.name).mkdir(parents=True, exist_ok=True)
-            stack = up(cell, MATRIX_IMAGE)
-            running[cell.name] = stack
-            _install(stack, cell)
-            _write_project_config(cell)
-            _seed(stack, cell)
-            _seed_remote_files(cell)
-        yield running
-    finally:
-        for stack in running.values():
+
+    def __init__(self) -> None:
+        self._running: dict[str, Stack] = {}
+        self._failed: dict[str, Exception] = {}
+
+    def get(self, cell: Cell) -> Stack:
+        """Install, seed and start `cell` on first use, then reuse it."""
+        if cell.name in self._failed:
+            raise self._failed[cell.name]
+        if cell.name not in self._running:
+            try:
+                self._start(cell)
+            except Exception as error:
+                self._failed[cell.name] = error
+                raise
+        return self._running[cell.name]
+
+    def _start(self, cell: Cell) -> None:
+        project = work_dir(cell.name)
+        if project.exists():
+            shutil.rmtree(project)
+        project.mkdir(parents=True)
+        remote_dir(cell.name).mkdir(parents=True, exist_ok=True)
+        stack = up(cell, MATRIX_IMAGE)
+        # Registered before the install, so a failing install is still torn down.
+        self._running[cell.name] = stack
+        _install(stack, cell)
+        _write_project_config(cell)
+        _seed(stack, cell)
+        _seed_remote_files(cell)
+
+    def close(self) -> None:
+        for stack in self._running.values():
             stack.down()
         # The installed project is a few hundred megabytes of vendor code, and
         # a stale one would be wiped at the next start anyway. Kept on request
         # so a failing cell can be inspected after the run.
         if not os.environ.get("DDEV_SYNC_MATRIX_KEEP"):
-            for cell in CELLS:
-                shutil.rmtree(work_dir(cell.name), ignore_errors=True)
-                shutil.rmtree(remote_dir(cell.name), ignore_errors=True)
+            for name in self._running:
+                shutil.rmtree(work_dir(name), ignore_errors=True)
+                shutil.rmtree(remote_dir(name), ignore_errors=True)
+
+
+@pytest.fixture(scope="session")
+def stacks(ssh_key: Path) -> Iterator[Stacks]:
+    """The session's stacks. Session-scoped on purpose: `composer
+    create-project` dominates the runtime, so a per-test install would make the
+    matrix unaffordable."""
+    WORK_ROOT.mkdir(parents=True, exist_ok=True)
+    registry = Stacks()
+    try:
+        yield registry
+    finally:
+        registry.close()
 
 
 @pytest.fixture
-def stack(cell: Cell, stacks: dict[str, Stack]) -> Stack:
+def stack(cell: Cell, stacks: Stacks) -> Stack:
     """The running stack for the cell this test is parameterised over."""
-    return stacks[cell.name]
+    return stacks.get(cell)
