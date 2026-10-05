@@ -228,6 +228,7 @@ def test_create_admin_uses_the_configured_driver(
 ) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["docker", "exec"], stdout="created")
+    runner.script_prefix(["docker", "exec"], stdout="role added")
     config = rule_config(name="admin", operation="create_admin", driver=driver, user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     argv = runner.calls[0]
@@ -317,11 +318,102 @@ def test_an_existing_drush_admin_is_not_an_error(
         returncode=1,
         stderr="There is already a user account with the name ddev",
     )
+    runner.script_prefix(["docker", "exec"], stderr=" [success] Added administrator role to ddev")
     config = rule_config(name="admin", operation="create_admin", driver="drush", user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     out = capsys.readouterr().out
     assert "already exists" in out
     assert "ddev" in out
+
+
+def _drush_role_command(runner: FakeCommandRunner) -> list[str]:
+    """The tokens after the container name of the drush driver's second command."""
+    argv = runner.calls[1]
+    return list(argv[argv.index("ddev-acme-web") + 1 :])
+
+
+def test_the_drush_driver_gives_the_account_the_administrator_role(tmp_path: Path) -> None:
+    # `user:create` has no role option, so the driver follows it with
+    # `user:role:add <role> <name>` (role first, observed against drush 13.8.0).
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout="created")
+    runner.script_prefix(["docker", "exec"], stderr=" [success] Added administrator role to ddev")
+    config = rule_config(name="admin", operation="create_admin", driver="drush", user="ddev")
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert len(runner.calls) == 2
+    assert _drush_role_command(runner) == [
+        "vendor/bin/drush",
+        "user:role:add",
+        "administrator",
+        "ddev",
+    ]
+
+
+def test_the_drush_role_is_a_rule_parameter(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout="created")
+    runner.script_prefix(["docker", "exec"], stdout="role added")
+    config = rule_config(
+        name="admin", operation="create_admin", driver="drush", user="ddev", role="site_admin"
+    )
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert _drush_role_command(runner)[2:] == ["site_admin", "ddev"]
+
+
+def test_an_existing_drush_account_still_gets_the_role(tmp_path: Path) -> None:
+    # The second sync of a project: the account is already there, and the role
+    # must be (re)assigned all the same.
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["docker", "exec"],
+        returncode=1,
+        stderr="There is already a user account with the name ddev",
+    )
+    runner.script_prefix(["docker", "exec"], stdout="role added")
+    config = rule_config(name="admin", operation="create_admin", driver="drush", user="ddev")
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert len(runner.calls) == 2
+    assert _drush_role_command(runner)[1] == "user:role:add"
+
+
+def test_a_failing_drush_role_assignment_is_an_error(tmp_path: Path) -> None:
+    # Verbatim from `drush user:role:add nosuchrole ddev` on drush 13.8.0 /
+    # Drupal 11.4.8: exit 1, on stderr. An account without the role is exactly
+    # what this step exists to prevent, so nothing is tolerated here.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout="created")
+    runner.script_prefix(
+        ["docker", "exec"],
+        returncode=1,
+        stderr=" [error]  Unable to load the user_role: nosuchrole ",
+    )
+    config = rule_config(
+        name="admin", operation="create_admin", driver="drush", user="ddev", role="nosuchrole"
+    )
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    message = str(caught.value)
+    assert "nosuchrole" in message
+    assert "Unable to load the user_role" in message
+
+
+def test_a_failed_drush_create_does_not_try_to_assign_the_role(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], returncode=1, stderr="Drush command terminated")
+    config = rule_config(name="admin", operation="create_admin", driver="drush", user="ddev")
+    with pytest.raises(OperationError):
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.parametrize("driver", ["typo3", "console", "wp_cli"])
+def test_the_other_drivers_run_no_second_command(tmp_path: Path, driver: str) -> None:
+    # Each of them makes an administrator in the one command it already runs.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout="created")
+    config = rule_config(name="admin", operation="create_admin", driver=driver, user="ddev")
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert len(runner.calls) == 1
 
 
 def test_a_drivers_tolerate_marker_is_not_honoured_for_a_different_driver(

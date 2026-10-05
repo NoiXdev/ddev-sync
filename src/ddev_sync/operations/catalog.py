@@ -137,6 +137,29 @@ _ADMIN_DRIVERS: dict[str, list[str]] = {
     "drush": ["vendor/bin/drush", "user:create"],
 }
 
+# A driver whose create command cannot make the account an administrator needs
+# a second command to give it the role. Only drush is in this position:
+# `typo3` has `--admin` and `wp_cli` has `--role`. Observed against drush 13.8.0
+# on Drupal 11.4.8: `user:create` has no role option (an account made with it
+# has only `authenticated`), and `user:role:add <role> <names>` takes the role's
+# machine name first and a comma-delimited list of user names second. Given a
+# role the user already has, it exits 0 and prints `Added administrator role to
+# ddev` again, so a re-sync needs no tolerance here; given a role that does not
+# exist it exits 1 (`Unable to load the user_role: <role>`), and that is a real
+# failure, because an account without the role is exactly what this exists to
+# prevent. It lives here rather than in a profile's `setup.commands` so the user
+# name is written once.
+_ADMIN_ROLE_COMMANDS: dict[str, list[str]] = {
+    "drush": ["vendor/bin/drush", "user:role:add"],
+}
+
+# The role the `drush` driver grants, unless the rule's `role` parameter says
+# otherwise. `administrator` is the machine name Drupal's `standard` install
+# profile creates; the `minimal` profile has no such role, so a project on it
+# (or on a profile with a differently named one) sets `role` on its
+# `create_admin` rule instead of editing the shipped profile.
+_DEFAULT_ADMIN_ROLE = "administrator"
+
 # Each marker is tied to one real CLI's observed output, not a guess, and
 # scoped per driver (`_ADMIN_DRIVERS` already keys by driver, so there is no
 # reason for, say, wp-cli's phrasing to also be tolerated from drush):
@@ -197,19 +220,37 @@ class CreateAdmin:
         )
         if result.ok:
             self._announce(user, password)
-            return
-        combined = f"{result.stdout}{result.stderr}".lower()
-        # `.get`, not `[driver]`: the driver is validated against
-        # `_ADMIN_DRIVERS` above, so a driver added there alone would
-        # otherwise take this lookup down with a bare KeyError traceback
-        # mid-sync. An empty default tolerates nothing, which is the safe
-        # direction - the failure below is reported rather than swallowed.
-        if any(marker in combined for marker in _ALREADY_EXISTS.get(driver, ())):
+        else:
+            combined = f"{result.stdout}{result.stderr}".lower()
+            # `.get`, not `[driver]`: the driver is validated against
+            # `_ADMIN_DRIVERS` above, so a driver added there alone would
+            # otherwise take this lookup down with a bare KeyError traceback
+            # mid-sync. An empty default tolerates nothing, which is the safe
+            # direction - the failure below is reported rather than swallowed.
+            if not any(marker in combined for marker in _ALREADY_EXISTS.get(driver, ())):
+                raise OperationError(
+                    f"sanitize rule {rule.name!r}: creating the admin user failed: "
+                    f"{result.stderr.strip()}"
+                )
             print(f"  local admin already exists - user: {user}")
+        # Also for an account that already existed: it may have been made by an
+        # earlier sync, or by hand, without the role.
+        self._grant_role(context, rule, driver, user)
+
+    @staticmethod
+    def _grant_role(context: ExecutionContext, rule: SanitizeRule, driver: str, user: str) -> None:
+        head = _ADMIN_ROLE_COMMANDS.get(driver)
+        if head is None:
             return
-        raise OperationError(
-            f"sanitize rule {rule.name!r}: creating the admin user failed: {result.stderr.strip()}"
+        role = str(rule.params.get("role", _DEFAULT_ADMIN_ROLE))
+        result = context.runner.run(
+            web_command(context.project, [*head, role, user], workdir=context.project.root)
         )
+        if not result.ok:
+            raise OperationError(
+                f"sanitize rule {rule.name!r}: giving {user!r} the role {role!r} failed: "
+                f"{result.stderr.strip()}"
+            )
 
     @staticmethod
     def _argv(driver: str, head: list[str], user: str, password: str) -> list[str]:
