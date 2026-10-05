@@ -28,6 +28,14 @@ class Cell:
     rewrites, `admin_user` the login a `create_admin` rule creates, and
     `production_url` the URL a sanitize rule must remove. `None` means the
     profile has no such rule - which is itself part of what the cell states.
+
+    `identity_column` and `seeded_users` say which rows of the password
+    table the cell's seed put there: the values of a column no sanitize rule
+    rewrites (a login name, not an email address). They exist because
+    `create_admin` runs after `reset_passwords` and inserts a row whose hash
+    is genuinely not the reset value, so "every row was reset" cannot be
+    asserted - "every *seeded* row was reset" can, and still fails when the
+    reset never ran. The admin is found through the same column.
     """
 
     # `mx` + letters and digits only, for three independent reasons:
@@ -50,6 +58,8 @@ class Cell:
     password_column: tuple[str, str] | None
     production_url: str | None
     truncated_tables: tuple[str, ...] = ()
+    identity_column: str | None = None
+    seeded_users: tuple[str, ...] = ()
 
 
 # `name` is both the directory under `cells/` and the pytest parameter id, so
@@ -68,5 +78,30 @@ CELLS: tuple[Cell, ...] = (
         password_column=("users", "password"),
         production_url=None,
         truncated_tables=("sessions", "jobs", "failed_jobs"),
+        # Not `email`: the profile's sanitize rules rewrite it.
+        identity_column="name",
+        seeded_users=("Alice Hofer", "Bruno Kalb"),
+    ),
+    Cell(
+        name="mxtypo313",
+        profile="typo3@13",
+        project_type="typo3",
+        docroot="public",
+        php_image="php:8.3-cli",
+        # The three non-tolerated requires_table rules in profiles/typo3.yaml.
+        # `tx_scheduler_task` and the fe_* tables are deliberately absent:
+        # they carry tolerate_missing_table because EXT:scheduler and
+        # EXT:frontend are optional, and asserting them here would turn an
+        # intended tolerance into a false failure.
+        required_tables=("be_sessions", "sys_log", "be_users"),
+        admin_user="ddev",
+        password_column=("be_users", "password"),
+        production_url=None,
+        # `tx_scheduler_task` is not listed: the base distribution does not
+        # install EXT:scheduler, so the table does not exist here. `fe_sessions`
+        # does (EXT:frontend ships in the distribution) and must be emptied.
+        truncated_tables=("be_sessions", "sys_log", "fe_sessions"),
+        identity_column="username",
+        seeded_users=("editor.hofer", "editor.kalb"),
     ),
 )

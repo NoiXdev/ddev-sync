@@ -88,13 +88,27 @@ def test_no_production_address_survives(stack: Stack, cell: Cell) -> None:
     )
 
 
-def test_every_password_was_reset_to_the_profiles_value(stack: Stack, cell: Cell) -> None:
+def test_every_seeded_password_was_reset_to_the_profiles_value(stack: Stack, cell: Cell) -> None:
     if cell.password_column is None:
         pytest.skip(f"{cell.profile} declares no reset_passwords rule")
     table, column = cell.password_column
-    hashes = stack.sql(f"SELECT DISTINCT `{column}` FROM `{table}`").splitlines()
-    assert hashes, f"{table} is empty - the dump or the import did not carry the seeded rows"
-    assert len(set(hashes)) == 1, f"not every password was reset: {hashes}"
+    assert cell.identity_column is not None and cell.seeded_users, (
+        f"{cell.name} has a password column but does not say which rows it seeded"
+    )
+    # Only the seeded rows: `create_admin` runs after the reset and adds a row
+    # whose hash is rightly not the reset value, and a framework CLI may add
+    # system users of its own (TYPO3's `_cli_`). What the cell can state is
+    # that every row *it put there* was reset.
+    logins = ", ".join(f"'{user}'" for user in cell.seeded_users)
+    hashes = stack.sql(
+        f"SELECT `{column}` FROM `{table}` WHERE `{cell.identity_column}` IN ({logins})"
+    ).splitlines()
+    # Every seeded user must be present, or a sync that dropped the rows (or an
+    # identity column that matches nothing) would pass with an empty list.
+    assert len(hashes) == len(cell.seeded_users), (
+        f"expected {len(cell.seeded_users)} seeded rows in {table}, found {len(hashes)}"
+    )
+    assert len(set(hashes)) == 1, f"not every seeded password was reset: {hashes}"
     assert "disabled" in hashes[0], f"the reset value is not the profile's: {hashes[0]!r}"
 
 
@@ -106,6 +120,21 @@ def test_the_local_admin_was_created(stack: Stack, cell: Cell) -> None:
     result = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
     assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
     assert cell.admin_user in result.stdout
+    # A second run finds the account already there. The engine tolerates that
+    # only by recognising the real CLI's refusal message, which is observed
+    # here rather than assumed: a marker that does not match what the CLI
+    # prints would fail every second sync of a developer's project.
+    again = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
+    assert again.returncode == 0, f"stdout:\n{again.stdout}\n\nstderr:\n{again.stderr}"
+    assert "already exists" in again.stdout, again.stdout
+    # The output names the user whether the account was created or merely found
+    # to exist, so the row itself is what shows the CLI really created it.
+    assert cell.password_column is not None and cell.identity_column is not None
+    table, _column = cell.password_column
+    count = stack.sql(
+        f"SELECT COUNT(*) FROM `{table}` WHERE `{cell.identity_column}` = '{cell.admin_user}'"
+    )
+    assert count == "1", f"{cell.admin_user!r} is not exactly one row of {table}: {count}"
 
 
 def test_every_truncate_rule_emptied_its_table(stack: Stack, cell: Cell) -> None:
@@ -153,3 +182,18 @@ def test_artisan_migrate_applied_the_pending_migration(stack: Stack, cell: Cell)
     status = stack.web(["php", "artisan", "migrate:status"])
     assert status.returncode == 0, f"stdout:\n{status.stdout}\n\nstderr:\n{status.stderr}"
     assert "Pending" not in status.stdout, status.stdout
+
+
+def test_the_typo3_schema_step_restored_the_missing_column(stack: Stack, cell: Cell) -> None:
+    # The claim: the profile's `vendor/bin/typo3 extension:setup` really brings
+    # the imported schema in line with the code. The install drops
+    # `tt_content.header_link` (see cells/mxtypo313/install.sh), the remote dump
+    # therefore lacks it, and the column exists after the sync only if the
+    # step re-added it. The step used to be `database:updateschema` under
+    # `allow_failure`, which the engine printed as OK while doing nothing: the
+    # effect is what would have shown that, so it stays asserted.
+    if cell.profile != "typo3@13":
+        pytest.skip("extension:setup is TYPO3's")
+    assert stack.sql("SHOW COLUMNS FROM tt_content LIKE 'header_link'").startswith("header_link"), (
+        "the missing column was not restored: the schema step did not take effect"
+    )
