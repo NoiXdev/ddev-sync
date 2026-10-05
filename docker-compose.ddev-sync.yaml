@@ -46,6 +46,10 @@ services:
       # uid has no passwd entry. The file is the image's own plus one line for
       # this uid, written by ddev-sync/prepare-sidecar.sh on every start.
       - ./ddev-sync/passwd:/etc/passwd:ro
+      # The home directory that entry names, created by the same script. It
+      # persists, because ssh keeps known_hosts in it and a fresh one after
+      # every `ddev stop` would mean trusting each host blindly again.
+      - ./ddev-sync/home:/home/ddev
       - ddev-global-cache:/mnt/ddev-global-cache
       - ddev-ssh-agent_socket_dir:/home/.ssh-agent
       # Framework commands run in the web container, which means talking to
@@ -53,10 +57,5 @@ services:
       # such in SECURITY.md; the alternative, installing the engine into the
       # web image, means a local image build on every first start.
       - /var/run/docker.sock:/var/run/docker.sock
-    # The home directory that passwd entry names. A tmpfs owned by the
-    # developer, because nothing in the image is writable by an arbitrary uid;
-    # ssh keeps its known_hosts there for as long as the container lives.
-    tmpfs:
-      - /home/ddev:uid=${DDEV_UID},gid=${DDEV_GID},mode=0700
     labels:
       com.ddev.site-name: ${DDEV_SITENAME}

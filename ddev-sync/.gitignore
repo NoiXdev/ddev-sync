@@ -1,0 +1,5 @@
+#ddev-generated
+# Both are written by prepare-sidecar.sh on every start and belong to the
+# machine they were written on, not to the project.
+/passwd
+/home/
