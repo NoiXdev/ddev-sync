@@ -217,7 +217,7 @@ def test_search_replace_missing_a_required_param_names_it(tmp_path: Path, missin
 @pytest.mark.parametrize(
     ("driver", "expected_head"),
     [
-        ("typo3", ["vendor/bin/typo3", "backend:createadmin"]),
+        ("typo3", ["vendor/bin/typo3", "backend:user:create"]),
         ("console", ["vendor/bin/typo3cms", "backend:createadmin"]),
         ("wp_cli", ["wp", "user", "create"]),
         ("drush", ["vendor/bin/drush", "user:create"]),
@@ -232,7 +232,7 @@ def test_create_admin_uses_the_configured_driver(
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     argv = runner.calls[0]
     assert list(argv[argv.index("ddev-acme-web") + 1 :][: len(expected_head)]) == expected_head
-    assert "ddev" in argv
+    assert any(part in ("ddev", "--username=ddev") for part in argv)
 
 
 def test_create_admin_uses_the_documented_local_password(tmp_path: Path) -> None:
@@ -240,7 +240,7 @@ def test_create_admin_uses_the_documented_local_password(tmp_path: Path) -> None
     runner.script_prefix(["docker", "exec"], stdout="created")
     config = rule_config(name="admin", operation="create_admin", driver="typo3", user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
-    assert LOCAL_ADMIN_PASSWORD in runner.calls[0]
+    assert f"--password={LOCAL_ADMIN_PASSWORD}" in runner.calls[0]
 
 
 def test_an_existing_admin_is_not_an_error(
@@ -248,13 +248,41 @@ def test_an_existing_admin_is_not_an_error(
 ) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(
-        ["docker", "exec"], returncode=1, stderr="A user with this name already exists"
+        ["docker", "exec"],
+        returncode=255,
+        # Verbatim from `vendor/bin/typo3 backend:user:create` run twice
+        # against a stock TYPO3 13.4.35.
+        stderr='The username "ddev" is already taken. Please use another username.',
     )
     config = rule_config(name="admin", operation="create_admin", driver="typo3", user="ddev")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     out = capsys.readouterr().out
     assert "already exists" in out
     assert "ddev" in out
+
+
+def test_an_existing_typo3_console_admin_is_not_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The `console` driver is typo3_console's `backend:createadmin`, whose
+    # message differs from core's `backend:user:create` ("is already taken").
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["docker", "exec"], returncode=1, stderr="A user with this name already exists"
+    )
+    config = rule_config(name="admin", operation="create_admin", driver="console", user="ddev")
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert "already exists" in capsys.readouterr().out
+
+
+def test_core_typo3_does_not_tolerate_the_console_drivers_message(tmp_path: Path) -> None:
+    # Core's command never says "already exists"; tolerating it there would
+    # only risk swallowing an unrelated failure that happens to contain it.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], returncode=1, stderr="the table already exists")
+    config = rule_config(name="admin", operation="create_admin", driver="typo3", user="ddev")
+    with pytest.raises(OperationError):
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
 
 
 def test_an_existing_wp_cli_admin_is_not_an_error(
@@ -299,7 +327,7 @@ def test_a_drivers_tolerate_marker_is_not_honoured_for_a_different_driver(
     tmp_path: Path,
 ) -> None:
     # Markers are scoped per driver (_ADMIN_DRIVERS already keys by driver):
-    # typo3's "already exists" has never been observed from wp-cli, so
+    # typo3_console's "already exists" has never been observed from wp-cli, so
     # tolerating it there would narrow nothing and risk swallowing a real
     # wp-cli failure that happens to share the substring.
     runner = FakeCommandRunner()
@@ -433,9 +461,11 @@ def test_create_admin_runs_the_framework_cli_in_the_web_container(tmp_path: Path
     assert "ddev-acme-web" in argv
     assert argv[argv.index("ddev-acme-web") + 1 :] == (
         "vendor/bin/typo3",
-        "backend:createadmin",
-        "ddev",
-        LOCAL_ADMIN_PASSWORD,
+        "backend:user:create",
+        "--username=ddev",
+        f"--password={LOCAL_ADMIN_PASSWORD}",
+        "--admin",
+        "--no-interaction",
     )
 
 

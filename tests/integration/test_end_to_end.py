@@ -46,10 +46,10 @@ def project(ssh_key: Path) -> Path:
     )
     (root / ".env").write_text("TYPO3_DB_NAME=placeholder\n", encoding="utf-8")
     # `sanitize`'s `local-admin` rule (profiles/typo3.yaml) execs
-    # `vendor/bin/typo3 backend:createadmin ...` in the web container (the
+    # `vendor/bin/typo3 backend:user:create ...` in the web container (the
     # `ddev-acme-web` stand-in in docker-compose.yaml, which mounts this
     # project at the same path) and treats anything but a zero exit (or an
-    # "already exists" message) as a hard failure. A stub that always
+    # "is already taken" message) as a hard failure. A stub that always
     # succeeds is enough to prove the rule dispatches and runs the right
     # argv; it is not the TYPO3 CLI's job to re-verify here.
     (root / "vendor" / "bin").mkdir(parents=True)

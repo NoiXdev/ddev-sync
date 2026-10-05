@@ -123,8 +123,15 @@ class SearchReplace:
             )
 
 
+# `typo3` is TYPO3 core's own `backend:user:create` (core since v12, checked
+# against a stock typo3/cms-base-distribution 13.4.35 with `--help`). It takes
+# options, not positionals, and `--admin` is what makes the account an
+# administrator. `backend:createadmin` - what this driver used to call - is
+# helhum/typo3-console's command, which a stock install does not have: there
+# it fails with `Command "backend:createadmin" is not defined`. The `console`
+# driver keeps it because that is exactly what `typo3cms` provides.
 _ADMIN_DRIVERS: dict[str, list[str]] = {
-    "typo3": ["vendor/bin/typo3", "backend:createadmin"],
+    "typo3": ["vendor/bin/typo3", "backend:user:create"],
     "console": ["vendor/bin/typo3cms", "backend:createadmin"],
     "wp_cli": ["wp", "user", "create"],
     "drush": ["vendor/bin/drush", "user:create"],
@@ -133,8 +140,13 @@ _ADMIN_DRIVERS: dict[str, list[str]] = {
 # Each marker is tied to one real CLI's observed output, not a guess, and
 # scoped per driver (`_ADMIN_DRIVERS` already keys by driver, so there is no
 # reason for, say, wp-cli's phrasing to also be tolerated from drush):
-# - "already exists": typo3's `backend:createadmin` (both the `typo3` and
-#   `console` drivers), e.g. "A user with this name already exists".
+# - "is already taken": TYPO3 core's `backend:user:create`, observed against a
+#   real 13.4.35 install: a second run with the same username exits 255 and
+#   prints `The username "ddev" is already taken. Please use another
+#   username.` The earlier marker "already exists" does not occur in that
+#   message, so with it a second sync would have failed.
+# - "already exists": typo3_console's `backend:createadmin` (the `console`
+#   driver), e.g. "A user with this name already exists".
 # - "is already registered": wp-cli's `user create`, verified against
 #   wp-cli/entity-command's `src/User_Command.php::create()` (default branch
 #   `main`, checked 2026-10-01) - `username_exists()` fails with exactly
@@ -149,7 +161,7 @@ _ADMIN_DRIVERS: dict[str, list[str]] = {
 # neither string appears anywhere in either source; they were invented, not
 # observed, and have been replaced with the two verified markers above.
 _ALREADY_EXISTS: dict[str, tuple[str, ...]] = {
-    "typo3": ("already exists",),
+    "typo3": ("is already taken",),
     "console": ("already exists",),
     "wp_cli": ("is already registered",),
     "drush": ("already a user account",),
@@ -205,6 +217,16 @@ class CreateAdmin:
             ]
         if driver == "drush":
             return [*head, user, f"--password={password}"]
+        if driver == "typo3":
+            # Every option is given, so the command never has to prompt; the
+            # explicit flag is belt and braces for a container with no tty.
+            return [
+                *head,
+                f"--username={user}",
+                f"--password={password}",
+                "--admin",
+                "--no-interaction",
+            ]
         return [*head, user, password]
 
     @staticmethod
