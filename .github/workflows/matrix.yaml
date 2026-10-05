@@ -169,13 +169,24 @@ jobs:
       # A green cell is evidence for exactly one VERIFIED.md row. The row is
       # emitted, not committed: a workflow writing that file would need push
       # access to main and would break the fast-forward-only convention.
+      #
+      # Run as a module, not by path: the tool imports the cell registry from
+      # `tests/`, and `python tools/apply_verified_rows.py` puts `tools/` on the
+      # import path instead of the repository root, so that import fails. The
+      # row sits in a code fence because a lone pipe-delimited line is not a
+      # Markdown table and would not render as one; `--apply` skips the fence.
       - name: Emit the VERIFIED.md row
         if: success()
         env:
           CELL: ${{ matrix.cell }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          uv run python tools/apply_verified_rows.py --emit "$CELL" \
-            --image "$DDEV_SYNC_MATRIX_IMAGE" \
-            --run "$RUN_URL" \
-            >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### VERIFIED.md row for \`$CELL\`"
+            echo
+            echo '```'
+            uv run python -m tools.apply_verified_rows --emit "$CELL" \
+              --image "$DDEV_SYNC_MATRIX_IMAGE" \
+              --run "$RUN_URL"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

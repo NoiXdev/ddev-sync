@@ -51,7 +51,7 @@ show_missing = true
 
 [tool.ruff]
 line-length = 100
-src = ["src", "tests"]
+src = [".", "src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN"]
@@ -59,4 +59,4 @@ ignore = ["ANN401"]
 
 [tool.mypy]
 strict = true
-files = ["src/ddev_sync", "tests"]
+files = ["src/ddev_sync", "tests", "tools"]
