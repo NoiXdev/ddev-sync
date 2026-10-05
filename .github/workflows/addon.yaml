@@ -1,0 +1,61 @@
+name: Add-on
+
+on:
+  # Every branch, as in ci.yaml, and for the same reason. `workflow_dispatch`
+  # is here so the job can be run by hand once the file is on GitHub.
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: addon-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bats:
+    name: Install, use and remove
+    runs-on: ubuntu-latest
+    # A stuck `ddev start` would otherwise hold the runner for the default six
+    # hours.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # DDEV's own setup action; `v1` is its floating major tag (v1.12.1 when
+      # this was written). `autostart: false` because the default is to run
+      # `ddev start` in the checkout, which is not a DDEV project: the suite
+      # creates its own project in a temporary directory.
+      - name: Install DDEV
+        uses: ddev/github-action-setup-ddev@v1
+        with:
+          autostart: false
+
+      # Built from source at a fixed tag, not from apt: `ubuntu-latest` moves
+      # between Ubuntu releases and their bats ranges from 1.2 (22.04) to 1.10
+      # (24.04), while the suite needs 1.8 or newer for `test_tags` and
+      # `--filter-tags`. Bats older than that has no such option and refuses
+      # to start, so a stale install cannot quietly select the wrong tests.
+      - name: Install bats
+        run: |
+          git clone --quiet --depth 1 --branch v1.14.0 \
+            https://github.com/bats-core/bats-core.git "$RUNNER_TEMP/bats-core"
+          sudo "$RUNNER_TEMP/bats-core/install.sh" /usr/local
+          bats --version
+          ddev version
+
+      # The suite builds the image itself and writes `.ddev/.env`, so there
+      # is nothing to pass in. It is the add-on under test, not the image, and
+      # a mismatch between them is exactly what this job should catch.
+      #
+      # Two selections, because the release test can only skip until Plan 8
+      # publishes something and must not be run in the same breath as the
+      # test that really installs: the skip stays visible on its own line, and
+      # the day it stops skipping it is already wired in.
+      - name: Install from the checkout, use it, remove it
+        run: bats tests/test.bats --filter-tags '!release' --print-output-on-failure
+
+      - name: Install from a release
+        run: bats tests/test.bats --filter-tags release
