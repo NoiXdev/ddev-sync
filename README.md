@@ -27,10 +27,22 @@ docker build -t ddev-sync:dev /path/to/ddev-sync
 
 cd /your/project
 ddev add-on get /path/to/ddev-sync
-printf 'DDEV_SYNC_IMAGE=ddev-sync\nDDEV_SYNC_VERSION=dev\n' >> .ddev/.env
+```
+
+Then add these two lines to the project's `.ddev/.env`:
+
+```
+DDEV_SYNC_IMAGE=ddev-sync
+DDEV_SYNC_VERSION=dev
+```
+
+Define a target in `.ddev/ddev-sync.yaml` (the install wrote a commented
+template), load your key, restart, and check:
+
+```bash
 ddev auth ssh
 ddev restart
-ddev sync doctor
+ddev sync --target production doctor
 ```
 
 **The order matters.** A pre-start hook runs on every project start and reads
@@ -40,8 +52,14 @@ not just the sidecar. The add-on also needs DDEV's ssh agent: if
 `ddev-ssh-agent` is listed in `omit_containers` anywhere, no project with the
 add-on installed will start, and the hook says what to remove.
 
-Installation, the first sync and removal are walked through in the
-documentation at <https://docs.noix.dev/ddev-sync/getting-started/installation/>.
+`doctor` is the proof that installation worked, and what to look for is the
+`web container` and `ssh agent` rows being `OK`. Without a reachable remote its
+`ssh connection` row will fail, and that is expected: it says nothing about the
+installation. The first connection to any remote host is interactive, because
+ssh asks you to confirm the host; run `doctor` from a terminal for that.
+
+The user documentation (`NoiXdev/noix-docs`, in its ddev-sync section) walks
+through installation, the first sync and removal.
 
 Only macOS with Docker Desktop and DDEV v1.25.4 has been exercised. Linux,
 Colima, OrbStack, rootless Docker and DDEV 1.24.x have not, and no real sync
