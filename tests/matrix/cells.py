@@ -92,6 +92,18 @@ class Cell:
     remote_packages: str = "mariadb-client|rsync"
 
 
+# Both TYPO3 cells keep the same cache tables, so they plant the same row.
+TYPO3_FLUSH_MARKER = FlushMarker(
+    table="cache_hash",
+    # `expires` far in the future, so an expiry sweep cannot be what removes the
+    # row; only `cache:flush` does.
+    insert=(
+        "INSERT INTO cache_hash (identifier, expires, content) "
+        "VALUES ('matrix_marker', 2000000000, 'present')"
+    ),
+    where="identifier = 'matrix_marker'",
+)
+
 # `name` is both the directory under `cells/` and the pytest parameter id, so
 # a failure names the variant directly.
 CELLS: tuple[Cell, ...] = (
@@ -133,16 +145,7 @@ CELLS: tuple[Cell, ...] = (
         truncated_tables=("be_sessions", "sys_log", "fe_sessions"),
         identity_column="username",
         seeded_users=("editor.hofer", "editor.kalb"),
-        flush_marker=FlushMarker(
-            table="cache_hash",
-            # `expires` far in the future, so an expiry sweep cannot be what
-            # removes the row; only `cache:flush` does.
-            insert=(
-                "INSERT INTO cache_hash (identifier, expires, content) "
-                "VALUES ('matrix_marker', 2000000000, 'present')"
-            ),
-            where="identifier = 'matrix_marker'",
-        ),
+        flush_marker=TYPO3_FLUSH_MARKER,
     ),
     Cell(
         name="mxtypo312",
@@ -157,16 +160,7 @@ CELLS: tuple[Cell, ...] = (
         truncated_tables=("be_sessions", "sys_log", "fe_sessions"),
         identity_column="username",
         seeded_users=("editor.hofer", "editor.kalb"),
-        flush_marker=FlushMarker(
-            table="cache_hash",
-            # `expires` far in the future, so an expiry sweep cannot be what
-            # removes the row; only `cache:flush` does.
-            insert=(
-                "INSERT INTO cache_hash (identifier, expires, content) "
-                "VALUES ('matrix_marker', 2000000000, 'present')"
-            ),
-            where="identifier = 'matrix_marker'",
-        ),
+        flush_marker=TYPO3_FLUSH_MARKER,
     ),
     Cell(
         name="mxsymfony",
