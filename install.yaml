@@ -10,6 +10,7 @@ project_files:
   - config.ddev-sync.yaml
   - ddev-sync/prepare-sidecar.sh
   - ddev-sync/.gitignore
+  - commands/sync/sync
 
 # The per-machine facts (the docker socket's group and a passwd entry for the
 # developer's uid) are not discovered here but by the pre-start hook in

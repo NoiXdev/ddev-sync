@@ -1,0 +1,20 @@
+#!/bin/sh
+
+#ddev-generated
+## Description: Pull remote database, files and setup into this project
+## Usage: sync [flags] [command]
+## Example: "ddev sync --dry-run"\n"ddev sync doctor"\n"ddev sync --target=production --steps=db"
+
+# This file lives in commands/sync/, so DDEV runs it inside the `sync`
+# service rather than on the host or in the web container - which is where
+# the engine, its profiles and its binaries are.
+#
+# The interpreter is /bin/sh, not bash: the sync image is Alpine and has no
+# bash, so `#!/usr/bin/env bash` fails there with "not found" (exit 127).
+#
+# Everything after `ddev sync` is handed to the engine as typed, except that
+# DDEV itself splits arguments at spaces before this script runs, so a value
+# containing a space (`--target "a b"`) arrives as two words. The project is
+# mounted at /var/www/html, which is the engine's own default project root,
+# so no path flag is needed here.
+ddev-sync "$@"
