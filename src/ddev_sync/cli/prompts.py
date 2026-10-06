@@ -34,7 +34,15 @@ def _select(question: str, choices: list[str]) -> str | None:
 
 
 def _checkbox(question: str, choices: list[str], defaults: list[str]) -> list[str] | None:
-    """Ask the user to tick any of `choices`, or `None` with no terminal."""
+    """Ask the user to tick any of `choices`, or `None` with no terminal.
+
+    An empty list is a third answer, distinct from both: questionary's
+    checkbox configures no validator, so Enter with nothing ticked exits
+    with `result=[]`. It is not filtered here - the question "did the user
+    choose nothing" belongs where the choice is acted on, and
+    `cli.commands.resolve_selection` refuses it there with a sentence that
+    names what was on offer.
+    """
     if not sys.stdin.isatty():
         return None
     options = [questionary.Choice(title=choice, checked=choice in defaults) for choice in choices]
