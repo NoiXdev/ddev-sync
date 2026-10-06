@@ -89,13 +89,13 @@ conversation were German only for discussion.
 |---|---|
 | `preflight` | `checking the connection, paths and free space` |
 | `db.dump` | `dumping the remote database` |
-| `db.download` | `fetching the dump` |
+| `db.download` | `nothing to fetch - db.dump streamed it already` |
 | `db.import` | `replacing the local database` |
 | `env` | `updating the local env file` |
 | `files.sync` | `syncing files from the remote` |
-| `s3.sync` | `syncing the S3 bucket` |
-| `sanitize` | `removing production data` |
-| `setup` | `running the project's setup commands` |
+| `s3.sync` | `pulling the S3 bucket` |
+| `sanitize` | `sanitizing the local database` |
+| `setup` | `running the setup commands` |
 
 Default output:
 
@@ -219,3 +219,27 @@ The project's gates apply unchanged: 100 % line and branch coverage, no
 - A configuration key for the default verbosity.
 - `--quiet`.
 - Any change to `render_plan` or the dry run.
+
+## Corrections after the first implementation
+
+The task review measured these against the code and found the design wrong on
+four points. They are recorded here rather than silently edited away, because
+the same mistakes are easy to make again.
+
+- **`db.download` describes nothing.** `engine/registry.py` maps that kind to
+  `NoOpOperation`; the dump is streamed to the local file by `db.dump`, as
+  that step's own plan detail says. "fetching the dump" would have been a
+  false claim about where the user's data went.
+- **A hook keeps its parent's `kind`.** So a fixed description per kind makes
+  a `pre_db_import` hook print "replacing the local database", which is false
+  and makes the hook's line indistinguishable from the real step's. A hook
+  prints its own `detail` instead, which is what it printed before this pass
+  and is true. Several non-hook steps of the same kind repeating one
+  description is repetitive but true, and is left alone.
+- **Three descriptions overstated.** `sanitize` also resets passwords and
+  rewrites configuration rather than only removing; `s3.sync` defaults to
+  `rclone copy`, pulling remote to local; and `setup` is not "the project's"
+  under `ddev sync build`, where only feature commands run.
+- **The completeness check is a test, not an import failure.** A missing entry
+  raises `KeyError` in the reporter mid-sync, so the guard is
+  `test_every_step_kind_has_a_description`, not anything in `steps.py`.

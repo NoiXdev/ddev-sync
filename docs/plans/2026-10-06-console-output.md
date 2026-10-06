@@ -113,20 +113,23 @@ In `src/ddev_sync/engine/steps.py`, below `STEP_ORDER`:
 
 ```python
 # What the default output shows instead of a command line. Kept beside the
-# enum rather than in the reporter so that adding a kind without describing it
-# fails in the module that defines it - the reporter would only print a blank
-# column. The text is English like every other string this tool prints; there
-# is no i18n layer.
+# enum rather than in the reporter so that the two cannot drift;
+# `test_every_step_kind_has_a_description` is what enforces completeness,
+# since a missing entry would be a `KeyError` in the reporter mid-sync. The
+# text is English like every other string this tool prints; there is no i18n
+# layer.
 STEP_DESCRIPTIONS: dict[StepKind, str] = {
     StepKind.PREFLIGHT: "checking the connection, paths and free space",
     StepKind.DB_DUMP: "dumping the remote database",
-    StepKind.DB_DOWNLOAD: "fetching the dump",
+    # Not "fetching": `engine/registry.py` maps this kind to `NoOpOperation`,
+    # because `db.dump` already streamed the dump into the local file.
+    StepKind.DB_DOWNLOAD: "nothing to fetch - db.dump streamed it already",
     StepKind.DB_IMPORT: "replacing the local database",
     StepKind.ENV: "updating the local env file",
     StepKind.FILES_SYNC: "syncing files from the remote",
-    StepKind.S3_SYNC: "syncing the S3 bucket",
-    StepKind.SANITIZE: "removing production data",
-    StepKind.SETUP: "running the project's setup commands",
+    StepKind.S3_SYNC: "pulling the S3 bucket",
+    StepKind.SANITIZE: "sanitizing the local database",
+    StepKind.SETUP: "running the setup commands",
 }
 ```
 
@@ -515,7 +518,20 @@ class VerboseRunner:
         return line
 ```
 
-**Note on `passthrough`:** Task 3 adds that parameter to the protocol. Write it here now, with the default, so the two tasks do not have to meet in the middle. Until Task 3 lands, `FakeCommandRunner.run` will not accept it — which is why the tests above never pass it.
+**Note on `passthrough`:** do **not** write it here. It is tempting to add the
+parameter early so the two tasks meet, but `VerboseRunner` forwards every
+keyword to the wrapped runner, and until Task 3 extends the protocol and the
+fake, forwarding a parameter they do not accept makes every call raise
+`TypeError`. Task 3 adds it to the protocol, `SubprocessRunner`,
+`FakeCommandRunner` and `VerboseRunner` in one go.
+
+**Note on `sensitive`:** this task adds a *different* parameter to the same
+protocol, `sensitive: bool = False`, because at `-vv` the credential-reading
+commands print their output before any secret is registered — and
+`_fetch_first_env_file` returns the whole production `.env`, so scrubbing a
+password could never have covered it. `SubprocessRunner` ignores the flag
+entirely; it is a statement about what comes back, and the narrator is its
+only reader.
 
 - [ ] **Step 6: Measure the duration**
 
@@ -615,8 +631,8 @@ Message: `feat(cli): add -v, -vv and -vvv`, with a body explaining that command 
 - Test: `tests/transport/test_runner.py`, `tests/operations/test_files.py`
 
 **Interfaces:**
-- Consumes: `ExecutionContext` from Task 2 (which added `secrets`); `_execution_context(context, *, runner, assume_yes, secrets)`.
-- Produces: `CommandRunner.run(..., passthrough: bool = False)`; `ExecutionContext.stdout_is_terminal: bool`; `Invocation.passthrough: bool`.
+- Consumes: `ExecutionContext` from Task 2 (which added `secrets`); `_execution_context(context, *, runner, assume_yes, secrets)`; `CommandRunner.run(..., sensitive: bool = False)` and `Invocation.sensitive`, which Task 2 added to the protocol and the fake.
+- Produces: `CommandRunner.run(..., passthrough: bool = False)`; `ExecutionContext.stdout_is_terminal: bool`; `Invocation.passthrough: bool`; the same parameter forwarded by `cli/verbose.py::VerboseRunner.run`, which Task 2 deliberately did not add.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -727,7 +743,9 @@ Note `stdout_path` and `passthrough` are mutually exclusive in practice — no c
 
 - [ ] **Step 4: Extend the fake**
 
-In `src/ddev_sync/transport/fake.py`, add `passthrough: bool` to `Invocation` and accept the parameter in `run`, recording it on the invocation. Give the field a default of `False` so the existing construction sites do not all have to change — or pass it explicitly if the fake builds `Invocation` in one place, which is cleaner.
+In `src/ddev_sync/transport/fake.py`, add `passthrough: bool` to `Invocation` and accept the parameter in `run`, recording it on the invocation, beside the `sensitive` field Task 2 added the same way.
+
+Then add the parameter to `cli/verbose.py::VerboseRunner.run` and forward it to the wrapped runner, next to the `sensitive` it already forwards. Task 2 left this out on purpose: forwarding a keyword the protocol did not yet accept made every call raise `TypeError`.
 
 - [ ] **Step 5: Carry the terminal fact**
 
@@ -865,6 +883,6 @@ Message: `feat(cli): separate every prompt from the output above it`, with a bod
 
 **Spec coverage.** Step lines and descriptions → Task 1. Verbosity levels → Task 2. Scrubbing and the secrets registry → Task 2. Progress → Task 3. Colour and the marker column → Task 1. Prompts → Task 4. Testing requirements are distributed across the tasks that create the behaviour. Nothing in the spec is unassigned.
 
-**Type consistency.** `ConsoleReporter(write, *, colour: bool = False, verbose: int = 0)` — Task 1 adds `colour`, Task 2 adds `verbose`. `run_command(..., colour: bool = False, verbose: int = 0, stdout_is_terminal: bool = False)` — one parameter per task, all keyword-only with defaults, so each task's change compiles on its own. `ExecutionContext` gains `secrets` in Task 2 and `stdout_is_terminal` in Task 3, both with defaults. `CommandRunner.run` gains `passthrough` in Task 3; Task 2's `VerboseRunner` already forwards it, which is stated there.
+**Type consistency.** `ConsoleReporter(write, *, colour: bool = False, verbose: int = 0)` — Task 1 adds `colour`, Task 2 adds `verbose`. `run_command(..., colour: bool = False, verbose: int = 0, stdout_is_terminal: bool = False)` — one parameter per task, all keyword-only with defaults, so each task's change compiles on its own. `ExecutionContext` gains `secrets` in Task 2 and `stdout_is_terminal` in Task 3, both with defaults. `CommandRunner.run` gains `sensitive` in Task 2 and `passthrough` in Task 3, and `VerboseRunner` forwards each in the task that adds it — never earlier, because forwarding a keyword the protocol does not accept raises `TypeError` on every call.
 
 **Ordering.** Task 2 depends on Task 1 (the reporter's shape). Tasks 3 and 4 depend on nothing, except that Task 3's `_execution_context` signature is the one Task 2 leaves behind. Run them in order 1, 2, 3, 4.
