@@ -153,6 +153,18 @@ def resolve_selection(
             "no steps selected. Without a terminal there is nothing to ask, so pass "
             f"--steps ({','.join(offered)}) or --yes for all of them."
         )
+    if not chosen:
+        # `None` and `[]` are two different answers and must not share a
+        # sentence: `None` is "there was no terminal to ask", while `[]` is
+        # Enter pressed at the picker with nothing ticked. questionary's
+        # checkbox has no validator, so it returns an empty list happily -
+        # which used to plan a lone preflight and report a successful sync
+        # that did nothing, the same failure `--steps ""` is refused for
+        # above. The primary interactive path is held to the same rule.
+        raise DdevSyncError(
+            f"no step was ticked, so there is nothing to sync. Available: {offered_text}. "
+            "Tick at least one, or pass --yes for all of them."
+        )
     return chosen
 
 

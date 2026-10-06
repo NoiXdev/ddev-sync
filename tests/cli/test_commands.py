@@ -766,6 +766,25 @@ def test_the_picker_is_offered_only_the_available_names(
     assert offered == [["db", "files", "sanitize", "setup"]]
 
 
+def test_ticking_nothing_in_the_picker_is_refused_rather_than_planning_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Enter at the checkbox with nothing ticked returns `[]`, not `None`:
+    questionary's checkbox configures no validator and exits with an empty
+    result. That used to plan a lone preflight and report a successful sync
+    that had done nothing - the identical failure `--steps ""` is refused
+    for, on the primary interactive path. The two refusals must stay
+    distinguishable, so this one must not read as "no terminal".
+    """
+    monkeypatch.setattr(commands, "choose_steps", lambda _available: [])
+    with pytest.raises(DdevSyncError) as error:
+        commands.resolve_selection(None, assume_yes=False, available=_AVAILABLE)
+    message = str(error.value)
+    assert "no step was ticked" in message
+    assert "db, files, sanitize, setup" in message
+    assert "terminal" not in message
+
+
 def test_without_a_terminal_the_hint_lists_only_the_available_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -784,6 +803,13 @@ def test_an_empty_steps_value_is_refused_rather_than_planning_nothing(steps: str
 
 
 def test_nothing_available_reads_none_rather_than_an_empty_list() -> None:
+    """An empty `available` is not reachable through the CLI today: `db` is
+    produced by every profile, including the generic one, so
+    `available_selection_groups` never returns an empty set in practice. This
+    pins the wording of a state the function must still handle - "Available:
+    none." rather than "Available: ." - and nobody should read it as evidence
+    that the state occurs.
+    """
     with pytest.raises(DdevSyncError, match=r"Available: none\."):
         commands.resolve_selection("db", assume_yes=True, available=frozenset())
     with pytest.raises(DdevSyncError, match=r"Available: none\."):
