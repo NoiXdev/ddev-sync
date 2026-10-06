@@ -213,11 +213,14 @@ TARGETS = [direct, with_jump, with_jump_no_user, aliased]
 
 @pytest.mark.parametrize("site", SITES)
 @pytest.mark.parametrize("make_target", TARGETS)
-def test_every_invocation_site_trusts_an_unknown_host_but_not_a_changed_one(
+def test_every_invocation_site_sets_the_accept_new_policy_and_no_other(
     site: str, make_target: Callable[[], ResolvedTarget]
 ) -> None:
+    # `accept-new` is what trusts an unknown host yet still refuses a changed
+    # one, so it must be there and it must be the only host-key policy given.
     options = ssh_options_of(site, make_target())
-    assert "StrictHostKeyChecking=accept-new" in options
+    policies = [option for option in options if option.startswith("StrictHostKeyChecking=")]
+    assert policies == ["StrictHostKeyChecking=accept-new"]
 
 
 @pytest.mark.parametrize("site", SITES)
