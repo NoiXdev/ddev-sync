@@ -150,10 +150,19 @@ records this so that nobody later "fixes" the omission.
 ### Progress
 
 `CommandRunner.run` gains `passthrough: bool = False`. When true the child's
-stdout and stderr are inherited rather than captured, so rsync writes its own
-progress to the terminal, and `CommandResult.stdout` and `.stderr` come back
-empty. The protocol, `SubprocessRunner` and `FakeCommandRunner` all learn it;
-the fake records it per invocation so a test can assert which calls used it.
+**stdout** is inherited so rsync writes its progress straight to the terminal,
+while **stderr stays captured**. That split is not a refinement; it is
+required. `operations/files.py` reads `result.stderr` to build its failure
+message, and rsync writes progress to stdout and errors to stderr, so
+inheriting both would have emptied the one thing the error path needs.
+
+The runner already has this exact shape: `_run_streaming`, the `stdout_path`
+mode, passes `stdout=sink, stderr=subprocess.PIPE` and returns `stdout=""`
+with a real stderr. Passthrough mirrors it with `stdout=None`.
+
+`CommandResult.stdout` therefore comes back empty for a passthrough call. The
+protocol, `SubprocessRunner` and `FakeCommandRunner` all learn the flag; the
+fake records it per invocation so a test can assert which calls used it.
 
 Only `operations/files.py` passes it, and only when stdout is a terminal: in a
 CI log rsync's `\r`-separated progress would produce thousands of lines. The
@@ -161,8 +170,9 @@ terminal check is made at the edge and handed down, like the colour flag —
 never sniffed inside the operation.
 
 This is the one change that weakens an otherwise strict boundary, so it is
-documented where it is declared: a passthrough call cannot have its output
-inspected, and a test asserts that the files step does not read it.
+documented where it is declared: a passthrough call cannot have its stdout
+inspected. A test asserts that the files step never reads it, and another that
+its stderr still reaches the failure message.
 
 ### Colour and the marker column
 
@@ -194,7 +204,8 @@ half the questions flush against the line above, which is the complaint.
 - A test that `FAIL` is separated from the step name — the regression that
   prompted this.
 - A test that `files.sync` passes `passthrough` only when told stdout is a
-  terminal, and one that it does not read the result's stdout.
+  terminal, one that it does not read the result's stdout, and one that a
+  failed passthrough rsync still reports the stderr it captured.
 - Colour is passed in, never sniffed, so every renderer test stays a plain
   string comparison.
 
