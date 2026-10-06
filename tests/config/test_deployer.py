@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ddev_sync.config.deployer import parse_dep_config
+from ddev_sync.config.deployer import _QUOTED_OUTPUT_LIMIT, parse_dep_config
 from ddev_sync.errors import DeployerError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dep-config-t3-13-ssg.json"
@@ -164,8 +164,15 @@ def test_output_that_is_not_json_fails_with_what_was_received() -> None:
 
 
 def test_what_was_received_is_truncated_to_something_a_terminal_can_hold() -> None:
+    # The quoted part is pinned to exactly the limit, not to a round number
+    # above it: `len(message) < 1000` passes just as happily with no
+    # truncation at 900 characters, which is already a message nobody reads
+    # in a terminal. The surrounding sentence is counted too, so the limit
+    # itself stays the only thing this test allows to change.
     message = _failure("x" * 5000)
-    assert len(message) < 1000
+    sentence = "`dep config --format=json` did not print JSON; it printed: "
+    assert message == sentence + "x" * _QUOTED_OUTPUT_LIMIT
+    assert _QUOTED_OUTPUT_LIMIT == 200
 
 
 def test_json_that_is_not_a_mapping_of_hosts_fails() -> None:
