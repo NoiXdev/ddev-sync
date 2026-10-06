@@ -612,6 +612,62 @@ def test_a_deployer_target_is_resolved_and_synced_through_one_runner(
     assert len(seen) > 1
 
 
+def test_dep_config_runs_once_even_when_the_target_fails_to_resolve(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One sync asks Deployer once, including on the way to an error.
+
+    The claim is about the whole invocation, not about one resolver: the memo
+    lives in a closure built inside `build_context`, so a second
+    `build_context` has a fresh one. `_build_run_context` used to make that
+    second call for *any* `TargetError`, and a single-target project whose
+    `deployer:` target is missing `stage` reaches it - the retry picks the
+    only name there is, without prompting, and fails identically. Counting
+    inside one resolver cannot see that, which is why this counts across
+    `main`.
+    """
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\ntargets:\n  production:\n    deployer: {host: web-1}\n",
+        encoding="utf-8",
+    )
+    payload = json.dumps(
+        {
+            "web-1": {
+                "hostname": "web-1.example",
+                "remote_user": "deploy",
+                "port": None,
+                "deploy_path": "/srv/app",
+                "current_path": "/srv/app/current",
+            }
+        }
+    )
+    dep_runs: list[tuple[str, ...]] = []
+
+    def run(
+        self: object,
+        argv: list[str],
+        *,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        stdout_path: Path | None = None,
+    ) -> CommandResult:
+        is_dep = tuple(argv[-2:]) == ("config", "--format=json")
+        if is_dep:
+            dep_runs.append(tuple(argv))
+        return CommandResult(tuple(argv), 0, payload if is_dep else "ddev-sync-ok\n", "")
+
+    monkeypatch.setattr("ddev_sync.transport.runner.SubprocessRunner.run", run)
+
+    code = invoke(project, tmp_path, "--yes", "--steps", "files")
+
+    assert code == 1
+    assert "is missing stage" in capsys.readouterr().err
+    assert len(dep_runs) == 1
+
+
 def test_describe_targets_shows_a_deployer_block_as_a_declaration(
     project: Path, tmp_path: Path
 ) -> None:

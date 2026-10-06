@@ -10,7 +10,7 @@ from ddev_sync.config.merge import LayerDoc, MergeResult, merge_layers
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import collect_targets, list_target_names, resolve_target
 from ddev_sync.ddev.project import DdevProject, read_ddev_project
-from ddev_sync.errors import ConfigError, TargetError
+from ddev_sync.errors import AmbiguousTargetError, ConfigError
 from ddev_sync.features.activation import DETECT_FEATURES_DEFAULT, Request, parse_feature_key
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT, FeatureRegistry
 from ddev_sync.features.resolver import FeatureResolution, resolve_features
@@ -185,11 +185,24 @@ def _text(value: object) -> str | None:
 
 
 def _pick_target_name(explicit: str | None, user_layers: list[LayerDoc]) -> str:
+    """The target to resolve, without ever prompting.
+
+    Both failures are `AmbiguousTargetError` rather than a plain
+    `TargetError` because they are the two - and the only two - that asking
+    the user which target to use can answer. `cli/main.py`'s
+    `_build_run_context` catches exactly this class to do that, so anything
+    else raised from here would make it rebuild the whole context to reach
+    the same error twice.
+    """
     if explicit is not None:
         return explicit
     names = list_target_names(collect_targets(user_layers))
     if not names:
-        raise TargetError("no sync targets are defined; run 'ddev sync init' to create one")
+        raise AmbiguousTargetError(
+            "no sync targets are defined; run 'ddev sync init' to create one"
+        )
     if len(names) == 1:
         return names[0]
-    raise TargetError(f"several targets are defined ({', '.join(names)}); choose one with --target")
+    raise AmbiguousTargetError(
+        f"several targets are defined ({', '.join(names)}); choose one with --target"
+    )

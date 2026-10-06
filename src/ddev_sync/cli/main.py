@@ -57,7 +57,7 @@ from ddev_sync.cli.commands import (
 from ddev_sync.cli.context import RunContext, build_context
 from ddev_sync.ddev.project import DEFAULT_PROJECT_ROOT
 from ddev_sync.engine.steps import SELECTION_GROUPS
-from ddev_sync.errors import DdevSyncError, TargetError
+from ddev_sync.errors import AmbiguousTargetError, DdevSyncError
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT
 from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT
 from ddev_sync.transport.runner import CommandRunner, SubprocessRunner
@@ -330,13 +330,25 @@ def _run(options: _Options, *, steps: str | None, dry_run: bool, assume_yes: boo
 def _build_run_context(options: _Options) -> RunContext:
     """Assemble the run context, falling back to an interactive target pick.
 
-    `build_context` resolves the target itself and raises `TargetError`
-    immediately - never prompting - when `target_name` is `None` and the
-    project defines zero or several targets. Retrying only on that specific
-    error, instead of resolving the target interactively up front, keeps
-    `read_ddev_project`'s "this does not look like a DDEV project" diagnostic
-    as the first thing a broken project sees, rather than masking it behind a
-    target question the project can never answer correctly anyway.
+    `build_context` resolves the target itself and raises
+    `AmbiguousTargetError` immediately - never prompting - when
+    `target_name` is `None` and the project defines zero or several targets.
+    Retrying only on that specific error, instead of resolving the target
+    interactively up front, keeps `read_ddev_project`'s "this does not look
+    like a DDEV project" diagnostic as the first thing a broken project
+    sees, rather than masking it behind a target question the project can
+    never answer correctly anyway.
+
+    The `except` is that subclass and not `TargetError`, because a retry can
+    only ever help when the question is *which* target. Any other target
+    error - a missing `stage`, an unknown `extends`, a literal beside a
+    `deployer:` block - is the same error whichever name is supplied, and
+    catching it here rebuilt everything (the project read, the config load,
+    the type detection, the feature and profile resolution) only to fail
+    identically. For a `deployer:` target that rebuild also ran `dep config`
+    in the web container a second time, evaluating the project's own PHP
+    twice in one sync and giving it a second chance to answer differently -
+    exactly what memoising the resolver exists to prevent.
     """
 
     def build(name: str | None) -> RunContext:
@@ -357,7 +369,7 @@ def _build_run_context(options: _Options) -> RunContext:
         return build(resolve_target_name(options.target_name, options.project_root, options.home))
     try:
         return build(None)
-    except TargetError:
+    except AmbiguousTargetError:
         return build(resolve_target_name(None, options.project_root, options.home))
 
 
