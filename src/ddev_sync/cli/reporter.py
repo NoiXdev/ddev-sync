@@ -30,18 +30,24 @@ _MARK_COLOURS = {"ok": Colour.GREEN, "failed": Colour.RED}
 class ConsoleReporter:
     """Writes one line per step, plus notices and warnings."""
 
-    def __init__(self, write: Callable[[str], None], *, colour: bool = False) -> None:
+    def __init__(
+        self, write: Callable[[str], None], *, colour: bool = False, verbose: int = 0
+    ) -> None:
         self._write = write
         self._colour = colour
+        self._verbose = verbose
 
     def starting(self, step: PlannedStep) -> None:
         """Announce a step that is about to run, and say what it will do.
 
-        A hook keeps its parent's `kind` but is the user's own command, so the
-        parent's fixed description would be false for it; its `detail` is the
-        command itself.
+        From `-v` up every step shows its `detail`, the command it runs. Below
+        that a step shows its kind's fixed description - except a hook, which
+        keeps its parent's `kind` but is the user's own command, so the
+        parent's description would be false for it; its `detail` is the command
+        itself at every level.
         """
-        what = step.detail if step.is_hook else STEP_DESCRIPTIONS[step.kind]
+        show_detail = step.is_hook or self._verbose >= 1
+        what = step.detail if show_detail else STEP_DESCRIPTIONS[step.kind]
         self._write(f"  {_RUNNING:<{_MARK_WIDTH}}{step.kind.value:<{_NAME_WIDTH}}{what}")
 
     def finished(self, outcome: StepOutcome) -> None:
@@ -53,6 +59,8 @@ class ConsoleReporter:
         line = f"  {self._mark(outcome.status)}{outcome.step.kind.value:<{_NAME_WIDTH}}"
         if outcome.status == "skipped":
             line += "skipped"
+        if self._verbose >= 3 and outcome.duration is not None:
+            line = f"{line.rstrip()}  ({outcome.duration:.1f}s)"
         self._write(line.rstrip())
         if outcome.error is not None:
             for text in str(outcome.error).splitlines():

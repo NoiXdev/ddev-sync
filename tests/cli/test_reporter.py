@@ -124,3 +124,36 @@ def test_error_text_sits_under_the_step_name() -> None:
         StepOutcome(step=step(StepKind.DB_IMPORT), status="failed", error=DdevSyncError("boom"))
     )
     assert lines[1].index("boom") == lines[0].index("db.import")
+
+
+def test_level_one_appends_the_command_detail() -> None:
+    lines: list[str] = []
+    reporter = ConsoleReporter(write=lines.append, verbose=1)
+    reporter.starting(step(StepKind.DB_DUMP, detail="mysqldump --single-transaction $DB"))
+    assert "mysqldump --single-transaction $DB" in lines[0]
+
+
+def test_level_zero_keeps_the_fixed_description_for_a_regular_step() -> None:
+    reporter, lines = capture()
+    reporter.starting(step(StepKind.DB_DUMP, detail="mysqldump --single-transaction $DB"))
+    assert "mysqldump" not in lines[0]
+
+
+def test_level_three_reports_how_long_a_step_took() -> None:
+    lines: list[str] = []
+    reporter = ConsoleReporter(write=lines.append, verbose=3)
+    reporter.finished(StepOutcome(step=step(StepKind.DB_DUMP), status="ok", duration=1.5))
+    assert any("1.5" in line for line in lines)
+
+
+def test_the_duration_is_not_shown_below_level_three() -> None:
+    reporter, lines = capture()
+    reporter.finished(StepOutcome(step=step(StepKind.DB_DUMP), status="ok", duration=1.5))
+    assert not any("1.5" in line for line in lines)
+
+
+def test_level_three_shows_no_duration_for_a_step_that_never_ran() -> None:
+    lines: list[str] = []
+    reporter = ConsoleReporter(write=lines.append, verbose=3)
+    reporter.finished(StepOutcome(step=step(StepKind.SETUP), status="skipped"))
+    assert "(" not in lines[0]

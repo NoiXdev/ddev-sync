@@ -103,6 +103,16 @@ class ExecutionContext:
     # instance, not a string. `compare=False` keeps two otherwise-identical
     # contexts equal regardless of what either has resolved and cached so far.
     cache: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    # Mutable for the same reason as `cache` above, and `compare=False` for the
+    # same reason too. Whatever prints command output at `-vv` scrubs these
+    # from every line, and it is handed this very set rather than a copy,
+    # because the passwords are resolved during the run, after it was built.
+    #
+    # The local database password is deliberately absent. It is
+    # `database.LOCAL_DB_PASSWORD`, the fixed value DDEV documents publicly,
+    # and scrubbing the two characters `db` would mangle the database name,
+    # the container host `ddev-<project>-db` and much else besides.
+    secrets: set[str] = field(default_factory=set, repr=False, compare=False)
 
     def config(self, path: str, *, default: str) -> str:
         """Read a dotted path from the merged config, or return `default`."""

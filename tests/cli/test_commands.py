@@ -662,6 +662,88 @@ def test_no_color_keeps_the_sync_output_plain_on_a_terminal(
     assert "\x1b" not in output
 
 
+def _sync_output(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    *flags: str,
+) -> str:
+    _stub_sync_runner(project, monkeypatch)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    assert (
+        invoke(project, tmp_path, *flags, "--yes", "--target", "production", "--steps", "files")
+        == 0
+    )
+    return capsys.readouterr().out
+
+
+def test_a_plain_sync_does_not_print_command_output(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert "ddev-sync-ok" not in _sync_output(project, tmp_path, capsys, monkeypatch)
+
+
+def test_dash_v_shows_the_command_but_not_its_output(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = _sync_output(project, tmp_path, capsys, monkeypatch, "-v")
+    assert "rsync" in output
+    assert "ddev-sync-ok" not in output
+
+
+def test_dash_vv_prints_what_the_commands_wrote(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = _sync_output(project, tmp_path, capsys, monkeypatch, "-vv")
+    assert "ddev-sync-ok" in output
+    assert "\n      $ " not in output
+
+
+def test_dash_vvv_prints_each_argument_vector_and_the_step_timings(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = _sync_output(project, tmp_path, capsys, monkeypatch, "-vvv")
+    assert "      $ " in output
+    assert "s)" in output
+
+
+def test_the_secrets_set_is_handed_to_the_execution_context_not_copied(
+    project: Path,
+) -> None:
+    # The wrapper and the context have to hold the same set: the password is
+    # registered by the context's side, long after the wrapper was built.
+    context = build_context(
+        project_root=project,
+        home=project.parent / "home",
+        target_name="production",
+        type_flag=None,
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag=None,
+        no_features=False,
+    )
+    secrets: set[str] = set()
+    execution = commands._execution_context(
+        context, runner=SubprocessRunner(), assume_yes=True, secrets=secrets
+    )
+    assert execution.secrets is secrets
+
+
 def test_a_deployer_target_is_resolved_and_synced_through_one_runner(
     project: Path,
     tmp_path: Path,

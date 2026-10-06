@@ -13,6 +13,7 @@ from ddev_sync.cli.context import RunContext
 from ddev_sync.cli.prompts import choose_steps, choose_target
 from ddev_sync.cli.render import describe_endpoint, render_doctor, render_plan, render_targets
 from ddev_sync.cli.reporter import ConsoleReporter
+from ddev_sync.cli.verbose import VerboseRunner
 from ddev_sync.config.loader import discover_config_paths, load_user_layers
 from ddev_sync.config.merge import MergeResult
 from ddev_sync.config.targets import collect_targets, list_target_names
@@ -53,7 +54,7 @@ def doctor_command(
     `colour` is decided by the caller, which knows the real terminal and
     environment; this function only passes it on to the renderer.
     """
-    execution = _execution_context(context, runner=runner, assume_yes=True)
+    execution = _execution_context(context, runner=runner, assume_yes=True, secrets=set())
     report = PreflightOperation().check(execution)
     echo(render_doctor(report, context.target, colour=colour))
     # Every check the rendered checklist can show as FAIL has to fail the
@@ -86,11 +87,14 @@ def run_command(
     echo: Callable[[str], None],
     only_feature_setup: bool = False,
     colour: bool = False,
+    verbose: int = 0,
 ) -> int:
     """Plan and, unless `dry_run`, execute a sync.
 
     `colour` is decided by the caller, which knows the real terminal and
-    environment; this function only passes it on to the reporter.
+    environment; this function only passes it on to the reporter. `verbose`
+    is the number of `-v` flags: the reporter reads all of it, and from 2 up
+    the runner is wrapped so that command output is printed too.
     """
     plan = build_plan(
         target=context.target,
@@ -105,8 +109,13 @@ def run_command(
         echo(render_plan(plan))
         return 0
 
-    reporter = ConsoleReporter(write=echo, colour=colour)
-    execution = _execution_context(context, runner=runner, assume_yes=assume_yes)
+    # One set, handed to both the wrapper and the context: the passwords are
+    # registered on the context's side during the run, after the wrapper exists.
+    secrets: set[str] = set()
+    reporter = ConsoleReporter(write=echo, colour=colour, verbose=verbose)
+    if verbose >= 2:
+        runner = VerboseRunner(runner, write=echo, secrets=secrets, verbose=verbose)
+    execution = _execution_context(context, runner=runner, assume_yes=assume_yes, secrets=secrets)
     report = Executor(reporter=reporter).run(plan, execution)
     if "sanitize" not in selection:
         reporter.warn_unsanitized(context.target.stage.value)
@@ -191,7 +200,7 @@ def resolve_target_name(explicit: str | None, project_root: Path, home: Path) ->
 
 
 def _execution_context(
-    context: RunContext, *, runner: CommandRunner, assume_yes: bool
+    context: RunContext, *, runner: CommandRunner, assume_yes: bool, secrets: set[str]
 ) -> ExecutionContext:
     return ExecutionContext(
         project=context.project,
@@ -201,6 +210,7 @@ def _execution_context(
         downloads_dir=context.project.root / DOWNLOADS,
         assume_yes=assume_yes,
         keep_dump=_keep_dump(context.merged),
+        secrets=secrets,
     )
 
 

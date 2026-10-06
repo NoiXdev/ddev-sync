@@ -105,6 +105,7 @@ class _Options:
     only_feature_setup: bool
     dry_run: bool
     assume_yes: bool
+    verbose: int
     # One runner for the whole invocation. It is first used while the context
     # is built - a `deployer:` target asks the project's Deployer where to
     # connect - and then executes the sync itself, so the two cannot disagree
@@ -119,6 +120,12 @@ class _Options:
 @click.option("--project-root", type=click.Path(path_type=Path), default=DEFAULT_PROJECT_ROOT)
 @click.option(
     "--yes", "assume_yes", is_flag=True, help="Assume every default; skip interactive prompts."
+)
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Show more: -v the commands, -vv their output, -vvv the full argv and timings.",
 )
 @click.option(
     "--dry-run",
@@ -187,6 +194,7 @@ def cli(
     steps: str | None,
     dry_run: bool,
     assume_yes: bool,
+    verbose: int,
     project_root: Path,
     home: Path | None,
     profile_root: Path,
@@ -215,6 +223,7 @@ def cli(
         only_feature_setup=only_feature_setup,
         dry_run=dry_run,
         assume_yes=assume_yes,
+        verbose=verbose,
         runner=SubprocessRunner(),
     )
     if ctx.invoked_subcommand is not None:
@@ -392,6 +401,7 @@ def _run(options: _Options, *, steps: str | None, dry_run: bool, assume_yes: boo
         echo=partial(click.echo, color=True if use_colour else None),
         only_feature_setup=options.only_feature_setup,
         colour=use_colour,
+        verbose=options.verbose,
     )
 
 

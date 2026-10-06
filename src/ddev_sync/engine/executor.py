@@ -5,6 +5,7 @@ reporting, and what must still happen after something fails - which is the
 entire reason it is a separate object from the operations.
 """
 
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -24,6 +25,9 @@ class StepOutcome:
     step: PlannedStep
     status: str
     error: Exception | None = None
+    # Seconds, measured around the step's own work. `None` for a step that
+    # never ran (a skipped one).
+    duration: float | None = None
 
 
 @dataclass(frozen=True)
@@ -128,12 +132,17 @@ class Executor:
 
     def _run_step(self, step: PlannedStep, context: ExecutionContext) -> StepOutcome:
         self.reporter.starting(step)
+        # `monotonic`, not `time.time`: a clock adjustment mid-sync must not
+        # produce a negative duration.
+        started = time.monotonic()
         try:
             self._dispatch(step, context)
         except DdevSyncError as error:
-            outcome = StepOutcome(step=step, status="failed", error=error)
+            outcome = StepOutcome(
+                step=step, status="failed", error=error, duration=time.monotonic() - started
+            )
         else:
-            outcome = StepOutcome(step=step, status="ok")
+            outcome = StepOutcome(step=step, status="ok", duration=time.monotonic() - started)
         self.reporter.finished(outcome)
         return outcome
 

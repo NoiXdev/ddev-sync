@@ -74,6 +74,9 @@ def read_remote_credentials(context: ExecutionContext) -> RemoteCredentials:
     if isinstance(cached, RemoteCredentials):
         return cached
     credentials = _read_remote_credentials(context)
+    # No emptiness check: every source above refuses an empty password, and the
+    # scrubber ignores an empty entry itself (`VerboseRunner._scrub`).
+    context.secrets.add(credentials.password)
     context.cache[_CREDENTIALS_CACHE_KEY] = credentials
     return credentials
 

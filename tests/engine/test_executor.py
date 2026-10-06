@@ -110,6 +110,24 @@ def test_every_step_runs_in_order(tmp_path: Path) -> None:
     assert [outcome.status for outcome in report.outcomes] == ["ok", "ok"]
 
 
+def test_each_outcome_carries_how_long_its_step_took(tmp_path: Path) -> None:
+    # Level three reports it, so it has to be measured even when nothing
+    # displays it. `>= 0.0` rather than `> 0.0`: a step that does nothing can
+    # finish inside the clock's resolution.
+    executor = executor_with([])
+    report = executor.run(plan_of(step(1, StepKind.PREFLIGHT)), context_at(tmp_path))
+    outcome = report.outcomes[0]
+    assert outcome.duration is not None
+    assert outcome.duration >= 0.0
+
+
+def test_a_failed_step_carries_its_duration_too(tmp_path: Path) -> None:
+    executor = executor_with([], failing={"preflight"})
+    report = executor.run(plan_of(step(1, StepKind.PREFLIGHT)), context_at(tmp_path))
+    assert report.outcomes[0].status == "failed"
+    assert report.outcomes[0].duration is not None
+
+
 def test_the_reporter_sees_each_step_start_and_finish(tmp_path: Path) -> None:
     calls: list[str] = []
     executor = executor_with(calls)

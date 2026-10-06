@@ -406,3 +406,23 @@ def test_a_dump_whose_connection_dropped_leaves_no_file_to_import_by_accident(
         DbDumpOperation().execute(context, {})
     # The next step in the plan would read this path; it must not exist.
     assert list(context.downloads_dir.glob("*.sql")) == []
+
+
+def test_a_resolved_remote_password_is_registered_for_scrubbing(tmp_path: Path) -> None:
+    # Whatever prints command output at -vv has to know what to remove, and
+    # this is the one funnel every credential source passes through.
+    config = {
+        "database": {
+            "remote_credentials": "explicit",
+            "credentials": {
+                "name": "mydb",
+                "user": "u",
+                "password": "hunter2",
+                "host": "h",
+                "port": "3306",
+            },
+        }
+    }
+    context = make_context(FakeCommandRunner(), tmp_path, config)
+    read_remote_credentials(context)
+    assert "hunter2" in context.secrets
