@@ -778,3 +778,23 @@ def test_check_reports_a_usable_agent_socket(
     report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
     assert report.agent_ok is True
     assert "proxy-socket" in report.agent_detail
+
+
+def test_the_remote_table_probe_does_not_disable_tls(tmp_path: Path) -> None:
+    # The local clients pass `--skip-ssl` because DDEV's own server offers no
+    # TLS. This probe is the opposite case: it runs through ssh on the
+    # production host, with that host's client and its own TLS policy, so
+    # carrying the option across would weaken a connection we do not own.
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="users\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [{"name": "wipe-users", "sql": "TRUNCATE TABLE users", "requires_table": "users"}],
+    )
+    PreflightOperation().execute(context, {"sanitize_selected": True})
+    # `ssh_command` shell-quotes the remote command into one argument, so the
+    # probe's own flags live in that string rather than in the argv.
+    probe = runner.calls[1][-1]
+    assert "SHOW TABLES" in probe
+    assert "--skip-ssl" not in probe

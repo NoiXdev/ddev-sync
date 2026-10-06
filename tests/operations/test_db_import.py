@@ -385,3 +385,20 @@ def test_a_failed_dump_rewrite_says_the_local_database_is_empty(
     # and `mysql` never ran, so nothing was imported.
     assert [call[0] for call in runner.calls] == ["mysqladmin", "mysqladmin"]
     assert "drop" in runner.calls[0]
+
+
+def test_the_local_client_calls_disable_tls_because_ddevs_server_has_none(
+    tmp_path: Path,
+) -> None:
+    # DDEV's database server ships with `have_ssl DISABLED` on every version it
+    # builds, while this image's MariaDB client is 11.8, which requires TLS by
+    # default. Without the option every local call fails with "SSL is required,
+    # but the server does not support it" - measured against a real DDEV
+    # project, where it took out the drop, the create and the import.
+    runner = import_runner()
+    context = make_context(runner, tmp_path)
+    with_dump(context)
+    DbImportOperation().execute(context, {})
+    assert [call[0] for call in runner.calls] == ["mysqladmin", "mysqladmin", "mysql"]
+    for call in runner.calls:
+        assert "--skip-ssl" in call, call

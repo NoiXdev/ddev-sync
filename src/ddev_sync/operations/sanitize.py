@@ -15,6 +15,7 @@ from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import (
     LOCAL_DB_PASSWORD,
     LOCAL_DB_PORT,
+    LOCAL_DB_TLS_OPTION,
     LOCAL_DB_USER,
 )
 from ddev_sync.operations.placeholders import expand_value
@@ -144,6 +145,7 @@ def local_mysql_argv(
         f"--password={LOCAL_DB_PASSWORD}",
         f"--host={context.project.db_container}",
         f"--port={LOCAL_DB_PORT}",
+        LOCAL_DB_TLS_OPTION,
         database,
     ]
     if sql is not None:

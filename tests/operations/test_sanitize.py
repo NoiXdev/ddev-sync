@@ -338,3 +338,11 @@ def test_sql_is_passed_as_one_argument_not_shell_text(tmp_path: Path) -> None:
         sql="UPDATE t SET x = 'a; DROP TABLE y'",
     )
     assert argv[-1] == "UPDATE t SET x = 'a; DROP TABLE y'"
+
+
+def test_the_local_mysql_argv_disables_tls(tmp_path: Path) -> None:
+    # Same reason as the import's own clients: DDEV's server offers no TLS and
+    # the 11.8 client demands it, so every sanitize rule's SQL failed to
+    # connect. See `LOCAL_DB_TLS_OPTION`.
+    argv = local_mysql_argv(make_context(FakeCommandRunner(), tmp_path), "db")
+    assert "--skip-ssl" in argv
