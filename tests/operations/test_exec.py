@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -5,7 +6,7 @@ import pytest
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
-from ddev_sync.ddev.project import DdevProject
+from ddev_sync.ddev.project import DdevProject, read_ddev_project
 from ddev_sync.operations.base import ExecutionContext, OperationError, PathEscapesProject
 from ddev_sync.operations.exec import (
     ExecOperation,
@@ -182,16 +183,14 @@ def test_the_entrys_workdir_becomes_dockers_working_directory(tmp_path: Path) ->
     assert argv[argv.index("-w") + 1] == "/var/www/html/web"
 
 
-def test_an_exec_with_workdir_through_a_symlinked_root_translates_correctly(
+def test_a_workdir_under_a_symlinked_root_still_reaches_the_container_path(
     tmp_path: Path,
 ) -> None:
     # read_ddev_project canonicalises the root, so that relative_to works
     # when resolve_local_path returns a canonicalised candidate. Without this,
-    # --project-root symlink-to-acme or --project-root . would fail on the
-    # first setup command with a workdir, raising ValueError instead of
+    # a --project-root that is relative or goes through a symlink would fail on
+    # the first setup command with a workdir, raising ValueError instead of
     # running the command.
-    from ddev_sync.ddev.project import read_ddev_project
-
     real_project = tmp_path / "real"
     symlink_project = tmp_path / "link"
     real_project.mkdir()
@@ -202,24 +201,11 @@ def test_an_exec_with_workdir_through_a_symlinked_root_translates_correctly(
     symlink_project.symlink_to(real_project)
     project = read_ddev_project(symlink_project)
     runner = ok_runner()
-    ExecOperation().execute(
-        ExecutionContext(
-            project=project,
-            target=ResolvedTarget(
-                name="production",
-                host="web01.example",
-                user="deploy",
-                port=22,
-                path="/srv/app/",
-                stage=Stage.PRODUCTION,
-            ),
-            merged=merge_layers([LayerDoc("profile", {"run": "true"})]),
-            runner=runner,
-            downloads_dir=project.root / ".ddev" / ".downloads",
-            assume_yes=True,
-        ),
-        {"run": "true", "workdir": "public"},
+    context = replace(
+        make_context(runner, tmp_path, run="true"),
+        project=project,
     )
+    ExecOperation().execute(context, {"run": "true", "workdir": "public"})
     assert workdir_of(runner.calls[0]) == "/var/www/html/public"
 
 

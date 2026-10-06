@@ -90,29 +90,22 @@ def test_the_web_and_db_container_names_differ_only_in_their_suffix() -> None:
     assert project.web_container == "ddev-shop-web"
 
 
-def test_canonicalises_a_relative_root(tmp_path: Path) -> None:
+def test_canonicalises_a_relative_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # resolve_local_path returns canonicalised paths; _container_workdir uses
     # Path.relative_to which is lexical and fails if the roots have different
     # canonical forms. read_ddev_project must canonicalise so that relative_to
     # works, even when the engine is run with --project-root . or a symlinked
     # path.
     write_ddev_config(tmp_path, "name: acme\ntype: php\n")
-    import os
-
-    original_cwd = os.getcwd()
-    try:
-        os.chdir(tmp_path)
-        project = read_ddev_project(Path("."))
-        assert project.root == tmp_path.resolve()
-        assert project.root.is_absolute()
-    finally:
-        os.chdir(original_cwd)
+    monkeypatch.chdir(tmp_path)
+    assert read_ddev_project(Path(".")).root == tmp_path.resolve()
 
 
 def test_canonicalises_a_symlinked_root(tmp_path: Path) -> None:
-    # Same issue as above: if the project is reached through a symlink,
-    # project.root must resolve it so that relative_to works against paths
-    # that took the real path.
+    # If the project is reached through a symlink, project.root must resolve
+    # it so that relative_to works correctly. resolve_local_path returns real
+    # paths, so a symlinked root would make a file inside the project look
+    # like it is outside it.
     real_project = tmp_path / "real"
     symlink_project = tmp_path / "link"
     real_project.mkdir()

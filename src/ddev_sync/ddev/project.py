@@ -47,12 +47,15 @@ class DdevProject:
 
 
 def read_ddev_project(project_root: Path) -> DdevProject:
-    """Read `.ddev/config.yaml` under `project_root`.
+    """Read `.ddev/config.yaml` under `project_root`, canonicalising the root.
 
-    Canonicalises the root to handle relative paths and symlinks: relative paths
-    are resolved relative to cwd, and symlinks are followed. Relative workdir
-    entries are resolved the same way before being translated onto the container
-    mount point, so this ensures Path.relative_to works correctly.
+    `root` is compared lexically against other paths - `transport/container.py`
+    maps a workdir onto the container's mount point with `Path.relative_to`,
+    and the paths it compares come from `operations/base.py::resolve_local_path`,
+    which always returns a resolved path. A relative or symlinked
+    `--project-root` would therefore make a directory inside the project look
+    like one outside it. Resolving here, the one place a `DdevProject` is
+    built, is what keeps the two sides comparable.
     """
     canonical_root = project_root.resolve()
     config_path = canonical_root / ".ddev" / "config.yaml"
