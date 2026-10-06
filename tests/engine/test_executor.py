@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -9,8 +11,10 @@ from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.executor import Executor, RunReport, StepOutcome
 from ddev_sync.engine.plan import Plan, PlannedStep
 from ddev_sync.engine.steps import StepKind
+from ddev_sync.errors import SyncInterrupted
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.transport.fake import FakeCommandRunner
+from ddev_sync.transport.runner import CommandResult
 
 
 class RecordingReporter:
@@ -323,3 +327,165 @@ def test_a_hook_step_runs_its_own_command_not_its_parent_operation(tmp_path: Pat
     assert report.failed is False
     assert [call[-3:] for call in runner.calls] == [("sh", "-c", "echo HOOK-RAN")]
     assert spy.calls == 1
+
+
+def interrupting_executor(interrupted: StepKind) -> Executor:
+    """An executor whose operation for `interrupted` raises `KeyboardInterrupt`.
+
+    The other operations succeed, so the plan's earlier steps finish and the
+    interrupt lands exactly where a test puts it - the same shape as
+    `executor_with`, raising what Ctrl-C raises instead of `OperationError`.
+    """
+
+    class Interrupting:
+        def __init__(self, kind: StepKind) -> None:
+            self._kind = kind
+
+        def execute(self, _context: ExecutionContext, _params: Any) -> None:
+            if self._kind is interrupted:
+                raise KeyboardInterrupt
+
+    return Executor(
+        reporter=RecordingReporter(),
+        operations={kind: Interrupting(kind) for kind in StepKind},
+    )
+
+
+def interrupted_message(executor: Executor, plan: Plan, context: ExecutionContext) -> str:
+    with pytest.raises(SyncInterrupted) as error:
+        executor.run(plan, context)
+    return str(error.value)
+
+
+def test_an_interrupt_reports_the_last_step_that_finished(tmp_path: Path) -> None:
+    # The executor already knows: it has been appending outcomes as it goes,
+    # and an interrupt used to fly past that list and discard it.
+    message = interrupted_message(
+        interrupting_executor(StepKind.DB_IMPORT),
+        plan_of(step(1, StepKind.DB_DUMP), step(2, StepKind.DB_IMPORT)),
+        context_at(tmp_path),
+    )
+    assert "after db.dump" in message
+
+
+def test_an_interrupt_after_the_import_warns_the_database_is_unsanitized(tmp_path: Path) -> None:
+    message = interrupted_message(
+        interrupting_executor(StepKind.SANITIZE),
+        plan_of(step(1, StepKind.DB_IMPORT), step(2, StepKind.SANITIZE)),
+        context_at(tmp_path),
+    )
+    assert "after db.import" in message
+    assert "was not sanitized" in message
+    assert "--steps sanitize" in message
+
+
+def test_an_interrupt_before_the_import_does_not_warn_about_data(tmp_path: Path) -> None:
+    # Nothing was replaced yet, so claiming production data is on the machine
+    # would be false - and a warning that cries wolf is worse than none.
+    message = interrupted_message(
+        interrupting_executor(StepKind.DB_DUMP),
+        plan_of(step(1, StepKind.DB_DUMP)),
+        context_at(tmp_path),
+    )
+    assert message == "Interrupted before the first step finished."
+
+
+def test_an_interrupt_once_sanitizing_finished_does_not_warn(tmp_path: Path) -> None:
+    message = interrupted_message(
+        interrupting_executor(StepKind.SETUP),
+        plan_of(step(1, StepKind.DB_IMPORT), step(2, StepKind.SANITIZE), step(3, StepKind.SETUP)),
+        context_at(tmp_path),
+    )
+    assert "after sanitize" in message
+    assert "sanit" not in message.removeprefix("Interrupted after sanitize.")
+
+
+def test_a_finished_pre_hook_does_not_stand_in_for_its_parent_step(tmp_path: Path) -> None:
+    # A hook carries its parent's `kind`, so a finished `pre_db_import` hook
+    # looks like a finished import to anything that only reads `kind`. The
+    # import has not run, though, and saying production data is on the machine
+    # would be false.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"])
+    message = interrupted_message(
+        interrupting_executor(StepKind.DB_IMPORT),
+        plan_of(
+            step(1, StepKind.DB_IMPORT, is_hook=True, params={"run": "x"}),
+            step(2, StepKind.DB_IMPORT),
+        ),
+        replace(context_at(tmp_path), runner=runner),
+    )
+    assert message.startswith("Interrupted after a db.import hook.")
+    assert "sanit" not in message
+
+
+def test_a_finished_pre_sanitize_hook_does_not_hide_the_warning(tmp_path: Path) -> None:
+    # The same confusion in the dangerous direction: a finished
+    # `pre_sanitize` hook must not count as sanitising having happened.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"])
+    message = interrupted_message(
+        interrupting_executor(StepKind.SANITIZE),
+        plan_of(
+            step(1, StepKind.DB_IMPORT),
+            step(2, StepKind.SANITIZE, is_hook=True, params={"run": "x"}),
+            step(3, StepKind.SANITIZE),
+        ),
+        replace(context_at(tmp_path), runner=runner),
+    )
+    assert "after a sanitize hook" in message
+    assert "was not sanitized" in message
+
+
+class InterruptingRunner(FakeCommandRunner):
+    """A runner whose every command is interrupted, as a hook's would be."""
+
+    def run(self, argv: Sequence[str], **_kwargs: Any) -> CommandResult:
+        raise KeyboardInterrupt
+
+
+def test_an_interrupted_post_import_hook_still_warns_because_the_import_finished(
+    tmp_path: Path,
+) -> None:
+    # The hook is interrupted, not the import: the import step itself
+    # finished, so the database really does hold production data.
+    message = interrupted_message(
+        interrupting_executor(StepKind.SANITIZE),
+        plan_of(
+            step(1, StepKind.DB_IMPORT),
+            step(2, StepKind.DB_IMPORT, is_hook=True, params={"run": "x"}),
+        ),
+        replace(context_at(tmp_path), runner=InterruptingRunner()),
+    )
+    assert message.startswith("Interrupted after db.import.")
+    assert "was not sanitized" in message
+
+
+def test_an_interrupt_skips_post_sync_hooks_and_says_so(tmp_path: Path) -> None:
+    context = context_with_post_sync(tmp_path)
+    message = interrupted_message(
+        interrupting_executor(StepKind.DB_DUMP), plan_of(step(1, StepKind.DB_DUMP)), context
+    )
+    runner = context.runner
+    assert isinstance(runner, FakeCommandRunner)
+    assert runner.calls == []
+    assert "post_sync hooks did not run" in message
+
+
+def test_an_interrupt_does_not_mention_post_sync_when_none_are_configured(
+    tmp_path: Path,
+) -> None:
+    message = interrupted_message(
+        interrupting_executor(StepKind.DB_DUMP),
+        plan_of(step(1, StepKind.DB_DUMP)),
+        context_at(tmp_path),
+    )
+    assert "post_sync" not in message
+
+
+def test_the_interrupt_is_chained_so_the_original_is_not_lost(tmp_path: Path) -> None:
+    with pytest.raises(SyncInterrupted) as error:
+        interrupting_executor(StepKind.DB_DUMP).run(
+            plan_of(step(1, StepKind.DB_DUMP)), context_at(tmp_path)
+        )
+    assert isinstance(error.value.__cause__, KeyboardInterrupt)

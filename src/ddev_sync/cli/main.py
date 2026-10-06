@@ -58,7 +58,7 @@ from ddev_sync.cli.context import RunContext, build_context
 from ddev_sync.ddev.project import DEFAULT_PROJECT_ROOT
 from ddev_sync.engine.plan import available_selection_groups
 from ddev_sync.engine.steps import SELECTION_GROUPS
-from ddev_sync.errors import AmbiguousTargetError, DdevSyncError
+from ddev_sync.errors import AmbiguousTargetError, DdevSyncError, SyncInterrupted
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT
 from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT
 from ddev_sync.transport.runner import CommandRunner, SubprocessRunner
@@ -459,6 +459,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     try:
         result: int = cli.main(args=list(argv) if argv is not None else None, standalone_mode=False)
+    except SyncInterrupted as error:
+        # Before `DdevSyncError` on purpose: it subclasses it, so a handler
+        # placed after would return 1 and the exit code would be silently
+        # wrong. 130 is the conventional code for a process ended by SIGINT.
+        click.echo(str(error), err=True)
+        return 130
+    except KeyboardInterrupt:
+        # An interrupt outside a running sync - during the step picker, or
+        # while the configuration is still being read. Nothing has been
+        # changed, so there is nothing to report beyond the fact itself.
+        click.echo("Interrupted.", err=True)
+        return 130
     except DdevSyncError as error:
         click.echo(str(error), err=True)
         return 1

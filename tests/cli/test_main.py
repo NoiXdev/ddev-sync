@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from ddev_sync.cli.main import main
+from ddev_sync.errors import SyncInterrupted
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
 FEATURE_ROOT = Path(__file__).parent / "features"
@@ -743,3 +744,34 @@ def test_no_features_combined_with_build_is_a_usage_error(
     error = capsys.readouterr().err
     assert "--no-features" in error
     assert "build" in error
+
+
+def test_a_bare_interrupt_exits_130_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # 130 is the conventional code for a process ended by SIGINT, and the
+    # traceback it used to print told a user nothing they could act on. This
+    # is the interrupt outside a running sync - the step picker, or
+    # configuration still being read - where nothing has changed.
+    def interrupt(*_args: object, **_kwargs: object) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("ddev_sync.cli.main.cli.main", interrupt)
+    assert main(["doctor"]) == 130
+    captured = capsys.readouterr()
+    assert captured.err == "Interrupted.\n"
+    assert "Traceback" not in captured.err
+
+
+def test_an_interrupted_sync_exits_130_and_prints_what_it_says(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # `SyncInterrupted` is a `DdevSyncError`, so a handler for the base class
+    # placed first would return 1 here and the exit code would be silently
+    # wrong. The sentence itself must reach the user unchanged.
+    def interrupt(*_args: object, **_kwargs: object) -> int:
+        raise SyncInterrupted("Interrupted after db.dump.")
+
+    monkeypatch.setattr("ddev_sync.cli.main.cli.main", interrupt)
+    assert main(["doctor"]) == 130
+    assert capsys.readouterr().err == "Interrupted after db.dump.\n"

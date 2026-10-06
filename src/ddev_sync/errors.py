@@ -39,3 +39,11 @@ class DetectionError(DdevSyncError):
 
 class DeployerError(DdevSyncError):
     """The project's Deployer configuration could not be read or understood."""
+
+
+class SyncInterrupted(DdevSyncError):
+    """The user interrupted a sync part-way through.
+
+    Carries what had already completed, because the state a half-finished
+    sync leaves behind is the only thing worth saying at that moment.
+    """
