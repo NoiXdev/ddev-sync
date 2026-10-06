@@ -183,7 +183,7 @@ if [ -e "${home_dir}" ] && { [ ! -d "${home_dir}" ] || [ ! -O "${home_dir}" ]; }
   fail "${home_dir} is not a directory of yours, which Docker creates when the service starts before this script has run. Remove it (sudo may be needed) and start again."
 fi
 
-uid="${DDEV_UID:?}"
+uid="${DDEV_UID:?DDEV did not export it to this hook, so the passwd entry the sidecar runs with cannot be written}"
 new_tmp "${state_dir}/passwd"
 passwd_tmp="${tmp}"
 new_tmp "${state_dir}/passwd"
@@ -198,7 +198,7 @@ if [ "${uid}" != 0 ]; then
   # A line for this uid already in the image (1000 is common on Linux) would
   # win over the new one, because the first match is returned.
   awk -F: -v uid="${uid}" '$3 != uid' "${passwd_tmp}" > "${base_tmp}"
-  { cat "${base_tmp}"; echo "ddev:x:${uid}:${DDEV_GID:?}:ddev:/home/ddev:/bin/sh"; } > "${passwd_tmp}"
+  { cat "${base_tmp}"; echo "ddev:x:${uid}:${DDEV_GID:?DDEV did not export it to this hook, so the passwd entry the sidecar runs with cannot be written}:ddev:/home/ddev:/bin/sh"; } > "${passwd_tmp}"
 fi
 chmod 644 "${passwd_tmp}"
 mv "${passwd_tmp}" "${passwd_file}"

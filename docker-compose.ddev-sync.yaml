@@ -8,6 +8,12 @@
 # is the project's own, not this image's.
 services:
   sync:
+    # The two defaults below are repeated in the `setting` calls at the end of
+    # ddev-sync/prepare-sidecar.sh, because the hook has to resolve the same
+    # image to read /etc/passwd out of it and cannot ask compose what it would
+    # use without running compose. Change one and change the other, or the hook
+    # reads the user database of a different image than the service runs, and
+    # the symptom is OpenSSH's "No user exists for uid".
     image: ${DDEV_SYNC_IMAGE:-noixdev/ddev-sync}:${DDEV_SYNC_VERSION:-0.1.0}
     container_name: ddev-${DDEV_SITENAME}-sync
     # The image's entrypoint is the engine itself, so a `command:` would be
@@ -45,8 +51,10 @@ services:
       # DDEV runs a service's custom commands from /mnt/ddev_config/commands/
       # and mounts nothing there for a service it does not know: without this
       # line `ddev sync` fails with "not found" (exit 127), which reads like a
-      # missing interpreter. Read-only, because the container has no reason to
-      # change the project's DDEV configuration.
+      # missing interpreter. Read-only, because nothing needs to write through
+      # this path - it exists so DDEV can find a command. It is no barrier: the
+      # same .ddev/ is writable through /var/www/html/.ddev above, which is
+      # where the engine reads and writes the project's configuration.
       - ./:/mnt/ddev_config:ro
       # The image only knows its own user, and OpenSSH aborts when the running
       # uid has no passwd entry. The file is the image's own plus one line for
