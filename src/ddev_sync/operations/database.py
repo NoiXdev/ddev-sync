@@ -96,8 +96,10 @@ def _from_config(context: ExecutionContext) -> RemoteCredentials:
     missing = [key for key, value in values.items() if not value]
     if missing:
         raise OperationError(
-            f"database.credentials is missing {', '.join(missing)}; "
-            "set them in .ddev/ddev-sync.yaml"
+            f"database.credentials is missing {', '.join(missing)}; they are "
+            "secrets, so set them in .ddev/ddev-sync.local.yaml rather than the "
+            "project file, and check that your repository ignores it - nothing "
+            "here does that for you"
         )
     return RemoteCredentials(**values)
 

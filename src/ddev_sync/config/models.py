@@ -181,7 +181,10 @@ class ResolvedTarget(BaseModel):
         ]
         if missing:
             raise ValueError(
-                f"target {self.name!r} is missing {', '.join(missing)}; "
-                "set them, or use ssh_alias to let ~/.ssh/config supply them"
+                f"target {self.name!r} is missing {', '.join(missing)}; set them. "
+                "`ssh_alias` can supply them from ~/.ssh/config, but only outside "
+                "the add-on: the sidecar is given no ~/.ssh/config, because a real "
+                "one carries IdentityFile paths and Include directives that do not "
+                "exist in the container"
             )
         return self

@@ -47,7 +47,12 @@ def test_resolved_target_requires_user_and_port_without_an_ssh_alias() -> None:
             path="/var/www/app/",
             stage=Stage.PRODUCTION,
         )
-    assert "user" in str(caught.value)
+    message = str(caught.value)
+    assert "user" in message
+    # The advice to use `ssh_alias` has to say where it works: the sidecar is
+    # given no ~/.ssh/config, so inside the add-on the suggestion cannot be
+    # followed at all.
+    assert "outside the add-on" in message
 
 
 def test_resolved_target_via_ssh_alias_needs_neither_user_nor_port() -> None:

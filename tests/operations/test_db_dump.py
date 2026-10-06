@@ -180,7 +180,14 @@ def test_explicit_credentials_missing_a_key_are_reported(tmp_path: Path) -> None
     config = {"database": {"remote_credentials": "explicit", "credentials": {"name": "mydb"}}}
     with pytest.raises(OperationError) as caught:
         read_remote_credentials(make_context(FakeCommandRunner(), tmp_path, config))
-    assert "user" in str(caught.value)
+    message = str(caught.value)
+    assert "user" in message
+    # The message used to send people to `.ddev/ddev-sync.yaml`, the file the
+    # add-on commits - so the engine was telling them to put a production
+    # password into git. The shipped template says `.local.yaml` for exactly
+    # that reason, and the committed name must not appear here at all.
+    assert ".ddev/ddev-sync.local.yaml" in message
+    assert ".ddev/ddev-sync.yaml" not in message
 
 
 def test_an_unknown_credentials_source_lists_the_valid_ones(tmp_path: Path) -> None:
