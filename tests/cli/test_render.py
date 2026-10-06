@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 
 from ddev_sync.cli.render import render_doctor, render_features, render_plan
@@ -663,3 +664,75 @@ def test_render_doctor_falls_back_to_the_host_when_a_report_has_no_ssh_detail() 
         line for line in render_doctor(report, _target()).splitlines() if "ssh connection" in line
     )
     assert line.endswith("web01.example")
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI.sub("", text)
+
+
+def _mixed_report() -> PreflightReport:
+    """One report with both markers, so a single render shows OK and FAIL rows."""
+    return PreflightReport(
+        ssh_ok=True,
+        remote_path_ok=False,
+        free_bytes=50 * 1024**3,
+        web_ok=True,
+        web_detail="web answers",
+    )
+
+
+def test_render_doctor_is_plain_unless_colour_is_asked_for() -> None:
+    assert "\x1b" not in render_doctor(_mixed_report(), _target())
+
+
+def test_render_doctor_colours_ok_green_and_fail_red_when_asked() -> None:
+    lines = render_doctor(_mixed_report(), _target(), colour=True).splitlines()
+    ssh = next(line for line in lines if "ssh connection" in line)
+    path = next(line for line in lines if "deploy path" in line)
+    assert ssh.startswith("  \x1b[32mOK\x1b[0m")
+    assert path.startswith("  \x1b[31mFAIL\x1b[0m")
+
+
+def test_render_doctor_colours_nothing_but_the_markers() -> None:
+    plain = render_doctor(_mixed_report(), _target())
+    coloured = render_doctor(_mixed_report(), _target(), colour=True)
+    # Removing the escape sequences must give back the plain output exactly:
+    # no label, detail or header carries any colour of its own.
+    assert _strip_ansi(coloured) == plain
+    # And each marker row carries exactly one painted span - the marker.
+    marker_rows = [line for line in coloured.splitlines() if "\x1b" in line]
+    assert len(marker_rows) == plain.count("OK") + plain.count("FAIL")
+    assert all(line.count("\x1b[0m") == 1 for line in marker_rows)
+    header = coloured.splitlines()[0]
+    assert "\x1b" not in header
+
+
+def test_render_doctor_keeps_the_label_column_where_it_is_with_colour_on() -> None:
+    """The alignment guarantee: colour must not move the label column.
+
+    ANSI escapes are characters, so padding an already-coloured marker to its
+    column width counts the escape bytes towards the width and adds no padding
+    at all - the label then runs into the marker. The column is measured on
+    what a terminal shows (the escapes removed) and, separately, on the raw
+    text, where the padding must follow the reset sequence.
+    """
+    plain = render_doctor(_mixed_report(), _target()).splitlines()
+    coloured = render_doctor(_mixed_report(), _target(), colour=True).splitlines()
+    assert len(plain) == len(coloured)
+    rows = 0
+    for plain_line, coloured_line in zip(plain, coloured, strict=True):
+        for label in ("ssh connection", "deploy path", "disk space", "web container"):
+            if label in plain_line:
+                rows += 1
+                visible = _strip_ansi(coloured_line)
+                assert visible.index(label) == plain_line.index(label)
+                # Raw text: after the reset comes plain padding that brings
+                # the marker cell to width 6, then the label - never zero
+                # spaces, which is what padding the coloured string produces.
+                marker = plain_line.split()[0]
+                after_reset = coloured_line.split("\x1b[0m", 1)[1]
+                assert after_reset.startswith(" " * (6 - len(marker)) + label)
+    assert rows == 4

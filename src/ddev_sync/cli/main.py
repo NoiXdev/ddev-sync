@@ -36,13 +36,17 @@ way `--features` and `--no-features` together are refused - nothing a user
 typed is ever quietly thrown away.
 """
 
+import os
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from functools import partial
 from importlib.metadata import version as package_version
 from pathlib import Path
 
 import click
 
+from ddev_sync.cli.colour import colour_enabled
 from ddev_sync.cli.commands import (
     doctor_command,
     resolve_selection,
@@ -255,7 +259,27 @@ def targets_cmd(options: _Options) -> int:
 def doctor_cmd(options: _Options) -> int:
     """Run the preflight checks against a target and print a checklist."""
     context = _build_run_context(options)
-    return doctor_command(context, click.echo)
+    # The one place the real environment and the real stdout are consulted;
+    # everything below this call receives the answer as a plain boolean.
+    #
+    # Inside the DDEV add-on this follows the terminal only: DDEV allocates a
+    # TTY for a service command when stdin and stdout are both terminals, and
+    # forwards the host's TERM and COLORTERM with it, but not NO_COLOR or
+    # FORCE_COLOR. Those two take effect when the engine runs directly (from
+    # a checkout, say). Do not "fix" that by listing them under `environment:`
+    # in docker-compose.ddev-sync.yaml: Compose binds those values when the
+    # container is created (`ddev start`), and a `docker exec` merely inherits
+    # them, so `NO_COLOR=1 ddev sync doctor` would still do nothing while a
+    # value that happened to be set at the last start would stick silently.
+    # If this needs to be controllable per call, the answer is a `--no-color`
+    # flag that works on every path, not a compose entry.
+    use_colour = colour_enabled(os.environ, sys.stdout)
+    # `click.echo` strips ANSI sequences from any stream that is not a
+    # terminal unless told otherwise, which would cancel `FORCE_COLOR` - the
+    # very case that asks for colour without a terminal. `None` leaves
+    # click's own default in place when colour is off.
+    echo = partial(click.echo, color=True if use_colour else None)
+    return doctor_command(context, echo, colour=use_colour)
 
 
 @cli.command("build")

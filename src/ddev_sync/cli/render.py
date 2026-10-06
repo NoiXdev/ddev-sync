@@ -7,6 +7,7 @@ in a golden file instead of being discovered in production.
 
 from collections.abc import Mapping
 
+from ddev_sync.cli.colour import Colour, paint_padded
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import CollectedTarget
 from ddev_sync.engine.plan import Plan, PlannedStep
@@ -14,6 +15,7 @@ from ddev_sync.operations.preflight import PreflightReport
 
 _KIND_WIDTH = 14
 _WHERE_WIDTH = 7
+_MARKER_WIDTH = 6
 _FEATURES_LABEL = "  Features  "
 _FEATURES_INDENT = " " * len(_FEATURES_LABEL)
 
@@ -144,7 +146,7 @@ def render_targets(collected: Mapping[str, CollectedTarget]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_doctor(report: PreflightReport, target: ResolvedTarget) -> str:
+def render_doctor(report: PreflightReport, target: ResolvedTarget, *, colour: bool = False) -> str:
     """Render the preflight report as a checklist.
 
     The sanitize-tables, web-container and ssh-agent rows are included only
@@ -152,6 +154,12 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget) -> str:
     (for sanitize: no remote database to query, or no rule requires a
     table), and a row would otherwise show either a false OK or need a third
     marker of its own.
+
+    `colour` paints the OK and FAIL markers, and nothing else, green and red.
+    It is an argument rather than something this function works out so that
+    the renderer stays a pure function of its inputs; the caller decides once
+    (see `ddev_sync.cli.colour.colour_enabled`). It defaults to off so every
+    caller that predates it, and every snapshot test, keeps its plain output.
     """
     checks = [
         # `ssh_detail` carries ssh's own reason when the connection failed;
@@ -176,6 +184,13 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget) -> str:
         # exactly its own length adds no separating space before the label -
         # the bug this replaced. Padding past the longest marker guarantees a
         # real gap for every marker, not just the shorter one.
-        marker = "OK" if ok else "FAIL"
-        lines.append(f"  {marker:<6}{label:<18}{detail}")
+        # The cell is padded before it is coloured (`paint_padded` does that
+        # in the right order): the escape sequences are characters too, so
+        # padding the coloured string would collapse this very gap.
+        marker = (
+            paint_padded("OK", _MARKER_WIDTH, Colour.GREEN, enabled=colour)
+            if ok
+            else paint_padded("FAIL", _MARKER_WIDTH, Colour.RED, enabled=colour)
+        )
+        lines.append(f"  {marker}{label:<18}{detail}")
     return "\n".join(lines) + "\n"

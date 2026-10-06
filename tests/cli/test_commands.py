@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -488,3 +489,71 @@ def test_doctor_exits_nonzero_when_the_agent_socket_is_unusable(
     )
     assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
     assert "ssh agent" in capsys.readouterr().out
+
+
+def _stub_doctor_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `doctor` render one OK row and one FAIL row, with no ssh involved."""
+    from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
+
+    monkeypatch.setattr(
+        PreflightOperation,
+        "check",
+        lambda _self, _context: PreflightReport(True, False, 50 * 1024**3),
+    )
+
+
+def test_doctor_colours_its_markers_on_a_terminal(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_doctor_report(monkeypatch)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
+    output = capsys.readouterr().out
+    assert "\x1b[32mOK\x1b[0m" in output
+    assert "\x1b[31mFAIL\x1b[0m" in output
+
+
+def test_doctor_stays_plain_when_the_output_is_not_a_terminal(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_doctor_report(monkeypatch)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
+    assert "\x1b" not in capsys.readouterr().out
+
+
+def test_doctor_stays_plain_on_a_terminal_when_no_color_is_set(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_doctor_report(monkeypatch)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
+    assert "\x1b" not in capsys.readouterr().out
+
+
+def test_force_color_reaches_the_output_even_though_it_is_not_a_terminal(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `click.echo` removes ANSI sequences from any stream that is not a
+    # terminal unless it is told otherwise, which would silently cancel
+    # FORCE_COLOR - the one case that exists for output that is not a terminal.
+    _stub_doctor_report(monkeypatch)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
+    output = capsys.readouterr().out
+    assert "\x1b[32mOK\x1b[0m" in output
+    assert "\x1b[31mFAIL\x1b[0m" in output

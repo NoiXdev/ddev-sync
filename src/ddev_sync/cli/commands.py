@@ -47,11 +47,17 @@ def targets_command(project_root: Path, home: Path, echo: Callable[[str], None])
     return 0
 
 
-def doctor_command(context: RunContext, echo: Callable[[str], None]) -> int:
-    """Run the preflight checks and print them as a checklist."""
+def doctor_command(
+    context: RunContext, echo: Callable[[str], None], *, colour: bool = False
+) -> int:
+    """Run the preflight checks and print them as a checklist.
+
+    `colour` is decided by the caller, which knows the real terminal and
+    environment; this function only passes it on to the renderer.
+    """
     execution = _execution_context(context, assume_yes=True)
     report = PreflightOperation().check(execution)
-    echo(render_doctor(report, context.target))
+    echo(render_doctor(report, context.target, colour=colour))
     # Every check the rendered checklist can show as FAIL has to fail the
     # command: low disk space is one `PreflightOperation.execute` refuses
     # outright, so leaving it out let a script gated on this exit status
