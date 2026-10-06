@@ -478,6 +478,17 @@ def test_a_jump_hosts_unknown_key_is_reported_without_the_proxy_placeholder(
     assert report.ssh_detail == "web01.example: Host key verification failed."
 
 
+def test_a_jump_host_that_times_out_is_reported_by_its_first_line(tmp_path: Path) -> None:
+    # The other form the placeholder takes: an unreachable bastion makes the
+    # outer ssh give up at the banner, and its second line only repeats that
+    # with "UNKNOWN port 65535" where an address should be.
+    stderr = (
+        "Connection timed out during banner exchange\nConnection to UNKNOWN port 65535 timed out\n"
+    )
+    report = PreflightOperation().check(make_context(failing_ssh(stderr), tmp_path))
+    assert report.ssh_detail == "web01.example: Connection timed out during banner exchange"
+
+
 def test_a_changed_key_behind_a_jump_host_still_says_it_changed(tmp_path: Path) -> None:
     stderr = _CHANGED_HOST_KEY + "Connection closed by UNKNOWN port 65535\n"
     report = PreflightOperation().check(make_context(failing_ssh(stderr), tmp_path))
