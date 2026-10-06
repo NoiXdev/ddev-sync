@@ -78,6 +78,6 @@ def _container_workdir(project: DdevProject, workdir: Path) -> Path:
         raise ValueError(
             f"{workdir} is not inside the project at {project.root}, "
             "so it has no place in the web container (an absolute `docroot:` in "
-            ".ddev/config.yaml would produce this)"
+            ".ddev/config.yaml can produce this)"
         ) from error
     return CONTAINER_PROJECT_ROOT / offset

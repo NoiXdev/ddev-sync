@@ -208,7 +208,8 @@ def test_storage_link_created_the_public_symlink(stack: Stack, cell: Cell) -> No
     assert link.is_symlink(), "public/storage is not a symlink: storage:link did not run"
     # Resolved in the web container, not on the host: Laravel writes the link's
     # target as an absolute path, and the path it sees is `/var/www/html/...`,
-    # which does not exist on the host that bind-mounts the project there.
+    # which is the mount point inside the container. The host has nothing
+    # there, so a host-side readlink would resolve to a path that is absent.
     resolved = stack.web(["readlink", "-f", "public/storage"])
     assert resolved.returncode == 0, resolved.stderr
     assert resolved.stdout.strip() == "/var/www/html/storage/app/public"
