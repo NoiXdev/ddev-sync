@@ -12,7 +12,8 @@ uv sync
 uv run ddev-sync --help
 ```
 
-Docker is needed only for the two container-backed suites described below.
+Docker is needed only for the three container-backed suites described below, and
+the add-on suite needs DDEV as well.
 
 ## Before a pull request
 
@@ -30,16 +31,37 @@ forbidden — `exclude_lines` is deliberately empty, so a pragma cannot be used 
 reach the number. New logic comes with tests; a bug fix gets a regression test that
 fails before it.
 
-Two further suites are excluded from the default run by their markers, because both
-drive real containers:
+Three further suites are excluded from the default run, because all of them drive
+real containers:
 
 ```bash
 uv run pytest -m integration           # a real pull: ssh, dump, import, rsync, sanitize
 uv run pytest -m matrix --no-cov       # installs real frameworks and syncs against them
+bats tests/test.bats --filter-tags '!release'   # installs the DDEV add-on and uses it
 ```
 
 The `--no-cov` on the matrix matters: without it the coverage gate applies to a
 matrix-only run and reports a failure that has nothing to do with your change.
+
+The first two are selected by their pytest markers. The last one is a
+[bats](https://bats-core.readthedocs.io/) suite and needs bats 1.8 or newer, DDEV
+and Docker: it creates a throwaway DDEV project, installs the add-on into it from
+your checkout, runs `ddev sync` there and removes the add-on again. It takes several
+minutes, because it builds the container image and starts a project. `--filter-tags
+'!release'` leaves out the one test that installs from a published release, which
+cannot pass until there is one.
+
+**Run it for any change under the add-on packaging** — `install.yaml`,
+`docker-compose.ddev-sync.yaml`, `config.ddev-sync.yaml`, `ddev-sync/` or
+`commands/` — because it is the only test in this repository that exercises
+installation. The Python suites cannot see a manifest that installs nothing, a
+command DDEV runs in the wrong service or a removal that leaves files behind. It
+asserts the manifest's file list in both directions, so adding or removing an
+installed file means updating `tests/test.bats` in the same change. Note that bats
+runs under the bash 3.2 that macOS ships, where `errexit` does not apply to a
+failing `[[ ]]` unless it is the last command of the test: every `[[ ]]` assertion
+in that suite ends in `|| false`, and a new one has to as well, or it is a silent
+no-op there.
 
 ## Changing a profile
 

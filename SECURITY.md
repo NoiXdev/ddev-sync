@@ -59,9 +59,10 @@ of them worse is very welcome.
 
   The socket's group is discovered at every project start, from inside a
   container, rather than assumed: the sidecar is added to whichever group owns the
-  socket where it will see it. On Docker Desktop for Mac, the only setup exercised, that group is
-  root (gid 0) inside the VM, so the sidecar is granted root-group access to
-  the daemon there, not merely membership of a `docker` group.
+  socket where it will see it. On Docker Desktop for Mac, the only setup
+  exercised, that group is root (gid 0) inside the VM, so the sidecar is granted
+  root-group access to the daemon there, not merely membership of a `docker`
+  group.
 
 ## What sanitize rules do and do not guarantee
 
