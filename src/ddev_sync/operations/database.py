@@ -315,8 +315,20 @@ class DbImportOperation:
             raise OperationError(f"{dump} is incomplete; delete it and run the sync again")
 
         database = context.config("database.target_database", default="db")
-        strip_definers(dump)
+        # `_recreate` first, because it is where the "this will drop the local
+        # database" confirmation lives. Rewriting the dump before it opened the
+        # longest window in the whole step - the whole file, and with `--yes`
+        # no prompt in front of it at all - in which a Ctrl-C was reported as
+        # "the local database may be partly replaced with production data"
+        # while nothing had been dropped or imported. The documented condition
+        # for that sentence is "during the import, once the drop has begun";
+        # doing the drop first is what makes it true, rather than widening the
+        # hedge to cover a window that should not be in it. Nothing between
+        # here and `_import` reads the dump, so the order is free: `_recreate`
+        # only runs mysqladmin drop/create, and the completeness check above
+        # already ran against the unmodified file.
         self._recreate(context, database)
+        strip_definers(dump)
         self._import(context, database, dump)
         if not context.keep_dump:
             dump.unlink(missing_ok=True)

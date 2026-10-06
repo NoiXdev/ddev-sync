@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -6,6 +8,7 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
+from ddev_sync.errors import InterruptedAtPrompt
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import (
     DUMP_FILENAME,
@@ -14,6 +17,7 @@ from ddev_sync.operations.database import (
     strip_definers,
 )
 from ddev_sync.transport.fake import FakeCommandRunner
+from ddev_sync.transport.runner import CommandResult
 
 COMPLETE_DUMP = "CREATE TABLE a (id int);\n-- Dump completed on 2026-09-30\n"
 
@@ -147,6 +151,79 @@ def test_a_failing_import_reports_the_error(tmp_path: Path) -> None:
     with pytest.raises(OperationError) as caught:
         DbImportOperation().execute(context, {})
     assert "ERROR 1064" in str(caught.value)
+
+
+DEFINER_DUMP = "CREATE DEFINER=`root`@`localhost` VIEW v AS SELECT 1;\n-- Dump completed\n"
+
+
+class DefinerWatchingRunner(FakeCommandRunner):
+    """Records, per command, whether the dump still carried its DEFINER clause.
+
+    The only way to observe *when* the rewrite happened relative to the drop
+    from outside the operation: `strip_definers` touches no runner, so the
+    file itself is the evidence.
+    """
+
+    def __init__(self, dump: Path) -> None:
+        super().__init__()
+        self._dump = dump
+        self.definer_present: list[tuple[str, bool]] = []
+
+    def run(self, argv: Sequence[str], **kwargs: Any) -> CommandResult:
+        self.definer_present.append((argv[0], b"DEFINER" in self._dump.read_bytes()))
+        return super().run(argv, **kwargs)
+
+
+def test_the_dump_is_rewritten_after_the_drop_and_before_the_import(tmp_path: Path) -> None:
+    """`strip_definers` used to rewrite the whole dump *before* `_recreate`,
+    which is where the "this will drop the local database" confirmation
+    lives. A Ctrl-C in that window is not an `InterruptedAtPrompt`, so it was
+    reported as the database possibly being part-way replaced with production
+    data while nothing had been dropped or imported - and under `--yes` there
+    was no prompt in front of it at all, making it the longest unguarded
+    window in the step. The documentation's condition for that sentence is
+    "during the import, once the drop has begun"; this ordering is what makes
+    it true.
+    """
+    runner = FakeCommandRunner()
+    context = make_context(runner, tmp_path)
+    dump = with_dump(context, DEFINER_DUMP)
+    watching = DefinerWatchingRunner(dump)
+    watching.script_prefix(["mysqladmin"], stdout="")
+    watching.script_prefix(["mysqladmin"], stdout="")
+    watching.script_prefix(["mysql"], stdout="")
+    DbImportOperation().execute(replace(context, runner=watching), {})
+    assert watching.definer_present == [
+        ("mysqladmin", True),
+        ("mysqladmin", True),
+        ("mysql", False),
+    ]
+
+
+def test_an_interrupt_at_the_drop_prompt_leaves_the_dump_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same ordering seen from the user's side: changing your mind at the
+    prompt must leave the downloaded dump exactly as it was downloaded. It
+    did not - the rewrite had already replaced the file - which is a write
+    the "that step had not changed anything" message denies happened.
+
+    Ctrl-C is delivered through the real prompt (`input` raising
+    `KeyboardInterrupt`), so what escapes is the real `InterruptedAtPrompt`
+    the executor reads, not a stand-in for it.
+    """
+
+    def interrupted(_prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", interrupted)
+    runner = import_runner()
+    context = make_context(runner, tmp_path, assume_yes=False)
+    dump = with_dump(context, DEFINER_DUMP)
+    with pytest.raises(InterruptedAtPrompt):
+        DbImportOperation().execute(context, {})
+    assert dump.read_text(encoding="utf-8") == DEFINER_DUMP
+    assert runner.calls == []
 
 
 def test_definer_clauses_are_removed(tmp_path: Path) -> None:
