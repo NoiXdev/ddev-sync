@@ -139,9 +139,9 @@ written against, and three things in it would break a naive reader:
 
 1. **`port` is JSON `null`, not absent.** A null means "not set", and the
    resolver must therefore **omit the key entirely** rather than pass `None`
-   along. The reason is specific: `config/targets.py:154` fills a missing port
-   with `flattened.setdefault("port", 22)`, and `setdefault` does not replace a
-   key that is present with the value `None`. Passing the null through would
+   along. The reason is specific: `_build` in `config/targets.py:235` fills a
+   missing port with `flattened.setdefault("port", 22)`, and `setdefault` does
+   not replace a key that is present with the value `None`. Passing the null through would
    leave `port=None`, `_ssh_prefix` would omit `-p` altogether, and the target
    would behave subtly differently from an otherwise identical literal one —
    which prints `-p 22`. Omitting the key makes the two paths produce byte-identical

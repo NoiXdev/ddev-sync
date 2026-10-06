@@ -740,8 +740,9 @@ def test_render_doctor_keeps_the_label_column_where_it_is_with_colour_on() -> No
 
 
 def test_render_targets_shows_a_deployer_block_as_a_declaration() -> None:
-    # The listing does no I/O and must not start to: a stopped project has to
-    # be able to list its own configuration. So this shows what was declared,
+    # The listing does no I/O and must not start to: resolving would tie it to
+    # the project's `deploy.php` evaluating cleanly, and a broken recipe would
+    # hide the configuration needed to fix it. So this shows what was declared,
     # not what it resolves to - the dry-run header shows the resolution.
     collected = {
         "prod": CollectedTarget(

@@ -133,9 +133,11 @@ def describe_endpoint(spec: TargetSpec) -> str:
     """One line saying where a target points, for a listing or a picker.
 
     A `deployer:` block is shown as the declaration it is. Resolving it would
-    mean running `dep config` in the web container, and both callers are
-    expected to work on a stopped project - a listing that cannot run without
-    the project running is not a listing.
+    mean running `dep config` in the web container, so the listing would
+    depend on the project's own `deploy.php` evaluating cleanly - and a
+    broken recipe would then hide the very configuration needed to fix it.
+    The resolution surfaces where work is already being done: the dry-run
+    header, and `doctor`.
     """
     if spec.deployer is not None:
         alias = "" if spec.deployer.host is None else f": {spec.deployer.host}"
