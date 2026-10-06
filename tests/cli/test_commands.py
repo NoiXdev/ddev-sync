@@ -600,6 +600,7 @@ def _stub_sync_runner(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
         stdout_path: Path | None = None,
+        sensitive: bool = False,
     ) -> CommandResult:
         return CommandResult(tuple(argv), 0, "ddev-sync-ok\n", "")
 

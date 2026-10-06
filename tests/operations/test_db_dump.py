@@ -426,3 +426,11 @@ def test_a_resolved_remote_password_is_registered_for_scrubbing(tmp_path: Path) 
     context = make_context(FakeCommandRunner(), tmp_path, config)
     read_remote_credentials(context)
     assert "hunter2" in context.secrets
+
+
+def test_the_remote_env_read_is_marked_sensitive(tmp_path: Path) -> None:
+    # Its stdout is the production .env in full: the database password, the
+    # app key, the mail credentials. Nothing may echo that, at any -v level.
+    runner = env_runner()
+    read_remote_credentials(make_context(runner, tmp_path))
+    assert runner.invocations[0].sensitive is True

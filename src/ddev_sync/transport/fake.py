@@ -25,6 +25,7 @@ class Invocation:
     cwd: Path | None
     env: dict[str, str] | None
     stdout_path: Path | None
+    sensitive: bool = False
 
 
 @dataclass
@@ -78,6 +79,7 @@ class FakeCommandRunner:
         cwd: Path | None = None,
         env: Mapping[str, str] | None = None,
         stdout_path: Path | None = None,
+        sensitive: bool = False,
     ) -> CommandResult:
         """Return the first unused matching script, or raise."""
         command = tuple(argv)
@@ -87,6 +89,7 @@ class FakeCommandRunner:
                 cwd=cwd,
                 env=dict(env) if env is not None else None,
                 stdout_path=stdout_path,
+                sensitive=sensitive,
             )
         )
         script = self._find(command)

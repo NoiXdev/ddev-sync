@@ -160,7 +160,9 @@ def _fetch_first_env_file(context: ExecutionContext, candidates: list[str]) -> t
         for path in paths
     )
     script = f"{tests}; exit 9"
-    result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]))
+    # The output is the whole production .env: every secret in it, not only the
+    # database password.
+    result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]), sensitive=True)
     if not result.ok:
         looked = ", ".join(paths)
         raise OperationError(
@@ -219,7 +221,8 @@ def _from_wp_cli(context: ExecutionContext) -> RemoteCredentials:
     remote_root = context.remote_code("")
     gets = " && ".join(f"wp config get {key}" for key in _WP_CREDENTIAL_KEYS)
     script = f"cd {shlex.quote(remote_root)} && {gets} && {_WP_TABLE_PREFIX_GET}"
-    result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]))
+    # The output is the database password, alone on a line.
+    result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]), sensitive=True)
     if not result.ok:
         raise OperationError(
             f"could not read wp-config on {context.target.host} via wp-cli in "

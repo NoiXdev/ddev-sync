@@ -90,3 +90,26 @@ def test_the_result_is_returned_unchanged() -> None:
     inner = runner_with(stdout="payload\n")
     runner = VerboseRunner(inner, write=lambda _: None, secrets=set(), verbose=3)
     assert runner.run(["echo", "x"]).stdout == "payload\n"
+
+
+def test_a_sensitive_commands_output_is_withheld() -> None:
+    lines: list[str] = []
+    runner = VerboseRunner(
+        runner_with(stdout="DB_PASSWORD=hunter2\nAPP_KEY=base64:x\n", stderr="also hunter2\n"),
+        write=lines.append,
+        secrets=set(),
+        verbose=2,
+    )
+    runner.run(["echo", "x"], sensitive=True)
+    assert not any("hunter2" in line for line in lines)
+    assert not any("APP_KEY" in line for line in lines)
+    # A silent gap would read as a command that printed nothing.
+    assert any("withheld" in line for line in lines)
+
+
+def test_the_sensitive_flag_reaches_the_wrapped_runner_and_the_result_is_returned() -> None:
+    inner = runner_with(stdout="payload\n")
+    runner = VerboseRunner(inner, write=lambda _: None, secrets=set(), verbose=2)
+    result = runner.run(["echo", "x"], sensitive=True)
+    assert inner.invocations[0].sensitive is True
+    assert result.stdout == "payload\n"

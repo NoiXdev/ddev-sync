@@ -50,8 +50,15 @@ class CommandRunner(Protocol):
         cwd: Path | None = None,
         env: Mapping[str, str] | None = None,
         stdout_path: Path | None = None,
+        sensitive: bool = False,
     ) -> CommandResult:
-        """Execute `argv`; stream stdout to `stdout_path` when given."""
+        """Execute `argv`; stream stdout to `stdout_path` when given.
+
+        `sensitive` says the output of this command carries credentials. It is
+        a statement about what comes back, not an instruction about how to run
+        the command: `SubprocessRunner` ignores it, and its only reader is the
+        verbose narrator (`cli/verbose.py`), which withholds the output.
+        """
 
 
 class SubprocessRunner:
@@ -64,8 +71,12 @@ class SubprocessRunner:
         cwd: Path | None = None,
         env: Mapping[str, str] | None = None,
         stdout_path: Path | None = None,
+        sensitive: bool = False,
     ) -> CommandResult:
-        """Execute `argv`, capturing output or streaming it to a file."""
+        """Execute `argv`, capturing output or streaming it to a file.
+
+        `sensitive` is deliberately unused: see `CommandRunner.run`.
+        """
         command = list(argv)
         try:
             if stdout_path is not None:

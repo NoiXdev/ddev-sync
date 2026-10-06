@@ -46,11 +46,24 @@ class VerboseRunner:
         cwd: Path | None = None,
         env: Mapping[str, str] | None = None,
         stdout_path: Path | None = None,
+        sensitive: bool = False,
     ) -> CommandResult:
-        """Run `argv` through the wrapped runner, printing what it did."""
+        """Run `argv` through the wrapped runner, printing what it did.
+
+        A sensitive command's output is replaced by one line saying so: scrubbing
+        cannot protect it, because the secrets in it are not known until the
+        caller has parsed it, which is after this method has returned.
+        """
         if self._verbose >= 3:
             self._emit(f"$ {' '.join(argv)}")
-        result = self._inner.run(argv, cwd=cwd, env=env, stdout_path=stdout_path)
+        result = self._inner.run(
+            argv, cwd=cwd, env=env, stdout_path=stdout_path, sensitive=sensitive
+        )
+        if sensitive:
+            # One line rather than nothing: a silent gap reads as a command
+            # that printed nothing.
+            self._emit("<output withheld: it carries credentials>")
+            return result
         for stream in (result.stdout, result.stderr):
             for line in stream.splitlines():
                 self._emit(line)

@@ -122,3 +122,11 @@ def test_too_few_lines_back_is_reported(tmp_path: Path) -> None:
         read_remote_credentials(make_context(runner, tmp_path, **WP_PROFILE))
     assert "expected 5" in str(caught.value)
     assert "table_prefix" in str(caught.value)
+
+
+def test_the_wp_cli_read_is_marked_sensitive(tmp_path: Path) -> None:
+    # Its stdout carries the database password on a line of its own, which no
+    # scrubber can remove before the caller has parsed it.
+    runner = wp_runner()
+    read_remote_credentials(make_context(runner, tmp_path, **WP_PROFILE))
+    assert runner.invocations[0].sensitive is True
