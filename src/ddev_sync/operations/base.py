@@ -46,8 +46,12 @@ def confirm(question: str, *, subject: str) -> bool:
     """
     try:
         # A blank line so the question separates from the step lines above it.
-        # After the guard, not before: with no terminal there is no question, and
-        # a stray newline would then appear in a piped log for no reason.
+        # Inside the `try`, so a Ctrl-C arriving between the newline and the
+        # prompt is still converted to `InterruptedAtPrompt`. Unlike the
+        # pickers in `cli/prompts.py` there is no terminal guard here - a
+        # closed stdin raises from `input()` below, after this newline has
+        # already been written, which costs one blank line in a piped log and
+        # is cheaper than a second way of detecting a terminal.
         print()
         answer = input(f"{question} [y/N] ").strip().lower()
     except KeyboardInterrupt as error:
