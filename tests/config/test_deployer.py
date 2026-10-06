@@ -57,9 +57,34 @@ def test_a_port_that_is_not_an_integer_fails_naming_the_key() -> None:
 
 
 def test_a_boolean_port_is_not_an_integer() -> None:
-    # `True` is an `int` in Python, so without a deliberate check a JSON `true`
-    # would silently become port 1.
+    # `True` is an `int` in Python, so a loose isinstance check would let a
+    # JSON `true` silently become port 1.
     assert "port" in _failure(_payload(port=True))
+
+
+def test_a_port_written_as_a_digit_string_is_read_as_an_integer() -> None:
+    # `->set('port', getenv('SSH_PORT'))` in a deploy.php, or `port: "2222"` in
+    # YAML, serialises as a string. That is a legitimate project.
+    assert parse_dep_config(_payload(port="2222"), None).port == 2222
+
+
+@pytest.mark.parametrize("port", ["", "None", "ssh", " 22", "22 ", "-5", "2.5", "\uff12\uff12"])
+def test_a_port_string_that_is_not_plain_ascii_digits_fails_quoting_it(port: str) -> None:
+    message = _failure(_payload(port=port))
+    assert "port" in message
+    assert repr(port) in message
+
+
+@pytest.mark.parametrize("port", [0, -5, 65536, 99999, "0", "99999"])
+def test_a_port_outside_1_to_65535_fails_quoting_it(port: object) -> None:
+    message = _failure(_payload(port=port))
+    assert "port" in message
+    assert repr(port) in message
+
+
+@pytest.mark.parametrize("port", [1, 65535, "65535"])
+def test_the_ends_of_the_port_range_are_accepted(port: object) -> None:
+    assert parse_dep_config(_payload(port=port), None).port == int(str(port))
 
 
 def test_the_layout_is_derived_from_current_path() -> None:
@@ -154,9 +179,10 @@ def test_a_host_whose_configuration_is_not_a_mapping_fails_naming_the_host() -> 
 
 
 def test_a_missing_hostname_falls_back_to_the_alias_key() -> None:
-    # Deployer omits `hostname` when a host is declared by alias only. The key
-    # the output is indexed by is then the only name available, and it is the
-    # one Deployer itself would connect to.
+    # Whether Deployer ever leaves `hostname` out is not something the fixture
+    # shows - there `alias` and `hostname` are both present and equal. This pins
+    # the fallback for the case: the key the output is indexed by is the only
+    # name left to connect to.
     assert parse_dep_config(_payload(hostname=None), None).host == "web-node-1.noidee.network"
 
 
@@ -170,3 +196,13 @@ def test_a_missing_remote_user_fails_naming_the_key() -> None:
 
 def test_a_value_of_the_wrong_type_fails_naming_the_key() -> None:
     assert "deploy_path" in _failure(_payload(deploy_path=42))
+
+
+@pytest.mark.parametrize("output", ["", "  \n"])
+def test_output_that_is_empty_says_it_printed_nothing(output: str) -> None:
+    assert "printed nothing" in _failure(output)
+
+
+@pytest.mark.parametrize("key", ["deploy_path", "remote_user"])
+def test_a_whitespace_only_required_value_counts_as_missing(key: str) -> None:
+    assert key in _failure(_payload(**{key: "   "}))

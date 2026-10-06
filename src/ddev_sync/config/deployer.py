@@ -30,6 +30,8 @@ from ddev_sync.errors import DeployerError
 # banner or a PHP warning, short enough not to bury the sentence around it.
 _QUOTED_OUTPUT_LIMIT = 200
 
+_MAX_PORT = 65535
+
 
 @dataclass(frozen=True)
 class DeployerConnection:
@@ -65,9 +67,8 @@ def _hosts(payload: str) -> dict[str, Any]:
         data = json.loads(payload)
     except json.JSONDecodeError:
         quoted = payload.strip()[:_QUOTED_OUTPUT_LIMIT]
-        raise DeployerError(
-            f"`dep config --format=json` did not print JSON; it printed: {quoted}"
-        ) from None
+        printed = f"it printed: {quoted}" if quoted else "it printed nothing"
+        raise DeployerError(f"`dep config --format=json` did not print JSON; {printed}") from None
     if not isinstance(data, dict):
         raise DeployerError(
             "`dep config --format=json` should print a mapping of hosts, "
@@ -116,20 +117,35 @@ def _text(config: dict[str, Any], key: str) -> str | None:
 
 def _required_text(config: dict[str, Any], key: str) -> str:
     value = _text(config, key)
-    if not value:
+    if not value or not value.strip():
         raise DeployerError(f"Deployer has no {key!r} for this host; set it in the host's config")
     return value
 
 
 def _port(config: dict[str, Any]) -> int | None:
+    """`None` for null; an integer, or a string of ASCII digits, in 1-65535.
+
+    Deployer serialises whatever PHP value `deploy.php` set, so a port taken
+    from `getenv()` or written as `port: "2222"` in YAML arrives as a string.
+    That is accepted - but only a strict digit string, never the loose
+    stringification of a null that once produced the text "None" as a port.
+    `type(value) is int` rather than `isinstance`, so a JSON `true` (an `int`
+    subclass in Python) is not read as port 1.
+    """
     value = _value(config, "port")
     if value is None:
         return None
-    # `bool` is a subclass of `int`, so without the explicit exclusion a JSON
-    # `true` would quietly become port 1.
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is int:
+        port = value
+    elif isinstance(value, str) and value.isascii() and value.isdigit():
+        port = int(value)
+    else:
         raise DeployerError(f"Deployer's 'port' should be an integer, but is {value!r}")
-    return value
+    if not 1 <= port <= _MAX_PORT:
+        raise DeployerError(
+            f"Deployer's 'port' should be between 1 and {_MAX_PORT}, but is {value!r}"
+        )
+    return port
 
 
 def _layout(config: dict[str, Any], path: str) -> str:
