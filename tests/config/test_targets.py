@@ -7,6 +7,7 @@ from ddev_sync.config.deployer import DeployerConnection
 from ddev_sync.config.merge import LayerDoc
 from ddev_sync.config.models import Layout, ResolvedTarget, Stage
 from ddev_sync.config.targets import (
+    _DEPLOYER_DETAIL_KEYS,
     CollectedTarget,
     collect_targets,
     list_target_names,
@@ -658,6 +659,26 @@ def test_a_literal_beside_an_inherited_deployer_block_is_rejected_by_name() -> N
     assert "target 'prod'" in message
     assert "user, path cannot be set" in message
     assert "'deployer:' block" in message
+
+
+# One literal per key a block owns besides the host. Written as a mapping, not
+# a parametrize list, so that a key added to `DEPLOYER_OWNED_KEYS` - from which
+# `_DEPLOYER_DETAIL_KEYS` is derived - fails this test with a `KeyError` naming
+# it, rather than quietly going unchecked. The silent-discard bug this guards
+# against is exactly what an unchecked key produces.
+_A_LITERAL_FOR = {"user": "u", "port": 2222, "path": "/srv/", "layout": "plain"}
+
+
+@pytest.mark.parametrize("key", _DEPLOYER_DETAIL_KEYS)
+def test_every_detail_a_block_owns_is_rejected_when_a_stronger_link_sets_it(key: str) -> None:
+    collected = collected_from(
+        {
+            "base": {"deployer": {}, "stage": "production"},
+            "prod": {"extends": "base", key: _A_LITERAL_FOR[key]},
+        }
+    )
+    with pytest.raises(TargetError, match=rf"{key} cannot be set on a target that extends"):
+        resolve_target("prod", collected, resolve_deployer=fake_resolver())
 
 
 def test_a_deployer_target_without_a_resolver_says_so() -> None:

@@ -18,8 +18,15 @@ MAX_EXTENDS_DEPTH = 16
 # is what `_build` has always done with the pair.
 _CONNECTION_SOURCES = ("host", "ssh_alias", "deployer")
 
-# What a `deployer:` block supplies besides the host itself.
-_DEPLOYER_DETAIL_KEYS = ("user", "port", "path", "layout")
+# What a `deployer:` block supplies besides the host itself - derived, not
+# written out again. A key added to `DEPLOYER_OWNED_KEYS` alone used to be
+# dropped by `_flatten`'s `pop` loop while the contradiction check above it
+# did not know to look for it, so a stronger literal of that key was
+# silently discarded instead of rejected - the one outcome the strictness
+# decision exists to prevent. The filter is `_CONNECTION_SOURCES` because
+# "detail" means exactly "owned, but not itself a way of saying where to
+# connect".
+_DEPLOYER_DETAIL_KEYS = tuple(key for key in DEPLOYER_OWNED_KEYS if key not in _CONNECTION_SOURCES)
 
 DeployerResolver = Callable[[str | None], DeployerConnection]
 
