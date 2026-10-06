@@ -157,6 +157,47 @@ def test_yes_does_not_select_a_step_the_project_has_no_work_for(
     assert "s3.sync" not in output
 
 
+def _break_files(project: Path) -> None:
+    """Give the project a `files.paths` entry with no `remote`."""
+    config = project / ".ddev" / "ddev-sync.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8") + "files:\n  paths:\n    - {local: uploads/}\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_step_that_is_not_selected_is_not_held_to_account_for_its_configuration(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The availability probe plans every group, so a broken `files` entry
+    must not fail a run that only asked for `db`. This ran fine before the
+    probe existed and has to keep doing so.
+    """
+    _break_files(project)
+    assert invoke(project, tmp_path, "--dry-run", "--steps", "db") == 0
+    assert "db.dump" in capsys.readouterr().out
+
+
+def test_the_step_with_broken_configuration_still_fails_with_its_own_message(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _break_files(project)
+    for extra in (["--steps", "files"], ["--yes"]):
+        code = invoke(project, tmp_path, "--dry-run", *extra)
+        error = capsys.readouterr().err
+        assert code == 1
+        assert "missing 'remote'" in error
+        assert "not available" not in error
+
+
+def test_an_empty_steps_value_is_refused_at_the_command_line(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = invoke(project, tmp_path, "--dry-run", "--steps", "")
+    assert code == 1
+    assert "names no step" in capsys.readouterr().err
+
+
 def test_steps_accepts_a_comma_separated_list(
     project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

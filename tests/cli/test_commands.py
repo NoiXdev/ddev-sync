@@ -773,3 +773,11 @@ def test_without_a_terminal_the_hint_lists_only_the_available_names(
     with pytest.raises(DdevSyncError) as error:
         commands.resolve_selection(None, assume_yes=False, available=_AVAILABLE)
     assert "--steps (db,files,sanitize,setup)" in str(error.value)
+
+
+@pytest.mark.parametrize("steps", ["", " , "])
+def test_an_empty_steps_value_is_refused_rather_than_planning_nothing(steps: str) -> None:
+    with pytest.raises(DdevSyncError) as error:
+        commands.resolve_selection(steps, assume_yes=True, available=_AVAILABLE)
+    assert "names no step" in str(error.value)
+    assert "db, files, sanitize, setup" in str(error.value)

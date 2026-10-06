@@ -15,7 +15,7 @@ from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.steps import SELECTION_GROUPS, StepKind, hook_name, steps_for_selection
 from ddev_sync.errors import ConfigError
 from ddev_sync.features.resolver import ActivatedFeature, FeatureResolution
-from ddev_sync.operations.base import preview_local_path
+from ddev_sync.operations.base import PathEscapesProject, preview_local_path
 from ddev_sync.profiles.registry import ResolvedProfile
 from ddev_sync.transport.ssh import rsync_pull_command, ssh_command
 
@@ -166,8 +166,8 @@ def available_selection_groups(
 ) -> frozenset[str]:
     """Which selection groups would actually produce work for this project.
 
-    Answered by building a throwaway plan with everything selected and
-    seeing which kinds came out, rather than by a second set of rules about
+    Answered by building a throwaway plan for each group and seeing which
+    kinds came out, rather than by a second set of rules about
     what a project contains. Building a plan is pure - nothing in this
     module runs a command or reads a file - so the probe costs nothing and
     cannot drift from what a real run would do, which a hand-written "does
@@ -183,19 +183,57 @@ def available_selection_groups(
     sets) would call `setup` available on the strength of commands the run
     then filters out.
     """
-    plan = build_plan(
-        target=target,
-        project=project,
-        profile=profile,
-        merged=merged,
-        steps=steps_for_selection(sorted(SELECTION_GROUPS)),
-        features=features,
-        only_feature_setup=only_feature_setup,
-    )
-    produced = {step.kind for step in plan.steps}
     return frozenset(
-        name for name, kinds in SELECTION_GROUPS.items() if any(kind in produced for kind in kinds)
+        name
+        for name, kinds in SELECTION_GROUPS.items()
+        if _group_produces_work(
+            name,
+            kinds,
+            target=target,
+            project=project,
+            profile=profile,
+            merged=merged,
+            features=features,
+            only_feature_setup=only_feature_setup,
+        )
     )
+
+
+def _group_produces_work(
+    name: str,
+    kinds: Sequence[StepKind],
+    *,
+    target: ResolvedTarget,
+    project: DdevProject,
+    profile: ResolvedProfile,
+    merged: MergeResult,
+    features: FeatureResolution,
+    only_feature_setup: bool,
+) -> bool:
+    """Plan one group on its own and say whether any of its kinds came out.
+
+    Each group is planned separately because planning can raise for a group's
+    own broken configuration (a `files.paths` entry with no `remote`, a hook
+    with `mode` but no `commands`). Planned together, one group's error would
+    fail a run that never selected it - `--steps db` would die over a typo in
+    `files`. A group whose configuration is broken *is* configured, just
+    wrongly, so it counts as available: it belongs in the menu, and the error
+    surfaces where that group is really planned, with the message it has
+    always had. Nothing is swallowed, only deferred to the place that owns it.
+    """
+    try:
+        plan = build_plan(
+            target=target,
+            project=project,
+            profile=profile,
+            merged=merged,
+            steps=steps_for_selection([name]),
+            features=features,
+            only_feature_setup=only_feature_setup,
+        )
+    except (ConfigError, PathEscapesProject):
+        return True
+    return any(step.kind in kinds for step in plan.steps)
 
 
 def _post_sync_preview(merged: MergeResult) -> tuple[PostSyncEntry, ...]:

@@ -866,5 +866,21 @@ def test_only_feature_setup_keeps_setup_that_a_feature_contributed() -> None:
     assert "setup" in available
 
 
+def test_a_group_with_broken_configuration_is_available_and_does_not_poison_the_others() -> None:
+    # A `files.paths` entry with no `remote` makes planning `files` raise.
+    # That must not stop the probe from answering for `db`, or `--steps db`
+    # would fail over a typo in a group it never selected - and the broken
+    # group is configured, only wrongly, so it still belongs in the menu with
+    # the error left for the place that really plans it.
+    data = {**PROFILE_DATA, "files": {"paths": [{"local": "public/fileadmin/"}]}}
+    available = available_for(data)
+    assert {"db", "files"} <= available
+
+
+def test_a_group_whose_path_escapes_the_project_is_available_too() -> None:
+    data = {**PROFILE_DATA, "files": {"paths": [{"remote": "a/", "local": "../outside/"}]}}
+    assert "files" in available_for(data)
+
+
 def test_every_name_it_returns_is_a_real_selection_group() -> None:
     assert available_for() <= set(SELECTION_GROUPS)

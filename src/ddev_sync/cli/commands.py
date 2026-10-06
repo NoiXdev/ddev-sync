@@ -127,6 +127,11 @@ def resolve_selection(
     offered = sorted(available)
     if steps is not None:
         names = [part.strip() for part in steps.split(",") if part.strip()]
+        if not names:
+            # `--steps ""` used to select nothing and plan a lone preflight,
+            # which reports success having done nothing - the same failure as
+            # naming a step with no work, so it is refused the same way.
+            raise DdevSyncError(f"--steps names no step. Available: {', '.join(offered)}.")
         # Unknown names are checked first, and by the engine's own function,
         # so a typo keeps saying "unknown step" and is never mistaken for a
         # real step this project merely has no work for.
