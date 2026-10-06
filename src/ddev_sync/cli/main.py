@@ -268,6 +268,18 @@ def _reject_build_conflicts(
         )
 
 
+@cli.command("help")
+@click.pass_context
+def help_cmd(ctx: click.Context) -> int:
+    """Show this help."""
+    # `ddev help` works for DDEV itself, so `ddev sync help` is what a user
+    # guesses. The group's help is what they want, not this command's, which
+    # is why it reaches for the parent context.
+    parent = ctx.parent
+    click.echo((parent or ctx).get_help())
+    return 0
+
+
 @cli.command("targets")
 @click.pass_obj
 def targets_cmd(options: _Options) -> int:

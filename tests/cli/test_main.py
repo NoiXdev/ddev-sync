@@ -672,6 +672,32 @@ def test_build_on_a_project_with_nothing_to_build_still_fails_before_planning(
     assert "no lockfile found" in capsys.readouterr().err
 
 
+def test_help_is_a_command_as_well_as_a_flag(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # `ddev help` works for DDEV itself, so `ddev sync help` is the guess a
+    # user makes. It used to answer "No such command 'help'".
+    code = invoke(project, tmp_path, "help")
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "doctor" in output
+    assert "targets" in output
+
+
+def test_help_the_command_and_help_the_flag_print_the_same_thing(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code_help = invoke(project, tmp_path, "help")
+    output_help = capsys.readouterr().out
+    assert code_help == 0
+
+    code_flag = invoke(project, tmp_path, "--help")
+    output_flag = capsys.readouterr().out
+    assert code_flag == 0
+
+    assert output_help == output_flag
+
+
 def test_only_feature_setup_combined_with_build_is_a_usage_error(
     project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
