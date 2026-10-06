@@ -54,6 +54,19 @@ def test_dry_run_prints_the_plan_and_exits_zero(
     assert "db.dump" in output
 
 
+def test_the_dry_run_help_does_not_promise_that_nothing_runs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The flag's own help is the only description of `--dry-run` a user sees
+    # without opening the documentation, and a dry run of a `deployer:`
+    # target does evaluate the project's `deploy.php`. Pinning the text here
+    # keeps the promise from quietly coming back.
+    assert main(["--help"]) == 0
+    output = capsys.readouterr().out
+    assert "execute nothing" not in output
+    assert "Deployer is still resolved" in " ".join(output.split())
+
+
 def test_a_configuration_error_exits_one_with_a_readable_message(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

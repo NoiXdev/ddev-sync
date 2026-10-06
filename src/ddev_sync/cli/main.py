@@ -119,7 +119,20 @@ class _Options:
 @click.option(
     "--yes", "assume_yes", is_flag=True, help="Assume every default; skip interactive prompts."
 )
-@click.option("--dry-run", is_flag=True, help="Print the plan and execute nothing.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    # Not "execute nothing": a target with a `deployer:` block is resolved
+    # before the plan exists, and that runs `dep config` in the web
+    # container, which evaluates the project's own `deploy.php`. The help a
+    # user reads has to say so, since it is the only place they might look
+    # before trusting a dry run on a production target.
+    help=(
+        "Print the plan and run none of its steps. A target whose connection "
+        "comes from Deployer is still resolved, which runs 'dep config' in the "
+        "web container."
+    ),
+)
 @click.option(
     "--steps", default=None, help=f"Comma-separated: {', '.join(sorted(SELECTION_GROUPS))}."
 )
