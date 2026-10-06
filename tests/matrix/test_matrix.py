@@ -206,7 +206,12 @@ def test_storage_link_created_the_public_symlink(stack: Stack, cell: Cell) -> No
         pytest.skip("storage:link is Laravel's")
     link = work_dir(cell.name) / "public" / "storage"
     assert link.is_symlink(), "public/storage is not a symlink: storage:link did not run"
-    assert link.resolve() == (work_dir(cell.name) / "storage" / "app" / "public").resolve()
+    # Resolved in the web container, not on the host: Laravel writes the link's
+    # target as an absolute path, and the path it sees is `/var/www/html/...`,
+    # which does not exist on the host that bind-mounts the project there.
+    resolved = stack.web(["readlink", "-f", "public/storage"])
+    assert resolved.returncode == 0, resolved.stderr
+    assert resolved.stdout.strip() == "/var/www/html/storage/app/public"
 
 
 def test_artisan_migrate_applied_the_pending_migration(stack: Stack, cell: Cell) -> None:

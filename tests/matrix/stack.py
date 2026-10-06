@@ -199,9 +199,10 @@ class Stack:
         """Run the image under test against this cell's project.
 
         `--project-root` is explicit: the image's default is `/var/www/html`,
-        DDEV's mount point, while a cell's project lives at its own path on
-        this machine - and at the same path inside every container, which is
-        what makes `docker exec -w` work.
+        DDEV's mount point, while the engine container here mounts the cell's
+        project at its host path, so the engine has to be pointed there. The
+        web container has the project at `/var/www/html`, which is where
+        `web_command` translates the engine's workdir to.
 
         `--network` joins the cell's compose network, so
         `--host=ddev-<cell>-db` resolves and the ssh target is reachable by

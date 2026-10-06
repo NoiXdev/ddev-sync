@@ -1,5 +1,6 @@
 """A real pull: dump over ssh, import, sync files, sanitize."""
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,16 +14,20 @@ pytestmark = pytest.mark.integration
 
 HERE = Path(__file__).parent
 PROFILE_ROOT = HERE.parent.parent / "profiles"
+# `docker compose` interpolates the whole file, `exec` included, and the web
+# service's mount source is `${DDEV_SYNC_PROJECT_DIR}`: without it the file is
+# rejected as an invalid volume spec before any container is reached.
+COMPOSE_ENV = {**os.environ, "DDEV_SYNC_PROJECT_DIR": str(PROJECT_DIR)}
 
 
 @pytest.fixture
 def project(ssh_key: Path) -> Path:
-    # Not `tmp_path`: the web container mounts PROJECT_DIR at this same
-    # absolute path (see conftest), and that mount is fixed when the stack
-    # comes up. Cleaned per test instead. Only the contents are removed, not
-    # the directory itself: a bind mount follows the directory's inode, so
-    # deleting and recreating it would leave the container looking at a
-    # stale, unlinked directory.
+    # Not `tmp_path`: the web container mounts PROJECT_DIR at /var/www/html
+    # (see conftest), and that mount is fixed when the stack comes up. Cleaned
+    # per test instead. Only the contents are removed, not the directory
+    # itself: a bind mount follows the directory's inode, so deleting and
+    # recreating it would leave the container looking at a stale, unlinked
+    # directory.
     root = PROJECT_DIR
     for entry in root.iterdir():
         if entry.is_dir() and not entry.is_symlink():
@@ -48,7 +53,7 @@ def project(ssh_key: Path) -> Path:
     # `sanitize`'s `local-admin` rule (profiles/typo3.yaml) execs
     # `vendor/bin/typo3 backend:user:create ...` in the web container (the
     # `ddev-acme-web` stand-in in docker-compose.yaml, which mounts this
-    # project at the same path) and treats anything but a zero exit (or an
+    # project at /var/www/html) and treats anything but a zero exit (or an
     # "is already taken" message) as a hard failure. A stub that always
     # succeeds is enough to prove the rule dispatches and runs the right
     # argv; it is not the TYPO3 CLI's job to re-verify here.
@@ -82,6 +87,7 @@ def local_query(sql: str) -> str:
         capture_output=True,
         text=True,
         check=False,
+        env=COMPOSE_ENV,
     )
     return result.stdout.strip()
 
@@ -171,6 +177,7 @@ def remote_db_exec(sql: str) -> None:
         capture_output=True,
         text=True,
         check=False,
+        env=COMPOSE_ENV,
     )
     if result.returncode != 0:
         raise AssertionError(f"remote_db_exec failed: {result.stderr}")

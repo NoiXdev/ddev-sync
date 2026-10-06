@@ -80,18 +80,18 @@ services:
   # fixture writes are `#!/bin/sh` scripts, and no real framework is
   # installed here; verifying real framework commands is Plan 5's job.
   #
-  # The project is mounted at the SAME absolute path it has on the host,
-  # because `web_command` passes a host path straight through as `docker
-  # exec -w`. In production that identity is free (both containers see
-  # /var/www/html); here it has to be arranged.
+  # The project is mounted at /var/www/html, DDEV's fixed mount point in the
+  # web container, because that is where `web_command` translates a workdir
+  # to. The engine in this suite runs on the host and reads the project at its
+  # host path; the translation is what bridges the two.
   web:
     image: alpine:3.21
     container_name: ddev-acme-web
     command: ["sleep", "infinity"]
     volumes:
-      - ${DDEV_SYNC_PROJECT_DIR}:${DDEV_SYNC_PROJECT_DIR}
+      - ${DDEV_SYNC_PROJECT_DIR}:/var/www/html
     healthcheck:
-      test: ["CMD-SHELL", "test -d ${DDEV_SYNC_PROJECT_DIR}"]
+      test: ["CMD-SHELL", "test -d /var/www/html"]
       interval: 2s
       timeout: 5s
       retries: 30

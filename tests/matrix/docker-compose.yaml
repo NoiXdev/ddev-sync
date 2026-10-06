@@ -3,10 +3,11 @@
 # container name (docker exec takes a name, not an alias) and `ddev-<cell>-db`
 # by network alias (the engine passes `--host=ddev-<cell>-db` to the client).
 #
-# `${MATRIX_PROJECT_DIR}` is mounted at its own absolute path, because
-# `transport/container.py::web_command` passes a host path straight through
-# as `docker exec -w`. In production that identity is free - DDEV mounts the
-# project at /var/www/html in every container - and here it is arranged.
+# `${MATRIX_PROJECT_DIR}` is mounted at /var/www/html, DDEV's fixed mount
+# point in the web container, because that is where
+# `transport/container.py::web_command` translates a workdir to. The engine
+# container is not in this file: `stack.py::engine` mounts the project at its
+# host path and tells the engine where it is.
 name: ddev-sync-matrix-${MATRIX_CELL}
 
 services:
@@ -22,13 +23,13 @@ services:
     container_name: ddev-${MATRIX_CELL}-web
     command: ["sleep", "infinity"]
     user: "${MATRIX_UID}:${MATRIX_GID}"
-    working_dir: ${MATRIX_PROJECT_DIR}
+    working_dir: /var/www/html
     environment:
       # composer, wp-cli and drush all write caches under $HOME; without a
       # writable one they fail in ways that read like network errors.
       - HOME=/tmp
     volumes:
-      - ${MATRIX_PROJECT_DIR}:${MATRIX_PROJECT_DIR}
+      - ${MATRIX_PROJECT_DIR}:/var/www/html
     healthcheck:
       test: ["CMD-SHELL", "php -v > /dev/null"]
       interval: 2s

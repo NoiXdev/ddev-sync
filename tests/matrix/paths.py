@@ -10,10 +10,10 @@ from pathlib import Path
 HERE = Path(__file__).parent
 CELLS_ROOT = HERE / "cells"
 # One working directory per cell, holding the installed framework. Outside
-# `tmp_path` for the same reason the integration suite's project is: the web
-# and engine containers bind-mount it at this exact absolute path, because
-# `transport/container.py::web_command` passes a host path straight through
-# as `docker exec -w`.
+# `tmp_path` for the same reason the integration suite's project is: a bind
+# mount has to be known when the stack comes up. The web container mounts it
+# at /var/www/html, where `transport/container.py::web_command` translates a
+# workdir to; the engine container mounts it at this host path.
 WORK_ROOT = (HERE / ".work").resolve()
 KEYS_DIR = (HERE / ".keys").resolve()
 

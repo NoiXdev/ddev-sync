@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 # The integration project lives at a fixed, fixture-owned path rather than in
-# `tmp_path`: the web container mounts it at this same absolute path, and a
-# bind mount has to be known when the stack comes up, not when a test runs.
+# `tmp_path`: the web container mounts it at /var/www/html, and a bind mount
+# has to be known when the stack comes up, not when a test runs.
 # Defined in `paths.py` so the test module and this file cannot disagree.
 from tests.integration.paths import PROJECT_DIR
 
