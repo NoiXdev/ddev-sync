@@ -3,9 +3,10 @@ import os
 import re
 from pathlib import Path
 
-from ddev_sync.cli.render import render_doctor, render_features, render_plan
+from ddev_sync.cli.render import render_doctor, render_features, render_plan, render_targets
 from ddev_sync.config.merge import merge_layers
-from ddev_sync.config.models import ResolvedTarget, Stage
+from ddev_sync.config.models import DeployerRef, ResolvedTarget, Stage, TargetSpec
+from ddev_sync.config.targets import CollectedTarget
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.plan import Plan, PlannedStep, PostSyncEntry, build_plan
 from ddev_sync.engine.steps import StepKind, steps_for_selection
@@ -736,3 +737,56 @@ def test_render_doctor_keeps_the_label_column_where_it_is_with_colour_on() -> No
                 after_reset = coloured_line.split("\x1b[0m", 1)[1]
                 assert after_reset.startswith(" " * (6 - len(marker)) + label)
     assert rows == 4
+
+
+def test_render_targets_shows_a_deployer_block_as_a_declaration() -> None:
+    # The listing does no I/O and must not start to: a stopped project has to
+    # be able to list its own configuration. So this shows what was declared,
+    # not what it resolves to - the dry-run header shows the resolution.
+    collected = {
+        "prod": CollectedTarget(
+            spec=TargetSpec(deployer=DeployerRef(host="web-1"), stage=Stage.PRODUCTION),
+            source="~/.ddev/ddev-sync/config.yaml",
+        )
+    }
+    line = render_targets(collected)
+    assert "from deployer: web-1" in line
+    assert "?" not in line
+
+
+def test_render_targets_shows_a_deployer_block_with_no_alias() -> None:
+    # Without the branch this renders `?:?`, which reads like a broken
+    # configuration rather than a deliberate one.
+    collected = {
+        "prod": CollectedTarget(
+            spec=TargetSpec(deployer=DeployerRef(), stage=Stage.PRODUCTION),
+            source="~/.ddev/ddev-sync/config.yaml",
+        )
+    }
+    line = render_targets(collected)
+    assert "from deployer" in line
+    assert ": " not in line.split("from deployer", 1)[1].split("[", 1)[0]
+    assert "?" not in line
+
+
+def test_render_targets_keeps_the_literal_endpoint_and_its_alignment() -> None:
+    # Pins the rendering of literal targets, including the `?` fallbacks and the
+    # column width, so that sharing the endpoint expression with the picker
+    # cannot quietly change what `ddev sync targets` has always printed.
+    collected = {
+        "a": CollectedTarget(
+            spec=TargetSpec(host="web01.example", user="deploy", path="/srv/app/"),
+            source="project",
+        ),
+        "longer": CollectedTarget(
+            spec=TargetSpec(ssh_alias="prod", path="/srv/x"), source="global"
+        ),
+        "bare": CollectedTarget(spec=TargetSpec(), source="global"),
+    }
+    assert render_targets(collected) == (
+        "  Targets\n"
+        "\n"
+        "  a       deploy@web01.example:/srv/app/   [project]\n"
+        "  bare    ?:?   [global]\n"
+        "  longer  prod:/srv/x   [global]\n"
+    )

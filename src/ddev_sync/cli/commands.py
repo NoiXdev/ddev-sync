@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ddev_sync.cli.context import RunContext
 from ddev_sync.cli.prompts import choose_steps, choose_target
-from ddev_sync.cli.render import render_doctor, render_plan, render_targets
+from ddev_sync.cli.render import describe_endpoint, render_doctor, render_plan, render_targets
 from ddev_sync.cli.reporter import ConsoleReporter
 from ddev_sync.config.loader import discover_config_paths, load_user_layers
 from ddev_sync.config.merge import MergeResult
@@ -31,13 +31,7 @@ def describe_targets(project_root: Path, home: Path) -> dict[str, str]:
     """Map target name to a one-line endpoint description, for the picker."""
     layers = load_user_layers(discover_config_paths(project_root, home))
     collected = collect_targets(layers)
-    described: dict[str, str] = {}
-    for name in list_target_names(collected):
-        spec = collected[name].spec
-        host = spec.ssh_alias or spec.host or "?"
-        user = "" if spec.ssh_alias or not spec.user else f"{spec.user}@"
-        described[name] = f"{user}{host}:{spec.path or '?'}"
-    return described
+    return {name: describe_endpoint(collected[name].spec) for name in list_target_names(collected)}
 
 
 def targets_command(project_root: Path, home: Path, echo: Callable[[str], None]) -> int:

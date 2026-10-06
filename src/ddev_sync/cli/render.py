@@ -8,7 +8,7 @@ in a golden file instead of being discovered in production.
 from collections.abc import Mapping
 
 from ddev_sync.cli.colour import Colour, paint_padded
-from ddev_sync.config.models import ResolvedTarget
+from ddev_sync.config.models import ResolvedTarget, TargetSpec
 from ddev_sync.config.targets import CollectedTarget
 from ddev_sync.engine.plan import Plan, PlannedStep
 from ddev_sync.operations.preflight import PreflightReport
@@ -129,6 +129,22 @@ def _legend(plan: Plan) -> str:
     return "   ".join(f"[{source}]" for source in seen)
 
 
+def describe_endpoint(spec: TargetSpec) -> str:
+    """One line saying where a target points, for a listing or a picker.
+
+    A `deployer:` block is shown as the declaration it is. Resolving it would
+    mean running `dep config` in the web container, and both callers are
+    expected to work on a stopped project - a listing that cannot run without
+    the project running is not a listing.
+    """
+    if spec.deployer is not None:
+        alias = "" if spec.deployer.host is None else f": {spec.deployer.host}"
+        return f"from deployer{alias}"
+    host = spec.ssh_alias or spec.host or "?"
+    user = "" if spec.ssh_alias or not spec.user else f"{spec.user}@"
+    return f"{user}{host}:{spec.path or '?'}"
+
+
 def render_targets(collected: Mapping[str, CollectedTarget]) -> str:
     """List every target, its endpoint, and the layer that defined it."""
     names = sorted(collected)
@@ -137,12 +153,8 @@ def render_targets(collected: Mapping[str, CollectedTarget]) -> str:
     width = max(len(name) for name in names)
     lines = ["  Targets", ""]
     for name in names:
-        spec = collected[name].spec
-        host = spec.ssh_alias or spec.host or "?"
-        user = "" if spec.ssh_alias or not spec.user else f"{spec.user}@"
-        lines.append(
-            f"  {name:<{width}}  {user}{host}:{spec.path or '?'}   [{collected[name].source}]"
-        )
+        endpoint = describe_endpoint(collected[name].spec)
+        lines.append(f"  {name:<{width}}  {endpoint}   [{collected[name].source}]")
     return "\n".join(lines) + "\n"
 
 

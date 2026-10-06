@@ -610,3 +610,31 @@ def test_a_deployer_target_is_resolved_and_synced_through_one_runner(
     assert any("web-1.example" in " ".join(argv) for _, argv in seen[1:])
     assert len({runner_id for runner_id, _ in seen}) == 1
     assert len(seen) > 1
+
+
+def test_describe_targets_shows_a_deployer_block_as_a_declaration(
+    project: Path, tmp_path: Path
+) -> None:
+    # `describe_targets` feeds the interactive target picker and carried the
+    # same `spec.host or "?"` pattern as the renderer, so it needs the same
+    # branch - otherwise the picker offers "?:?" as a choice.
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\n"
+        "targets:\n"
+        "  prod:\n"
+        "    deployer: {host: web-1}\n"
+        "    stage: production\n"
+        "  anywhere:\n"
+        "    deployer: {}\n"
+        "    stage: staging\n"
+        "  staging:\n"
+        "    host: web02.example\n"
+        "    user: deploy\n"
+        "    path: /srv/staging/\n"
+        "    stage: staging\n",
+        encoding="utf-8",
+    )
+    described = commands.describe_targets(project, tmp_path / "home")
+    assert described["prod"] == "from deployer: web-1"
+    assert described["anywhere"] == "from deployer"
+    assert described["staging"] == "deploy@web02.example:/srv/staging/"
