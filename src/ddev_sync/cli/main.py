@@ -60,6 +60,7 @@ from ddev_sync.engine.steps import SELECTION_GROUPS
 from ddev_sync.errors import DdevSyncError, TargetError
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT
 from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT
+from ddev_sync.transport.runner import CommandRunner, SubprocessRunner
 
 # `build` means exactly `--steps=setup --features=node-build
 # --only-feature-setup` - nothing more. These three constants are the single
@@ -103,6 +104,11 @@ class _Options:
     only_feature_setup: bool
     dry_run: bool
     assume_yes: bool
+    # One runner for the whole invocation. It is first used while the context
+    # is built - a `deployer:` target asks the project's Deployer where to
+    # connect - and then executes the sync itself, so the two cannot disagree
+    # about what a command is or where it runs.
+    runner: CommandRunner
 
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
@@ -185,6 +191,7 @@ def cli(
         only_feature_setup=only_feature_setup,
         dry_run=dry_run,
         assume_yes=assume_yes,
+        runner=SubprocessRunner(),
     )
     if ctx.invoked_subcommand is not None:
         return None
@@ -279,7 +286,7 @@ def doctor_cmd(options: _Options) -> int:
     # very case that asks for colour without a terminal. `None` leaves
     # click's own default in place when colour is off.
     echo = partial(click.echo, color=True if use_colour else None)
-    return doctor_command(context, echo, colour=use_colour)
+    return doctor_command(context, echo, runner=options.runner, colour=use_colour)
 
 
 @cli.command("build")
@@ -312,6 +319,7 @@ def _run(options: _Options, *, steps: str | None, dry_run: bool, assume_yes: boo
     return run_command(
         context,
         selection,
+        runner=options.runner,
         dry_run=dry_run,
         assume_yes=assume_yes,
         echo=click.echo,
@@ -342,6 +350,7 @@ def _build_run_context(options: _Options) -> RunContext:
             feature_root=options.feature_root,
             features_flag=options.features_flag,
             no_features=options.no_features,
+            runner=options.runner,
         )
 
     if options.target_name is not None:

@@ -15,6 +15,8 @@ from ddev_sync.features.activation import DETECT_FEATURES_DEFAULT, Request, pars
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT, FeatureRegistry
 from ddev_sync.features.resolver import FeatureResolution, resolve_features
 from ddev_sync.profiles.registry import ProfileRegistry, ResolvedProfile
+from ddev_sync.transport.deployer import make_deployer_resolver
+from ddev_sync.transport.runner import CommandRunner
 
 
 @dataclass(frozen=True)
@@ -40,8 +42,14 @@ def build_context(
     feature_root: Path = DEFAULT_FEATURE_ROOT,
     features_flag: str | None = None,
     no_features: bool = False,
+    runner: CommandRunner | None = None,
 ) -> RunContext:
-    """Read config, detect type and version, resolve profile and target."""
+    """Read config, detect type and version, resolve profile and target.
+
+    `runner` is what lets a `deployer:` target ask the project's own Deployer
+    where it deploys. It is optional because most runs never need it, and the
+    resolver is lazy: `dep` only runs when a target actually has the block.
+    """
     project = read_ddev_project(project_root)
     user_layers = load_user_layers(discover_config_paths(project_root, home))
     user_merged = merge_layers(user_layers)
@@ -81,7 +89,9 @@ def build_context(
 
     merged = merge_layers([*profile.layers, *resolution.layers, *user_layers])
     target = resolve_target(
-        _pick_target_name(target_name, user_layers), collect_targets(user_layers)
+        _pick_target_name(target_name, user_layers),
+        collect_targets(user_layers),
+        resolve_deployer=(None if runner is None else make_deployer_resolver(project, runner)),
     )
 
     notices = () if profile.notice is None else (profile.notice,)

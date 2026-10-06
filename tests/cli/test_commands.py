@@ -8,7 +8,7 @@ from ddev_sync.cli import commands
 from ddev_sync.cli.context import build_context
 from ddev_sync.cli.main import main
 from ddev_sync.config.merge import MergeResult
-from ddev_sync.transport.runner import CommandResult
+from ddev_sync.transport.runner import CommandResult, SubprocessRunner
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
 FEATURE_ROOT = Path(__file__).parent / "features"
@@ -432,7 +432,9 @@ def test_a_real_feature_contributes_a_step_to_the_plan(
         features_flag=None,
         no_features=False,
     )
-    code = commands.run_command(context, ["setup"], dry_run=True, assume_yes=True, echo=print)
+    code = commands.run_command(
+        context, ["setup"], runner=SubprocessRunner(), dry_run=True, assume_yes=True, echo=print
+    )
     assert code == 0
     output = capsys.readouterr().out
     assert "Features  filament" in output
@@ -557,3 +559,54 @@ def test_force_color_reaches_the_output_even_though_it_is_not_a_terminal(
     output = capsys.readouterr().out
     assert "\x1b[32mOK\x1b[0m" in output
     assert "\x1b[31mFAIL\x1b[0m" in output
+
+
+def test_a_deployer_target_is_resolved_and_synced_through_one_runner(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runner that asks Deployer where to connect is the one that then
+    connects: one run, one runner. Recording `id(self)` for every command - the
+    `dep config` that builds the context and the preflight commands that follow
+    it - is what would show a second `SubprocessRunner` being constructed.
+    """
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\ntargets:\n  production:\n    deployer: {host: web-1}\n    stage: production\n",
+        encoding="utf-8",
+    )
+    payload = json.dumps(
+        {
+            "web-1": {
+                "hostname": "web-1.example",
+                "remote_user": "deploy",
+                "port": None,
+                "deploy_path": "/srv/app",
+                "current_path": "/srv/app/current",
+            }
+        }
+    )
+    seen: list[tuple[int, tuple[str, ...]]] = []
+
+    def run(
+        self: object,
+        argv: list[str],
+        *,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        stdout_path: Path | None = None,
+    ) -> CommandResult:
+        seen.append((id(self), tuple(argv)))
+        is_dep = tuple(argv[-3:]) == ("vendor/bin/dep", "config", "--format=json")
+        return CommandResult(tuple(argv), 0, payload if is_dep else "ddev-sync-ok\n", "")
+
+    monkeypatch.setattr("ddev_sync.transport.runner.SubprocessRunner.run", run)
+
+    code = invoke(project, tmp_path, "--yes", "--target", "production", "--steps", "files")
+
+    assert code == 0
+    assert tuple(seen[0][1][-3:]) == ("vendor/bin/dep", "config", "--format=json")
+    assert any("web-1.example" in " ".join(argv) for _, argv in seen[1:])
+    assert len({runner_id for runner_id, _ in seen}) == 1
+    assert len(seen) > 1

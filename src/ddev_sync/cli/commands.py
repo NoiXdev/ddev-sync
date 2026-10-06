@@ -22,7 +22,7 @@ from ddev_sync.engine.steps import SELECTION_GROUPS, steps_for_selection
 from ddev_sync.errors import DdevSyncError, TargetError
 from ddev_sync.operations.base import ExecutionContext
 from ddev_sync.operations.preflight import PreflightOperation
-from ddev_sync.transport.runner import SubprocessRunner
+from ddev_sync.transport.runner import CommandRunner
 
 DOWNLOADS = Path(".ddev") / ".downloads"
 
@@ -48,14 +48,18 @@ def targets_command(project_root: Path, home: Path, echo: Callable[[str], None])
 
 
 def doctor_command(
-    context: RunContext, echo: Callable[[str], None], *, colour: bool = False
+    context: RunContext,
+    echo: Callable[[str], None],
+    *,
+    runner: CommandRunner,
+    colour: bool = False,
 ) -> int:
     """Run the preflight checks and print them as a checklist.
 
     `colour` is decided by the caller, which knows the real terminal and
     environment; this function only passes it on to the renderer.
     """
-    execution = _execution_context(context, assume_yes=True)
+    execution = _execution_context(context, runner=runner, assume_yes=True)
     report = PreflightOperation().check(execution)
     echo(render_doctor(report, context.target, colour=colour))
     # Every check the rendered checklist can show as FAIL has to fail the
@@ -82,6 +86,7 @@ def run_command(
     context: RunContext,
     selection: list[str],
     *,
+    runner: CommandRunner,
     dry_run: bool,
     assume_yes: bool,
     echo: Callable[[str], None],
@@ -102,7 +107,7 @@ def run_command(
         return 0
 
     reporter = ConsoleReporter(write=echo)
-    execution = _execution_context(context, assume_yes=assume_yes)
+    execution = _execution_context(context, runner=runner, assume_yes=assume_yes)
     report = Executor(reporter=reporter).run(plan, execution)
     if "sanitize" not in selection:
         reporter.warn_unsanitized(context.target.stage.value)
@@ -147,12 +152,14 @@ def resolve_target_name(explicit: str | None, project_root: Path, home: Path) ->
     return chosen
 
 
-def _execution_context(context: RunContext, *, assume_yes: bool) -> ExecutionContext:
+def _execution_context(
+    context: RunContext, *, runner: CommandRunner, assume_yes: bool
+) -> ExecutionContext:
     return ExecutionContext(
         project=context.project,
         target=context.target,
         merged=context.merged,
-        runner=SubprocessRunner(),
+        runner=runner,
         downloads_dir=context.project.root / DOWNLOADS,
         assume_yes=assume_yes,
         keep_dump=_keep_dump(context.merged),

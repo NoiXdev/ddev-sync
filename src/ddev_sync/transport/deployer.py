@@ -1,0 +1,74 @@
+"""Ask the project's own Deployer where it deploys.
+
+The only part of this feature that runs anything. It runs in the project's web
+container, not on the host and not in the sync sidecar: the sidecar carries no
+PHP by design, so `vendor/bin/dep` is visible from it but not executable, and
+the host's PHP is not the one the project pinned. Framework commands already
+run there for the same reason.
+
+The result is memoised for the life of the resolver, which is one run. A single
+`dep config` returns every host, so a second target asking for a second alias
+is served from the same invocation - and `dep config` evaluates the project's
+recipe, so repeating it would be both slow and a second chance to get a
+different answer inside one sync.
+"""
+
+from collections.abc import Callable
+
+from ddev_sync.config.deployer import DeployerConnection, parse_dep_config
+from ddev_sync.ddev.project import DdevProject
+from ddev_sync.errors import DeployerError
+from ddev_sync.transport.container import web_command
+from ddev_sync.transport.runner import CommandRunner
+
+# The project's own pinned Deployer first, then whatever the container's PATH
+# offers. Looking for a tool in two places is not the same as substituting a
+# value, which is why this is the one alternative the strict rule allows.
+_CANDIDATES = ("vendor/bin/dep", "dep")
+
+_SUBCOMMAND = ("config", "--format=json")
+
+# What a shell - and `docker exec` after it - exits with when it cannot find
+# the program. It is the only status that means "try the next place": any other
+# non-zero is `dep` itself reporting that the project's recipe failed.
+_NOT_FOUND = 127
+
+
+def make_deployer_resolver(
+    project: DdevProject, runner: CommandRunner
+) -> Callable[[str | None], DeployerConnection]:
+    """Build a resolver for `deployer: {host: <alias>}`, running `dep` at most once."""
+    cache: list[str] = []
+
+    def resolve(alias: str | None) -> DeployerConnection:
+        if not cache:
+            cache.append(_dep_config(project, runner))
+        return parse_dep_config(cache[0], alias)
+
+    return resolve
+
+
+def _dep_config(project: DdevProject, runner: CommandRunner) -> str:
+    """The text `dep config --format=json` printed, from the first place it exists."""
+    last_stderr = ""
+    for candidate in _CANDIDATES:
+        # The project root is the working directory because that is where
+        # Deployer looks for `deploy.php` or `deploy.yaml`.
+        argv = web_command(project, [candidate, *_SUBCOMMAND], workdir=project.root)
+        result = runner.run(argv)
+        if result.ok:
+            return result.stdout
+        if result.returncode != _NOT_FOUND:
+            raise DeployerError(
+                f"`{candidate} {' '.join(_SUBCOMMAND)}` failed with exit "
+                f"{result.returncode} in the web container: {result.stderr.strip()}"
+            )
+        last_stderr = result.stderr.strip()
+    # The last attempt's own words stay in the message: exit 127 also comes
+    # from a host without `docker` at all, and naming only the two places
+    # looked would then send someone hunting for a Deployer that is not the
+    # problem.
+    raise DeployerError(
+        f"could not find Deployer in the web container: neither {_CANDIDATES[0]} "
+        f"nor a `dep` on its PATH ran ({last_stderr})"
+    )

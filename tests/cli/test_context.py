@@ -5,6 +5,7 @@ import pytest
 
 from ddev_sync.cli.context import build_context
 from ddev_sync.errors import ConfigError, TargetError
+from ddev_sync.transport.fake import FakeCommandRunner
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
 FEATURE_ROOT = Path(__file__).parent / "features"
@@ -445,3 +446,84 @@ def test_a_features_mapping_with_settings_is_parsed(project: Path, tmp_path: Pat
     assert [a.feature.name for a in context.features.activated] == ["node-build"]
     assert context.features.activated[0].settings["install"] == "npm"
     assert context.features.activated[0].reason == "from .ddev/ddev-sync.yaml"
+
+
+DEP_CONFIG = json.dumps(
+    {
+        "web-1": {
+            "hostname": "web-1.example",
+            "remote_user": "deploy",
+            "port": 2222,
+            "deploy_path": "/srv/app",
+            "current_path": "/srv/app/current",
+        }
+    }
+)
+
+
+def _write_deployer_target(project: Path) -> None:
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\ntargets:\n  production:\n    deployer: {host: web-1}\n    stage: production\n",
+        encoding="utf-8",
+    )
+
+
+def test_build_context_resolves_a_deployer_target_through_the_runner(
+    project: Path, tmp_path: Path
+) -> None:
+    _write_deployer_target(project)
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout=DEP_CONFIG)
+
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag=None,
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        runner=runner,
+    )
+
+    assert context.target.host == "web-1.example"
+    assert context.target.user == "deploy"
+    assert context.target.port == 2222
+    assert context.target.path == "/srv/app/"
+    assert len(runner.calls) == 1
+    # It ran in this project's own web container.
+    assert "ddev-acme-web" in runner.calls[0]
+
+
+def test_a_target_without_a_deployer_block_never_runs_dep(project: Path, tmp_path: Path) -> None:
+    # An unscripted command raises, so reaching the runner at all would fail
+    # this - which is the point: a project that does not use Deployer must not
+    # pay for it, or break because of it.
+    runner = FakeCommandRunner()
+
+    build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag=None,
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        runner=runner,
+    )
+
+    assert runner.calls == []
+
+
+def test_a_deployer_target_without_a_runner_says_so(project: Path, tmp_path: Path) -> None:
+    _write_deployer_target(project)
+
+    with pytest.raises(TargetError) as caught:
+        build_context(
+            project_root=project,
+            home=tmp_path / "home",
+            target_name="production",
+            type_flag=None,
+            framework_version_flag=None,
+            profile_root=PROFILE_ROOT,
+        )
+
+    assert "'deployer:' block" in str(caught.value)
