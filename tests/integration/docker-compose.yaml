@@ -58,6 +58,14 @@ services:
 
   local-db:
     image: mariadb:11
+    # `--skip-ssl`, because this service stands in for DDEV's database and DDEV
+    # configures no certificate: `have_ssl` is DISABLED on every version it
+    # builds. Without this the stand-in offers TLS (mariadb generates its own
+    # certificate since 11.4) while production does not, and the suite cannot
+    # see a client that insists on it - which is exactly how the 11.8 client's
+    # TLS-by-default broke every local database call in the field while every
+    # suite stayed green.
+    command: ["--skip-ssl"]
     environment:
       - MARIADB_ROOT_PASSWORD=root
       - MARIADB_DATABASE=db
