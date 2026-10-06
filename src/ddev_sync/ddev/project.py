@@ -47,8 +47,15 @@ class DdevProject:
 
 
 def read_ddev_project(project_root: Path) -> DdevProject:
-    """Read `.ddev/config.yaml` under `project_root`."""
-    config_path = project_root / ".ddev" / "config.yaml"
+    """Read `.ddev/config.yaml` under `project_root`.
+
+    Canonicalises the root to handle relative paths and symlinks: relative paths
+    are resolved relative to cwd, and symlinks are followed. Relative workdir
+    entries are resolved the same way before being translated onto the container
+    mount point, so this ensures Path.relative_to works correctly.
+    """
+    canonical_root = project_root.resolve()
+    config_path = canonical_root / ".ddev" / "config.yaml"
     if not config_path.is_file():
         raise ConfigError(
             f"{config_path} not found - this does not look like a DDEV project. "
@@ -64,7 +71,7 @@ def read_ddev_project(project_root: Path) -> DdevProject:
         name=str(document["name"]),
         type=str(document["type"]),
         docroot=str(document.get("docroot", "")),
-        root=project_root,
+        root=canonical_root,
     )
 
 

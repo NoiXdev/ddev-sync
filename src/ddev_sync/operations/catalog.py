@@ -223,8 +223,8 @@ class CreateAdmin:
         role = self._role(rule) if driver in _ADMIN_ROLE_COMMANDS else None
         argv = self._argv(driver, head, user, password)
         # The framework CLI lives in the web container, not in this one; the
-        # project root is the same absolute path in both, so it passes
-        # through as docker's `-w` unchanged.
+        # project root is translated onto the container's mount point and passed
+        # as docker's `-w`.
         result = context.runner.run(
             web_command(context.project, argv, workdir=context.project.root)
         )

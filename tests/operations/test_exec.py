@@ -182,6 +182,47 @@ def test_the_entrys_workdir_becomes_dockers_working_directory(tmp_path: Path) ->
     assert argv[argv.index("-w") + 1] == "/var/www/html/web"
 
 
+def test_an_exec_with_workdir_through_a_symlinked_root_translates_correctly(
+    tmp_path: Path,
+) -> None:
+    # read_ddev_project canonicalises the root, so that relative_to works
+    # when resolve_local_path returns a canonicalised candidate. Without this,
+    # --project-root symlink-to-acme or --project-root . would fail on the
+    # first setup command with a workdir, raising ValueError instead of
+    # running the command.
+    from ddev_sync.ddev.project import read_ddev_project
+
+    real_project = tmp_path / "real"
+    symlink_project = tmp_path / "link"
+    real_project.mkdir()
+    (real_project / ".ddev").mkdir(parents=True, exist_ok=True)
+    (real_project / ".ddev" / "config.yaml").write_text(
+        "name: acme\ntype: php\ndocroot: public\n", encoding="utf-8"
+    )
+    symlink_project.symlink_to(real_project)
+    project = read_ddev_project(symlink_project)
+    runner = ok_runner()
+    ExecOperation().execute(
+        ExecutionContext(
+            project=project,
+            target=ResolvedTarget(
+                name="production",
+                host="web01.example",
+                user="deploy",
+                port=22,
+                path="/srv/app/",
+                stage=Stage.PRODUCTION,
+            ),
+            merged=merge_layers([LayerDoc("profile", {"run": "true"})]),
+            runner=runner,
+            downloads_dir=project.root / ".ddev" / ".downloads",
+            assume_yes=True,
+        ),
+        {"run": "true", "workdir": "public"},
+    )
+    assert workdir_of(runner.calls[0]) == "/var/www/html/public"
+
+
 def test_nothing_is_executed_locally_for_a_run_entry(tmp_path: Path) -> None:
     # The regression this guards: a `sh -c` that never leaves the sidecar
     # fails with "composer: not found" on every profile, and the old tests

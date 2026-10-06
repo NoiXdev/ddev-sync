@@ -41,8 +41,9 @@ def test_it_runs_dep_in_the_web_container_from_the_project_root() -> None:
 
     argv = runner.calls[0]
     assert argv[:2] == ("docker", "exec")
-    # The project root, not a hard-coded path: the engine can be pointed at a
-    # project mounted somewhere else with --project-root.
+    # The project root `/srv/elsewhere` is translated onto the container's
+    # fixed mount point `/var/www/html`: the engine can be pointed at a
+    # project anywhere, and the command still runs from the right place.
     assert argv[argv.index("-w") + 1] == "/var/www/html"
     assert any(part.startswith("ddev-") and part.endswith("-web") for part in argv)
     assert argv[-3:] == VENDOR

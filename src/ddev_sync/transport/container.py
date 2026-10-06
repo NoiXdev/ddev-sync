@@ -22,11 +22,11 @@ from pathlib import Path
 
 from ddev_sync.ddev.project import DdevProject
 
-# DDEV mounts the project root here in every container it starts, and the
-# path is not configurable - `docroot` and `composer_root` are relative to
-# it. The sidecar's own compose mounts the project at the same path, which
-# is why passing a workdir through unchanged worked there and only broke
-# when the engine ran from a host checkout.
+# DDEV mounts the project root here in the web container, and the path is
+# not configurable - `docroot` and `composer_root` are relative to it. The
+# sidecar's own compose mounts the project at the same path, which is why
+# passing a workdir through unchanged worked there and only broke when the
+# engine ran from a host checkout.
 CONTAINER_PROJECT_ROOT = Path("/var/www/html")
 
 
