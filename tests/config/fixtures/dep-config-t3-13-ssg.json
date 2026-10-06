@@ -1,0 +1,15 @@
+{
+  "web-node-1.noidee.network": {
+    "alias": "web-node-1.noidee.network",
+    "hostname": "web-node-1.noidee.network",
+    "remote_user": "ssg-kevelaer",
+    "port": null,
+    "deploy_path": "/home/ssg-kevelaer/htdocs/deployer",
+    "current_path": "/home/ssg-kevelaer/htdocs/deployer/current",
+    "release_path": {
+      "error": "The \"release_path\" (/home/ssg-kevelaer/htdocs/deployer/release) does not exist."
+    },
+    "shared_path": null,
+    "bin/php": "/usr/bin/php8.4"
+  }
+}
