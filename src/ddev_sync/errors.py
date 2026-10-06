@@ -23,3 +23,7 @@ class TargetError(DdevSyncError):
 
 class DetectionError(DdevSyncError):
     """Project type or framework version could not be determined."""
+
+
+class DeployerError(DdevSyncError):
+    """The project's Deployer configuration could not be read or understood."""

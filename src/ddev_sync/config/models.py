@@ -1,6 +1,7 @@
 """Pydantic models for sync targets, before and after resolution."""
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -27,6 +28,26 @@ class Layout(StrEnum):
     DEPLOYER = "deployer"
 
 
+class DeployerRef(BaseModel):
+    """A reference to a host in the project's own Deployer configuration.
+
+    `host` is Deployer's *host alias*, which is not necessarily a hostname: a
+    project may name its hosts `production` and `staging`. It may be omitted
+    when `dep config` reports exactly one host.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    host: str | None = None
+
+
+# What a `deployer:` block supplies, and therefore what may not be written
+# beside it. `jump_host` and its siblings are deliberately absent: Deployer
+# has no canonical field for a bastion, so the block has nothing to supply
+# there and no conflict is possible.
+DEPLOYER_OWNED_KEYS = ("host", "ssh_alias", "user", "port", "path", "layout")
+
+
 class TargetSpec(BaseModel):
     """One target as written in a config file.
 
@@ -48,6 +69,33 @@ class TargetSpec(BaseModel):
     jump_host: str | None = None
     jump_host_user: str | None = None
     jump_host_port: int = 22
+    deployer: DeployerRef | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _deployer_block_accepts_an_empty_value(cls, data: Any) -> Any:
+        # `deployer:` with no value parses as None, which pydantic would then
+        # read as "the field is absent" - indistinguishable from a target that
+        # never mentioned Deployer at all. The two mean different things, so
+        # the null is normalised to an empty ref before validation.
+        if isinstance(data, dict) and "deployer" in data and data["deployer"] is None:
+            data = {**data, "deployer": {}}
+        return data
+
+    @model_validator(mode="after")
+    def _deployer_owns_the_connection(self) -> "TargetSpec":
+        if self.deployer is None:
+            return self
+        # `model_fields_set`, not a comparison with None: `port` defaults to
+        # 22, so its value cannot say whether the user wrote it, and a block
+        # with no port beside it must not be reported as conflicting.
+        owned = [name for name in DEPLOYER_OWNED_KEYS if name in self.model_fields_set]
+        if owned:
+            raise ValueError(
+                f"a 'deployer:' block owns the connection, so {', '.join(owned)} "
+                "must not be set beside it; remove them, or remove the block"
+            )
+        return self
 
 
 class ResolvedTarget(BaseModel):

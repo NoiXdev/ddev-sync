@@ -1,16 +1,27 @@
 """Collect target definitions across layers and resolve them into complete targets."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
 
+from ddev_sync.config.deployer import DeployerConnection
 from ddev_sync.config.merge import LayerDoc, merge_layers
-from ddev_sync.config.models import ResolvedTarget, TargetSpec
+from ddev_sync.config.models import DEPLOYER_OWNED_KEYS, ResolvedTarget, TargetSpec
 from ddev_sync.errors import ConfigError, TargetError
 
 MAX_EXTENDS_DEPTH = 16
+
+# Three alternative ways to say "where to connect". The order is the tie-break
+# inside a single spec: an `ssh_alias` beats a `host` written beside it, which
+# is what `_build` has always done with the pair.
+_CONNECTION_SOURCES = ("host", "ssh_alias", "deployer")
+
+# What a `deployer:` block supplies besides the host itself.
+_DEPLOYER_DETAIL_KEYS = ("user", "port", "path", "layout")
+
+DeployerResolver = Callable[[str | None], DeployerConnection]
 
 
 @dataclass(frozen=True)
@@ -79,11 +90,21 @@ def _strongest_source(
     return max(labels, key=lambda label: order[label])
 
 
-def resolve_target(name: str, collected: Mapping[str, CollectedTarget]) -> ResolvedTarget:
-    """Flatten a target's `extends` chain and validate that it is complete."""
+def resolve_target(
+    name: str,
+    collected: Mapping[str, CollectedTarget],
+    *,
+    resolve_deployer: DeployerResolver | None = None,
+) -> ResolvedTarget:
+    """Flatten a target's `extends` chain and validate that it is complete.
+
+    `resolve_deployer` turns a `deployer:` block's host alias into a
+    connection. It is only called for a target whose chain ends up owned by
+    such a block.
+    """
     chain = _extends_chain(name, collected)
-    flattened = _flatten(chain)
-    return _build(name, flattened, source=collected[name].source)
+    flattened = _flatten(name, chain)
+    return _build(name, flattened, source=collected[name].source, resolve_deployer=resolve_deployer)
 
 
 def _extends_chain(name: str, collected: Mapping[str, CollectedTarget]) -> list[TargetSpec]:
@@ -114,7 +135,7 @@ def _extends_chain(name: str, collected: Mapping[str, CollectedTarget]) -> list[
     return chain
 
 
-def _flatten(chain: Sequence[TargetSpec]) -> dict[str, Any]:
+def _flatten(name: str, chain: Sequence[TargetSpec]) -> dict[str, Any]:
     # `exclude_unset` (not `exclude_defaults`): a child that explicitly writes
     # `port: 22` must still override a base's `port: 2222`, and `22` happens
     # to equal the field's default. `exclude_defaults` cannot tell "the user
@@ -123,27 +144,80 @@ def _flatten(chain: Sequence[TargetSpec]) -> dict[str, Any]:
     # win. `exclude_unset` tracks which fields pydantic actually saw on the
     # constructor call, which is the distinction spec §4.4 needs.
     flattened: dict[str, Any] = {}
-    host_index: int | None = None
-    alias_index: int | None = None
+    set_at: dict[str, int] = {}
     for index, spec in enumerate(chain):
         for key, value in spec.model_dump(exclude_none=True, exclude_unset=True).items():
             if key == "extends":
                 continue
             flattened[key] = value
-            if key == "host":
-                host_index = index
-            elif key == "ssh_alias":
-                alias_index = index
-    # `ssh_alias` and `host` are alternative ways to say "where to connect".
-    # When both are set somewhere in the chain, whichever was set by the
-    # stronger (later) link wins; a weaker layer's alias must not silently
-    # shadow a stronger layer's explicit host, and vice versa.
-    if host_index is not None and alias_index is not None and host_index > alias_index:
-        flattened.pop("ssh_alias", None)
+            set_at[key] = index
+
+    # `host`, `ssh_alias` and `deployer` are alternative ways to say "where to
+    # connect". Whichever the stronger (later) link set wins and the others
+    # are dropped: a weaker layer must not silently shadow a stronger layer's
+    # explicit choice, in any direction.
+    present = [key for key in _CONNECTION_SOURCES if key in set_at]
+    if not present:
+        return flattened
+    winner = max(present, key=lambda key: (set_at[key], _CONNECTION_SOURCES.index(key)))
+    for key in present:
+        if key != winner:
+            flattened.pop(key)
+    if winner != "deployer":
+        return flattened
+
+    # A block is strict: it is the only source for user, port, path and
+    # layout, with no fallback to a literal. So a base's `port: 2222` is
+    # dropped along with its `host` - this is the one place where a value
+    # disappears without an error naming it, and it has to, because keeping
+    # it would let a Deployer host that states no port connect on a port the
+    # block never asked for.
+    #
+    # The reverse is not silent: a literal set by a link *stronger* than the
+    # block contradicts it, exactly as one beside it would, and neither
+    # overwriting nor ignoring it would honour an explicit choice.
+    contradicting = [
+        key for key in _DEPLOYER_DETAIL_KEYS if key in set_at and set_at[key] > set_at["deployer"]
+    ]
+    if contradicting:
+        raise TargetError(
+            f"target {name!r}: {', '.join(contradicting)} cannot be set on a target that extends "
+            "one with a 'deployer:' block, which owns the connection; "
+            "remove them, or give this target its own host"
+        )
+    for key in DEPLOYER_OWNED_KEYS:
+        flattened.pop(key, None)
     return flattened
 
 
-def _build(name: str, flattened: dict[str, Any], *, source: str) -> ResolvedTarget:
+def _build(
+    name: str,
+    flattened: dict[str, Any],
+    *,
+    source: str,
+    resolve_deployer: DeployerResolver | None,
+) -> ResolvedTarget:
+    deployer = flattened.pop("deployer", None)
+    if deployer is not None:
+        if resolve_deployer is None:
+            raise TargetError(
+                f"target {name!r} (from {source}) has a 'deployer:' block, which has to be "
+                "resolved from the project's own Deployer - and nothing here can do that. "
+                "This is a bug in ddev-sync, not in your configuration."
+            )
+        connection = resolve_deployer(deployer.get("host"))
+        flattened["host"] = connection.host
+        flattened["user"] = connection.user
+        flattened["path"] = connection.path
+        flattened["layout"] = connection.layout
+        # Omitted, never set to None: `setdefault("port", 22)` below does not
+        # replace a key that is present with the value None, so passing the
+        # null through would leave port unset, `_ssh_prefix` would omit `-p`
+        # entirely, and this target would build a different ssh command than
+        # an identical literal one.
+        if connection.port is not None:
+            flattened["port"] = connection.port
+
     alias = flattened.pop("ssh_alias", None)
     if alias is not None:
         flattened["host"] = alias
