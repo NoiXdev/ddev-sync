@@ -11,6 +11,38 @@ from collections.abc import Sequence
 
 from ddev_sync.config.models import ResolvedTarget
 
+# How long ssh may take to establish a connection before it gives up. Without
+# one, an unreachable host costs the operating system's TCP timeout - about 75
+# seconds on the machine this was found on - and `doctor` runs its probes one
+# after another, so that wait is paid again for every probe. Ten seconds is
+# the trade between the two ways to be wrong: a slow but reachable host (a
+# loaded bastion, a satellite link) still completes a handshake well inside
+# it, because a TCP connect needs one round trip plus a retransmit or two,
+# while a user whose host is simply down sees the failure in the time it takes
+# to read a sentence rather than watching nothing happen for over a minute.
+CONNECT_TIMEOUT_SECONDS = 10
+
+# `accept-new` and not `no`, and the difference is the whole point: it
+# accepts a host ssh has never seen without asking, but still REFUSES a host
+# whose key has changed - which is the signal a man-in-the-middle produces.
+# `no` (usually paired with `UserKnownHostsFile=/dev/null`) switches that
+# detection off entirely. For a tool that moves production databases and
+# reads the production database's own credentials over the same channel,
+# that would trade away the protection to save one confirmation prompt. Under
+# the DDEV add-on `known_hosts` persists, so trust-on-first-use costs exactly
+# one silent acceptance per host. Do not "simplify" this to `no`.
+#
+# One caveat: `-J` starts a second ssh for the jump host, and OpenSSH does not
+# hand it these `-o` options, so the jump host's own key follows whatever
+# `ssh_config` says about it. The connect timeout still bounds the whole
+# attempt, since the outer ssh gives up waiting for the banner.
+SSH_CONNECTION_OPTIONS: tuple[str, ...] = (
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    f"ConnectTimeout={CONNECT_TIMEOUT_SECONDS}",
+)
+
 
 def remote_endpoint(target: ResolvedTarget) -> str:
     """The `user@host` ssh destination, or the bare alias for alias targets."""
@@ -25,12 +57,12 @@ def quote_remote(argv: Sequence[str]) -> str:
 
 
 def ssh_command(target: ResolvedTarget, remote_command: Sequence[str]) -> list[str]:
-    """Build `ssh [-J jump] [-p port] endpoint '<command>'`."""
+    """Build `ssh [-o ...] [-J jump] [-p port] endpoint '<command>'`."""
     return [*_ssh_prefix(target), remote_endpoint(target), quote_remote(remote_command)]
 
 
 def _ssh_prefix(target: ResolvedTarget) -> list[str]:
-    prefix = ["ssh"]
+    prefix = ["ssh", *SSH_CONNECTION_OPTIONS]
     prefix.extend(_jump_flag(target))
     if target.port is not None:
         prefix.extend(["-p", str(target.port)])
@@ -47,8 +79,8 @@ def _jump_flag(target: ResolvedTarget) -> list[str]:
 
 
 def scp_download_command(target: ResolvedTarget, remote_path: str, local_path: str) -> list[str]:
-    """Build `scp [-J jump] [-P port] endpoint:remote local`."""
-    command = ["scp"]
+    """Build `scp [-o ...] [-J jump] [-P port] endpoint:remote local`."""
+    command = ["scp", *SSH_CONNECTION_OPTIONS]
     command.extend(_jump_flag(target))
     if target.port is not None:
         command.extend(["-P", str(target.port)])
@@ -75,7 +107,10 @@ def rsync_pull_command(
 
 
 def _rsync_ssh_option(target: ResolvedTarget) -> str:
-    parts = ["ssh", *_jump_flag(target)]
+    # rsync splits `-e` on spaces and ssh receives the pieces as separate
+    # arguments, so every option above is written without a space inside its
+    # value. Keep it that way: a value with a space would be torn in two.
+    parts = ["ssh", *SSH_CONNECTION_OPTIONS, *_jump_flag(target)]
     if target.port is not None:
         parts.extend(["-p", str(target.port)])
     return " ".join(parts)

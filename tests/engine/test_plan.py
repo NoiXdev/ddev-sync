@@ -391,12 +391,16 @@ def test_an_ssh_alias_target_omits_the_port_flag_from_the_preflight_preview() ->
         merged=merge_layers([LayerDoc("profile:generic", {})]),
         steps=steps_for_selection([]),
     )
-    assert plan.steps[0].detail == "ssh app-prod"
+    assert plan.steps[0].detail == (
+        "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 app-prod"
+    )
 
 
 def test_a_direct_target_includes_the_port_flag_in_the_preflight_preview() -> None:
     plan = plan_for([])
-    assert plan.steps[0].detail == "ssh -p 22 deploy@web01.example"
+    assert plan.steps[0].detail == (
+        "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 22 deploy@web01.example"
+    )
 
 
 def test_a_sanitize_block_with_several_rules_pluralises() -> None:

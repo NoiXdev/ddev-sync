@@ -4,7 +4,7 @@
 
   Features  typo3-processedfiles  from .ddev/ddev-sync.yaml
 
-   1  preflight     remote  ssh -p 22 deploy@web01.example   [built-in]
+   1  preflight     remote  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 22 deploy@web01.example   [built-in]
    2  sanitize      sql     11 rules: clear-be-sessions, clear-scheduler-tasks, clear-fe-sessions, clear-sys-log, anonymize-fe-users, reset-fe-passwords, anonymize-be-users, reset-be-passwords, local-admin, flush-cache, clear-processed-files   [profile:typo3]
    3  setup         web     composer install --no-interaction   [profile:typo3]
    4  setup         web     vendor/bin/typo3 extension:setup   [profile:typo3]

@@ -1,4 +1,5 @@
 import shlex
+from collections.abc import Callable
 
 import pytest
 
@@ -10,6 +11,11 @@ from ddev_sync.transport.ssh import (
     scp_download_command,
     ssh_command,
 )
+
+# Spelled out as literals on purpose: a test that imported the production
+# constants would keep passing if someone changed `accept-new` to `no`.
+HARDENING = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
+HARDENING_SHELL = "-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
 
 
 def direct() -> ResolvedTarget:
@@ -63,6 +69,7 @@ def aliased() -> ResolvedTarget:
 def test_a_direct_target_produces_port_and_endpoint() -> None:
     assert ssh_command(direct(), ["echo", "ok"]) == [
         "ssh",
+        *HARDENING,
         "-p",
         "2222",
         "deploy@web01.example",
@@ -73,6 +80,7 @@ def test_a_direct_target_produces_port_and_endpoint() -> None:
 def test_a_jump_host_adds_the_J_flag_with_user_and_port() -> None:
     assert ssh_command(with_jump(), ["true"]) == [
         "ssh",
+        *HARDENING,
         "-J",
         "tim@bastion.example:2022",
         "-p",
@@ -83,7 +91,7 @@ def test_a_jump_host_adds_the_J_flag_with_user_and_port() -> None:
 
 
 def test_an_alias_target_passes_only_the_alias() -> None:
-    assert ssh_command(aliased(), ["true"]) == ["ssh", "app-prod", "true"]
+    assert ssh_command(aliased(), ["true"]) == ["ssh", *HARDENING, "app-prod", "true"]
 
 
 def test_the_remote_command_is_quoted_as_one_argument() -> None:
@@ -105,6 +113,7 @@ def test_quote_remote_escapes_arguments_for_shell() -> None:
 def test_scp_uses_uppercase_P_for_the_port() -> None:
     assert scp_download_command(direct(), "/srv/app/dump.sql", "/var/www/html/dump.sql") == [
         "scp",
+        *HARDENING,
         "-P",
         "2222",
         "deploy@web01.example:/srv/app/dump.sql",
@@ -114,17 +123,18 @@ def test_scp_uses_uppercase_P_for_the_port() -> None:
 
 def test_scp_carries_the_jump_host() -> None:
     command = scp_download_command(with_jump(), "/srv/app/dump.sql", "/tmp/dump.sql")
-    assert command[:3] == ["scp", "-J", "tim@bastion.example:2022"]
+    assert command[:7] == ["scp", *HARDENING, "-J", "tim@bastion.example:2022"]
 
 
 def test_scp_carries_jump_host_without_user() -> None:
     command = scp_download_command(with_jump_no_user(), "/srv/app/dump.sql", "/tmp/dump.sql")
-    assert command[:3] == ["scp", "-J", "bastion.example:2022"]
+    assert command[:7] == ["scp", *HARDENING, "-J", "bastion.example:2022"]
 
 
 def test_scp_for_an_alias_target_has_no_port_flag() -> None:
     assert scp_download_command(aliased(), "/srv/a", "/tmp/a") == [
         "scp",
+        *HARDENING,
         "app-prod:/srv/a",
         "/tmp/a",
     ]
@@ -136,7 +146,7 @@ def test_rsync_pulls_with_archive_and_progress() -> None:
         "-a",
         "--info=progress2",
         "-e",
-        "ssh -p 2222",
+        f"ssh {HARDENING_SHELL} -p 2222",
         "deploy@web01.example:/srv/app/public/",
         "/var/www/html/public/",
     ]
@@ -145,12 +155,15 @@ def test_rsync_pulls_with_archive_and_progress() -> None:
 def test_rsync_puts_the_jump_host_inside_the_e_option() -> None:
     command = rsync_pull_command(with_jump(), "/srv/a/", "/tmp/a/")
     assert "-e" in command
-    assert command[command.index("-e") + 1] == "ssh -J tim@bastion.example:2022 -p 22"
+    assert (
+        command[command.index("-e") + 1]
+        == f"ssh {HARDENING_SHELL} -J tim@bastion.example:2022 -p 22"
+    )
 
 
 def test_rsync_for_an_alias_target_still_passes_e_ssh() -> None:
     command = rsync_pull_command(aliased(), "/srv/a/", "/tmp/a/")
-    assert command[command.index("-e") + 1] == "ssh"
+    assert command[command.index("-e") + 1] == f"ssh {HARDENING_SHELL}"
 
 
 def test_rsync_delete_is_opt_in() -> None:
@@ -171,3 +184,80 @@ def test_a_hostile_database_name_cannot_escape_the_remote_command(hostile: str) 
     # The whole hostile value survives as one quoted token, so the remote shell
     # sees an argument, never a second command.
     assert shlex.split(remote) == ["mysqldump", hostile]
+
+
+# --- host-key policy and connect timeout ------------------------------------
+#
+# Found on a first real run: the engine set neither, so a container whose
+# known_hosts starts empty either prompted with no terminal to answer on or
+# failed with "Host key verification failed.", and an unreachable host kept
+# `doctor` waiting about 75 seconds. These tests pin the options at every one
+# of the three places an ssh argument vector is built - fixing only
+# `_ssh_prefix` would leave scp and rsync behind, silently.
+
+
+def ssh_options_of(site: str, target: ResolvedTarget) -> list[str]:
+    """The ssh arguments `site` would run ssh with, as the argv tokens ssh sees."""
+    if site == "ssh":
+        return ssh_command(target, ["true"])[1:-1]
+    if site == "scp":
+        return scp_download_command(target, "/srv/a", "/tmp/a")[1:-2]
+    command = rsync_pull_command(target, "/srv/a/", "/tmp/a/")
+    # rsync splits `-e` itself; shlex mirrors that for options without spaces.
+    return shlex.split(command[command.index("-e") + 1])[1:]
+
+
+SITES = ["ssh", "scp", "rsync"]
+TARGETS = [direct, with_jump, with_jump_no_user, aliased]
+
+
+@pytest.mark.parametrize("site", SITES)
+@pytest.mark.parametrize("make_target", TARGETS)
+def test_every_invocation_site_trusts_an_unknown_host_but_not_a_changed_one(
+    site: str, make_target: Callable[[], ResolvedTarget]
+) -> None:
+    options = ssh_options_of(site, make_target())
+    assert "StrictHostKeyChecking=accept-new" in options
+
+
+@pytest.mark.parametrize("site", SITES)
+@pytest.mark.parametrize("make_target", TARGETS)
+def test_every_invocation_site_bounds_the_connect_time(
+    site: str, make_target: Callable[[], ResolvedTarget]
+) -> None:
+    options = ssh_options_of(site, make_target())
+    assert "ConnectTimeout=10" in options
+
+
+@pytest.mark.parametrize("site", SITES)
+def test_no_invocation_site_disables_host_key_detection(site: str) -> None:
+    # `accept-new` is the whole point: `StrictHostKeyChecking=no` or a
+    # throwaway known_hosts would also accept a *changed* key, which is the
+    # one signal a man-in-the-middle produces.
+    joined = " ".join(ssh_options_of(site, direct()))
+    assert "StrictHostKeyChecking=no" not in joined
+    assert "UserKnownHostsFile" not in joined
+    assert "StrictHostKeyChecking=off" not in joined
+
+
+@pytest.mark.parametrize("site", SITES)
+def test_each_option_is_given_exactly_once_per_site(site: str) -> None:
+    options = ssh_options_of(site, with_jump())
+    assert sum(option.startswith("StrictHostKeyChecking=") for option in options) == 1
+    assert sum(option.startswith("ConnectTimeout=") for option in options) == 1
+
+
+def test_rsync_option_values_survive_rsyncs_split_on_spaces() -> None:
+    # rsync splits `-e` on whitespace, so a value containing a space would be
+    # torn into two arguments. Splitting the string naively - the way rsync
+    # does - must give back exactly the tokens ssh is meant to receive.
+    command = rsync_pull_command(with_jump(), "/srv/a/", "/tmp/a/")
+    value = command[command.index("-e") + 1]
+    assert value.split(" ") == [
+        "ssh",
+        *HARDENING,
+        "-J",
+        "tim@bastion.example:2022",
+        "-p",
+        "22",
+    ]

@@ -55,8 +55,10 @@ add-on installed will start, and the hook says what to remove.
 `doctor` is the proof that installation worked, and what to look for is the
 `web container` and `ssh agent` rows being `OK`. Without a reachable remote its
 `ssh connection` row will fail, and that is expected: it says nothing about the
-installation. The first connection to any remote host is interactive, because
-ssh asks you to confirm the host; run `doctor` from a terminal for that.
+installation. An unknown host is trusted the first time it is seen, without
+asking, and remembered after that; a host whose key has *changed* is refused,
+and `doctor` says so on the `ssh connection` row. See
+[SECURITY.md](SECURITY.md) for why.
 
 The user documentation (`NoiXdev/noix-docs`, in its ddev-sync section) walks
 through installation, the first sync and removal.
