@@ -521,7 +521,7 @@ def test_flush_cache_runs_in_the_project_root(tmp_path: Path) -> None:
     config = rule_config(name="cache", operation="flush_cache", command="true")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     argv = runner.calls[0]
-    assert argv[argv.index("-w") + 1] == str(tmp_path)
+    assert argv[argv.index("-w") + 1] == "/var/www/html"
 
 
 def test_flush_cache_failures_are_tolerated(tmp_path: Path) -> None:
@@ -550,7 +550,7 @@ def test_search_replace_can_use_wp_cli(tmp_path: Path) -> None:
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     argv = runner.calls[0]
     assert argv[argv.index("ddev-acme-web") + 1 :][:2] == ("wp", "search-replace")
-    assert argv[argv.index("-w") + 1] == str(tmp_path / "public")
+    assert argv[argv.index("-w") + 1] == "/var/www/html/public"
 
 
 def test_a_failing_wp_search_replace_is_an_error(tmp_path: Path) -> None:
@@ -598,7 +598,7 @@ def test_wp_search_replace_runs_in_the_web_container_from_the_docroot(tmp_path: 
     argv = runner.calls[0]
     # wp-cli has to run from the docroot, where wp-config.php is; that was
     # `cwd=` before and is docker's `-w` now.
-    assert argv[argv.index("-w") + 1] == str(tmp_path / "public")
+    assert argv[argv.index("-w") + 1] == "/var/www/html/public"
     assert argv[argv.index("ddev-acme-web") + 1] == "wp"
 
 

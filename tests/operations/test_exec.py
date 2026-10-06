@@ -77,13 +77,13 @@ def test_an_operation_entrys_placeholders_are_expanded(tmp_path: Path) -> None:
 def test_commands_run_in_the_project_root_by_default(tmp_path: Path) -> None:
     runner = ok_runner()
     ExecOperation().execute(make_context(runner, tmp_path), {"run": "true"})
-    assert workdir_of(runner.calls[0]) == str(tmp_path)
+    assert workdir_of(runner.calls[0]) == "/var/www/html"
 
 
 def test_workdir_is_honoured(tmp_path: Path) -> None:
     runner = ok_runner()
     ExecOperation().execute(make_context(runner, tmp_path), {"run": "true", "workdir": "public"})
-    assert workdir_of(runner.calls[0]) == str(tmp_path / "public")
+    assert workdir_of(runner.calls[0]) == "/var/www/html/public"
 
 
 def test_a_workdir_outside_the_project_is_rejected(tmp_path: Path) -> None:
@@ -179,7 +179,7 @@ def test_the_entrys_workdir_becomes_dockers_working_directory(tmp_path: Path) ->
     (tmp_path / "web").mkdir()
     run_command_entry(context, {"run": "pnpm run build", "workdir": "web"})
     argv = runner.calls[0]
-    assert argv[argv.index("-w") + 1] == str(tmp_path / "web")
+    assert argv[argv.index("-w") + 1] == "/var/www/html/web"
 
 
 def test_nothing_is_executed_locally_for_a_run_entry(tmp_path: Path) -> None:

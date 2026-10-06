@@ -78,3 +78,38 @@ def test_an_empty_argv_is_rejected_rather_than_producing_a_bare_docker_exec() ->
     # from docker, reported as a confusing non-zero exit far from its cause.
     with pytest.raises(ValueError, match="needs at least one argument"):
         web_command(project(), [], workdir=Path("/var/www/html"))
+
+
+def test_a_host_project_root_is_translated_to_the_container_mount_point() -> None:
+    # Running from a host checkout, `project.root` is a host path that does
+    # not exist in the container: `docker exec -w /Users/me/code/acme` fails
+    # with "chdir to cwd ... failed", and docker writes that to stdout, so it
+    # used to surface as a blank preflight row.
+    argv = web_command(
+        project(root="/Users/me/code/acme"),
+        ["vendor/bin/typo3", "cache:flush"],
+        workdir=Path("/Users/me/code/acme"),
+    )
+    assert argv[4:6] == ["-w", "/var/www/html"]
+
+
+def test_a_subdirectory_of_the_project_keeps_its_offset_under_the_mount_point() -> None:
+    argv = web_command(
+        project(root="/Users/me/code/acme"),
+        ["sh", "-c", "npm ci"],
+        workdir=Path("/Users/me/code/acme/public/theme"),
+    )
+    assert argv[4:6] == ["-w", "/var/www/html/public/theme"]
+
+
+def test_a_workdir_outside_the_project_is_rejected_rather_than_silently_mapped() -> None:
+    # Every call site passes `project.root`, `project.docroot_path` or a path
+    # `ExecutionContext.local` has already confined to the root, so this is a
+    # programming error - and guessing a mapping for it would run a command in
+    # whatever the container happens to have at that path.
+    with pytest.raises(ValueError, match="is not inside the project"):
+        web_command(
+            project(root="/Users/me/code/acme"),
+            ["true"],
+            workdir=Path("/etc"),
+        )
