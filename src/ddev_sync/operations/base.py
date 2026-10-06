@@ -113,6 +113,11 @@ class ExecutionContext:
     # and scrubbing the two characters `db` would mangle the database name,
     # the container host `ddev-<project>-db` and much else besides.
     secrets: set[str] = field(default_factory=set, repr=False, compare=False)
+    # Decided at the CLI edge like the colour flag, never sniffed here: an
+    # operation that called `sys.stdout.isatty()` itself would be untestable
+    # without a pty, and would answer differently in the sidecar than on a
+    # host.
+    stdout_is_terminal: bool = False
 
     def config(self, path: str, *, default: str) -> str:
         """Read a dotted path from the merged config, or return `default`."""

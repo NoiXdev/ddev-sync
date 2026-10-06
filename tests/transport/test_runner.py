@@ -82,3 +82,14 @@ def test_run_checked_raises_with_the_command_and_stderr() -> None:
     assert "exit 4" in message
     assert "bad" in message
     assert caught.value.result.returncode == 4
+
+
+def test_passthrough_inherits_stdout_but_still_captures_stderr() -> None:
+    # The contract the files step depends on: its progress goes to the
+    # terminal, its error message still has something to quote.
+    result = SubprocessRunner().run(
+        ["sh", "-c", "echo out; echo err >&2; exit 3"], passthrough=True
+    )
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert "err" in result.stderr

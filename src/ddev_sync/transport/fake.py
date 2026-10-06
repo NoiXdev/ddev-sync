@@ -26,6 +26,7 @@ class Invocation:
     env: dict[str, str] | None
     stdout_path: Path | None
     sensitive: bool = False
+    passthrough: bool = False
 
 
 @dataclass
@@ -80,6 +81,7 @@ class FakeCommandRunner:
         env: Mapping[str, str] | None = None,
         stdout_path: Path | None = None,
         sensitive: bool = False,
+        passthrough: bool = False,
     ) -> CommandResult:
         """Return the first unused matching script, or raise."""
         command = tuple(argv)
@@ -90,6 +92,7 @@ class FakeCommandRunner:
                 env=dict(env) if env is not None else None,
                 stdout_path=stdout_path,
                 sensitive=sensitive,
+                passthrough=passthrough,
             )
         )
         script = self._find(command)
@@ -102,6 +105,11 @@ class FakeCommandRunner:
         if stdout_path is not None:
             stdout_path.parent.mkdir(parents=True, exist_ok=True)
             stdout_path.write_text(script.stdout, encoding="utf-8")
+            return CommandResult(command, script.returncode, "", script.stderr)
+        if passthrough:
+            # The real runner hands stdout to the terminal, so a caller never
+            # gets it back; a fake that returned it would let a test pass on
+            # something production cannot do.
             return CommandResult(command, script.returncode, "", script.stderr)
         return CommandResult(command, script.returncode, script.stdout, script.stderr)
 

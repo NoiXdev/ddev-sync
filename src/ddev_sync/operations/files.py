@@ -55,7 +55,11 @@ class FilesRsyncOperation:
             f"{pair.local}/",
             delete=pair.delete,
         )
-        result = context.runner.run(argv)
+        # `rsync_pull_command` already asks for `--info=progress2`; it went
+        # unseen only because the runner captured it. On a terminal, let it
+        # through. Only stdout is inherited, so stderr is still captured for
+        # the failure message below.
+        result = context.runner.run(argv, passthrough=context.stdout_is_terminal)
         if not result.ok:
             raise OperationError(
                 f"rsync of {pair.remote} failed (exit {result.returncode}): {result.stderr.strip()}"

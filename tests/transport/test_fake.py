@@ -64,6 +64,17 @@ def test_stdout_path_writes_the_scripted_stdout_to_the_file(tmp_path: Path) -> N
     assert "Dump completed" in target.read_text(encoding="utf-8")
 
 
+def test_passthrough_is_recorded_and_hands_no_stdout_back() -> None:
+    # The real runner gives the child's stdout to the terminal, so the fake
+    # must not hand it to the caller either.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["rsync"], stdout="progress", stderr="warning")
+    result = runner.run(["rsync", "a", "b"], passthrough=True)
+    assert runner.invocations[0].passthrough is True
+    assert result.stdout == ""
+    assert result.stderr == "warning"
+
+
 def test_a_non_matching_prefix_script_is_skipped_for_a_later_matching_one() -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["ssh"], stdout="ssh output")

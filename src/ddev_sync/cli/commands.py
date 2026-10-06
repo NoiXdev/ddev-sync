@@ -54,7 +54,10 @@ def doctor_command(
     `colour` is decided by the caller, which knows the real terminal and
     environment; this function only passes it on to the renderer.
     """
-    execution = _execution_context(context, runner=runner, assume_yes=True, secrets=set())
+    # The doctor runs read-only probes, none of which has progress to show.
+    execution = _execution_context(
+        context, runner=runner, assume_yes=True, secrets=set(), stdout_is_terminal=False
+    )
     report = PreflightOperation().check(execution)
     echo(render_doctor(report, context.target, colour=colour))
     # Every check the rendered checklist can show as FAIL has to fail the
@@ -88,6 +91,7 @@ def run_command(
     only_feature_setup: bool = False,
     colour: bool = False,
     verbose: int = 0,
+    stdout_is_terminal: bool = False,
 ) -> int:
     """Plan and, unless `dry_run`, execute a sync.
 
@@ -95,6 +99,8 @@ def run_command(
     environment; this function only passes it on to the reporter. `verbose`
     is the number of `-v` flags: the reporter reads all of it, and from 2 up
     the runner is wrapped so that command output is printed too.
+    `stdout_is_terminal` is likewise decided by the caller and handed to the
+    operations, which use it to let a long transfer show its progress.
     """
     plan = build_plan(
         target=context.target,
@@ -115,7 +121,13 @@ def run_command(
     reporter = ConsoleReporter(write=echo, colour=colour, verbose=verbose)
     if verbose >= 2:
         runner = VerboseRunner(runner, write=echo, secrets=secrets, verbose=verbose)
-    execution = _execution_context(context, runner=runner, assume_yes=assume_yes, secrets=secrets)
+    execution = _execution_context(
+        context,
+        runner=runner,
+        assume_yes=assume_yes,
+        secrets=secrets,
+        stdout_is_terminal=stdout_is_terminal,
+    )
     report = Executor(reporter=reporter).run(plan, execution)
     if "sanitize" not in selection:
         reporter.warn_unsanitized(context.target.stage.value)
@@ -200,7 +212,12 @@ def resolve_target_name(explicit: str | None, project_root: Path, home: Path) ->
 
 
 def _execution_context(
-    context: RunContext, *, runner: CommandRunner, assume_yes: bool, secrets: set[str]
+    context: RunContext,
+    *,
+    runner: CommandRunner,
+    assume_yes: bool,
+    secrets: set[str],
+    stdout_is_terminal: bool,
 ) -> ExecutionContext:
     return ExecutionContext(
         project=context.project,
@@ -211,6 +228,7 @@ def _execution_context(
         assume_yes=assume_yes,
         keep_dump=_keep_dump(context.merged),
         secrets=secrets,
+        stdout_is_terminal=stdout_is_terminal,
     )
 
 

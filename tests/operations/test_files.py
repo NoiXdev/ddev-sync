@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -175,3 +176,34 @@ def test_a_path_that_only_looks_like_an_escape_is_allowed(tmp_path: Path) -> Non
     context = make_context(runner, tmp_path)
     FilesRsyncOperation().execute(context, {"remote": "a/", "local": "public/../public/uploads/"})
     assert len(runner.calls) == 1
+
+
+PAIR = {"remote": "public/fileadmin/", "local": "public/fileadmin/"}
+
+
+def test_rsync_asks_for_passthrough_when_stdout_is_a_terminal(tmp_path: Path) -> None:
+    # rsync is already given `--info=progress2`; the only reason the progress
+    # was never seen is that the runner captured it.
+    runner = ok_runner()
+    context = replace(make_context(runner, tmp_path), stdout_is_terminal=True)
+    FilesRsyncOperation().execute(context, PAIR)
+    assert runner.invocations[0].passthrough is True
+
+
+def test_rsync_does_not_ask_for_passthrough_without_a_terminal(tmp_path: Path) -> None:
+    # In a CI log rsync's `\r`-separated progress becomes thousands of lines.
+    runner = ok_runner()
+    context = make_context(runner, tmp_path)
+    FilesRsyncOperation().execute(context, PAIR)
+    assert runner.invocations[0].passthrough is False
+
+
+def test_a_failed_passthrough_rsync_still_reports_its_stderr(tmp_path: Path) -> None:
+    # Passthrough inherits stdout only. stderr stays captured precisely so
+    # this message keeps working.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["rsync"], returncode=23, stderr="rsync: link_stat failed")
+    context = replace(make_context(runner, tmp_path), stdout_is_terminal=True)
+    with pytest.raises(OperationError) as caught:
+        FilesRsyncOperation().execute(context, PAIR)
+    assert "link_stat failed" in str(caught.value)

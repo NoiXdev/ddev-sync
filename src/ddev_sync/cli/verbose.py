@@ -47,6 +47,7 @@ class VerboseRunner:
         env: Mapping[str, str] | None = None,
         stdout_path: Path | None = None,
         sensitive: bool = False,
+        passthrough: bool = False,
     ) -> CommandResult:
         """Run `argv` through the wrapped runner, printing what it did.
 
@@ -57,7 +58,12 @@ class VerboseRunner:
         if self._verbose >= 3:
             self._emit(f"$ {' '.join(argv)}")
         result = self._inner.run(
-            argv, cwd=cwd, env=env, stdout_path=stdout_path, sensitive=sensitive
+            argv,
+            cwd=cwd,
+            env=env,
+            stdout_path=stdout_path,
+            sensitive=sensitive,
+            passthrough=passthrough,
         )
         if sensitive:
             # One line rather than nothing: a silent gap reads as a command

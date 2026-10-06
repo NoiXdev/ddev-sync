@@ -402,6 +402,7 @@ def _run(options: _Options, *, steps: str | None, dry_run: bool, assume_yes: boo
         only_feature_setup=options.only_feature_setup,
         colour=use_colour,
         verbose=options.verbose,
+        stdout_is_terminal=sys.stdout.isatty(),
     )
 
 

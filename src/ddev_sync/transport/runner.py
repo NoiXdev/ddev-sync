@@ -51,6 +51,7 @@ class CommandRunner(Protocol):
         env: Mapping[str, str] | None = None,
         stdout_path: Path | None = None,
         sensitive: bool = False,
+        passthrough: bool = False,
     ) -> CommandResult:
         """Execute `argv`; stream stdout to `stdout_path` when given.
 
@@ -58,6 +59,15 @@ class CommandRunner(Protocol):
         a statement about what comes back, not an instruction about how to run
         the command: `SubprocessRunner` ignores it, and its only reader is the
         verbose narrator (`cli/verbose.py`), which withholds the output.
+
+        `passthrough` lets the child write its stdout straight to this
+        process's stdout instead of having it captured, so a long-running
+        command can show progress. stderr is still captured, and the returned
+        `stdout` is empty: a caller that needs to read a command's stdout must
+        not ask for passthrough. It is meant for a caller that has already
+        decided stdout is a terminal. `stdout_path` and `passthrough` both
+        redirect stdout and are not meant to be combined; if both are given,
+        `stdout_path` wins.
         """
 
 
@@ -72,8 +82,9 @@ class SubprocessRunner:
         env: Mapping[str, str] | None = None,
         stdout_path: Path | None = None,
         sensitive: bool = False,
+        passthrough: bool = False,
     ) -> CommandResult:
-        """Execute `argv`, capturing output or streaming it to a file.
+        """Execute `argv`, capturing output, streaming it to a file, or passing it through.
 
         `sensitive` is deliberately unused: see `CommandRunner.run`.
         """
@@ -81,6 +92,8 @@ class SubprocessRunner:
         try:
             if stdout_path is not None:
                 return self._run_streaming(command, cwd, env, stdout_path)
+            if passthrough:
+                return self._run_passthrough(command, cwd, env)
             completed = subprocess.run(
                 command,
                 cwd=cwd,
@@ -115,6 +128,35 @@ class SubprocessRunner:
                 stderr=subprocess.PIPE,
                 check=False,
             )
+        return CommandResult(
+            argv=tuple(command),
+            returncode=completed.returncode,
+            stdout="",
+            stderr=completed.stderr.decode(errors="replace"),
+        )
+
+    def _run_passthrough(
+        self,
+        command: list[str],
+        cwd: Path | None,
+        env: Mapping[str, str] | None,
+    ) -> CommandResult:
+        """Let the child write to this process's stdout, keeping its stderr.
+
+        Only stdout is inherited. rsync writes its `--info=progress2` output
+        there and its errors to stderr, and `operations/files.py` quotes that
+        stderr in its failure message, so inheriting both would empty the one
+        thing the error path needs. This is the split `_run_streaming` makes,
+        with this process's stdout in place of the file.
+        """
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=dict(env) if env is not None else None,
+            stdout=None,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
         return CommandResult(
             argv=tuple(command),
             returncode=completed.returncode,

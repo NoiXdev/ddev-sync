@@ -113,3 +113,10 @@ def test_the_sensitive_flag_reaches_the_wrapped_runner_and_the_result_is_returne
     result = runner.run(["echo", "x"], sensitive=True)
     assert inner.invocations[0].sensitive is True
     assert result.stdout == "payload\n"
+
+
+def test_the_passthrough_flag_reaches_the_wrapped_runner() -> None:
+    inner = runner_with(stdout="payload\n")
+    runner = VerboseRunner(inner, write=lambda _: None, secrets=set(), verbose=2)
+    runner.run(["echo", "x"], passthrough=True)
+    assert inner.invocations[0].passthrough is True

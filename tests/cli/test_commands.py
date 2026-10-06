@@ -351,6 +351,8 @@ def _fake_ssh_ok(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
     stdout_path: Path | None = None,
+    sensitive: bool = False,
+    passthrough: bool = False,
 ) -> CommandResult:
     return CommandResult(argv=tuple(argv), returncode=0, stdout="ddev-sync-ok\n", stderr="")
 
@@ -580,11 +582,12 @@ def test_force_color_reaches_the_output_even_though_it_is_not_a_terminal(
     assert "\x1b[31mFAIL\x1b[0m" in output
 
 
-def _stub_sync_runner(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _stub_sync_runner(project: Path, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     """Give the project one files path and make every command a sync runs succeed.
 
     The `files` step is only offered when the project has something to sync, and
-    no ssh or ddev is involved: the stubbed runner answers every command.
+    no ssh or ddev is involved: the stubbed runner answers every command. The
+    returned list collects the `passthrough` flag of every command it is given.
     """
     config = project / ".ddev" / "ddev-sync.yaml"
     config.write_text(
@@ -592,6 +595,8 @@ def _stub_sync_runner(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         + "files:\n  paths:\n    - {remote: uploads/, local: uploads/}\n",
         encoding="utf-8",
     )
+
+    passthroughs: list[bool] = []
 
     def run(
         self: object,
@@ -601,10 +606,13 @@ def _stub_sync_runner(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         env: dict[str, str] | None = None,
         stdout_path: Path | None = None,
         sensitive: bool = False,
+        passthrough: bool = False,
     ) -> CommandResult:
+        passthroughs.append(passthrough)
         return CommandResult(tuple(argv), 0, "ddev-sync-ok\n", "")
 
     monkeypatch.setattr("ddev_sync.transport.runner.SubprocessRunner.run", run)
+    return passthroughs
 
 
 def test_force_color_colours_the_sync_markers_on_a_stream_that_is_not_a_terminal(
@@ -661,6 +669,29 @@ def test_no_color_keeps_the_sync_output_plain_on_a_terminal(
     output = capsys.readouterr().out
     assert "OK" in output
     assert "\x1b" not in output
+
+
+def test_the_terminal_fact_is_decided_at_the_edge_and_reaches_the_rsync_runner(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    passthroughs = _stub_sync_runner(project, monkeypatch)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    assert invoke(project, tmp_path, "--yes", "--target", "production", "--steps", "files") == 0
+    assert True in passthroughs
+
+
+def test_without_a_terminal_rsync_is_not_asked_to_pass_its_output_through(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    passthroughs = _stub_sync_runner(project, monkeypatch)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    assert invoke(project, tmp_path, "--yes", "--target", "production", "--steps", "files") == 0
+    assert passthroughs
+    assert not any(passthroughs)
 
 
 def _sync_output(
@@ -740,7 +771,11 @@ def test_the_secrets_set_is_handed_to_the_execution_context_not_copied(
     )
     secrets: set[str] = set()
     execution = commands._execution_context(
-        context, runner=SubprocessRunner(), assume_yes=True, secrets=secrets
+        context,
+        runner=SubprocessRunner(),
+        assume_yes=True,
+        secrets=secrets,
+        stdout_is_terminal=False,
     )
     assert execution.secrets is secrets
 
@@ -781,6 +816,8 @@ def test_a_deployer_target_is_resolved_and_synced_through_one_runner(
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
         stdout_path: Path | None = None,
+        sensitive: bool = False,
+        passthrough: bool = False,
     ) -> CommandResult:
         seen.append((id(self), tuple(argv)))
         is_dep = tuple(argv[-3:]) == ("vendor/bin/dep", "config", "--format=json")
@@ -838,6 +875,8 @@ def test_dep_config_runs_once_even_when_the_target_fails_to_resolve(
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
         stdout_path: Path | None = None,
+        sensitive: bool = False,
+        passthrough: bool = False,
     ) -> CommandResult:
         is_dep = tuple(argv[-2:]) == ("config", "--format=json")
         if is_dep:
