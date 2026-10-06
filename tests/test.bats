@@ -182,6 +182,17 @@ entries_in() {
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"ddev-sync, version "* ]] || false
 
+  # Arguments reach the engine rather than being eaten by DDEV. `--version`
+  # above proves the least of that class, because DDEV understands that flag
+  # too; a bare subcommand and `--help` are the two shapes DDEV is most likely
+  # to answer itself. The string asserted is one only the engine prints:
+  # `ddev-sync` is the engine's own program name, which no help DDEV generates
+  # for `ddev sync` would use.
+  run ddev sync --help
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"Usage: ddev-sync"* ]] || false
+
   # The global configuration layer is reachable from inside the sidecar. It is
   # the one layer that lives outside the project, in the developer's own home,
   # and nothing of that home exists in the container by itself: without the
