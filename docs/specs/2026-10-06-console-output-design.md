@@ -116,16 +116,25 @@ The `OK` line carries no description: it would repeat the line above it.
 A counting click option, `-v/--verbose`, on the run command. Level 0 is the
 default above.
 
-- **`-v`** appends `detail` to both lines — exactly today's output.
-- **`-vv`** additionally prints each step's command output, indented under the
-  `OK`/`FAIL` line, scrubbed (see below). Today output is shown only for a
-  failure, through `outcome.error`.
+- **`-v`** appends `detail` to the `..` line only; `finished()` never shows it.
+  `detail` is the step's plan detail, as the dry run prints it: the command line
+  for some kinds, a summary for others.
+- **`-vv`** additionally prints each command's output as it runs, indented, so
+  it lands between the step's `..` line and its `OK`/`FAIL` line, scrubbed (see
+  below). Today output is shown only for a failure, through `outcome.error`.
 - **`-vvv`** additionally prints the full argument vector of every command and
   the wall-clock duration of each step.
 
-Nothing is ever printed unscrubbed. The owner was offered a raw level and
-declined it, so no level exists at which a production password can reach the
-scrollback.
+The `dep config` call made while the run context is built happens before
+`run_command` installs the narrator, so `-vvv` never shows it.
+
+No level prints a command's output unscrubbed. The owner was offered a raw
+level and declined it, so no level exists at which a production password can
+reach the scrollback through a command's output. The reporter's own lines are a
+different path: `finished()` prints a failed step's error and `notice()` prints
+whatever it is given, and neither scrubs. Where an error message could carry a
+secret, its producer scrubs it before raising: `redact` in `database.py`, an
+inline replace in `s3.py`.
 
 ### Scrubbing, and why it needs a registry
 
@@ -138,12 +147,27 @@ none.
 contexts stay equal regardless of what either has resolved. Whoever resolves a
 remote credential adds its password — in practice
 `database.py::read_remote_credentials`, which is the single funnel for all
-three credential sources. The reporter is handed that set at construction and
-scrubs every line it prints at any level.
+three credential sources. The command narrator, `cli/verbose.py::VerboseRunner`,
+is handed that set at construction and scrubs every line of command output it
+prints. The reporter takes no such set: `ConsoleReporter.__init__` takes only
+`write`, `colour` and `verbose`.
+
+The narrator holds the set itself, not a copy, because the passwords are added
+to it during the run, long after the narrator was built; `run_command` makes
+one set and hands that same object to both sides.
+
+Two commands read credentials before any password is registered: the `wp
+config get` read and the remote `.env` read, the latter returning the whole
+production `.env`. They are marked `sensitive=True`, and the narrator withholds
+their output entirely instead of scrubbing it.
+
+The S3 operation registers its two secret keys on the same set as soon as both
+endpoints resolve, because rclone's stderr can carry them and the narrator
+prints that stderr before the operation's failure path redacts it.
 
 **The local database password is deliberately not registered.** It is
 `LOCAL_DB_PASSWORD = "db"`, a fixed value DDEV documents publicly, and
-scrubbing the three-character string `db` would mangle the database name, the
+scrubbing the two-character string `db` would mangle the database name, the
 container host `ddev-<project>-db`, and half the output besides. The spec
 records this so that nobody later "fixes" the omission.
 
@@ -204,8 +228,13 @@ half the questions flush against the line above, which is the complaint.
 - A test that `FAIL` is separated from the step name — the regression that
   prompted this.
 - A test that `files.sync` passes `passthrough` only when told stdout is a
-  terminal, one that it does not read the result's stdout, and one that a
-  failed passthrough rsync still reports the stderr it captured.
+  terminal, one that it does not read the result's stdout (the fake returns
+  `""` for a passthrough call, so that test uses a result whose `stdout` raises
+  when read), and one that a failed passthrough rsync still reports the stderr
+  it captured.
+- An end-to-end test at `-vv` and `-vvv` that a password read during the run is
+  absent from a later command's output, which fails if `run_command` copies the
+  secrets set at either hand-off.
 - Colour is passed in, never sniffed, so every renderer test stays a plain
   string comparison.
 
