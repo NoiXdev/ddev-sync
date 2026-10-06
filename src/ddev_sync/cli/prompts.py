@@ -6,9 +6,16 @@ dependency with two lambdas instead of driving a pseudo-terminal.
 Both refuse to prompt when stdin is not a terminal. questionary does not
 raise there - it waits on a terminal that will never answer - so a run from a
 script, a cron job or CI hung with no output at all, which is the worst way
-for a tool to fail. Returning `None` instead routes into the same "nothing
-was selected" path a cancelled prompt already takes, and the callers name the
-flag that skips the question.
+for a tool to fail. Returning `None` instead lets the callers name the flag
+that skips the question.
+
+`None` therefore means exactly one thing: there was no terminal to ask. A
+user pressing Ctrl-C is not that. questionary's `ask()` turns the interrupt
+into `None` as well, which made a cancelled prompt indistinguishable from
+"no terminal" and ended with a message about a missing terminal while the
+user was looking at one. `unsafe_ask()` lets the `KeyboardInterrupt` through
+instead, and `main` ends it with the same sentence and exit code as any other
+Ctrl-C.
 """
 
 import sys
@@ -22,7 +29,7 @@ def _select(question: str, choices: list[str]) -> str | None:
     """Ask the user to pick one of `choices`, or `None` with no terminal."""
     if not sys.stdin.isatty():
         return None
-    answer: str | None = questionary.select(question, choices=choices).ask()
+    answer: str = questionary.select(question, choices=choices).unsafe_ask()
     return answer
 
 
@@ -31,7 +38,7 @@ def _checkbox(question: str, choices: list[str], defaults: list[str]) -> list[st
     if not sys.stdin.isatty():
         return None
     options = [questionary.Choice(title=choice, checked=choice in defaults) for choice in choices]
-    answer: list[str] | None = questionary.checkbox(question, choices=options).ask()
+    answer: list[str] = questionary.checkbox(question, choices=options).unsafe_ask()
     return answer
 
 

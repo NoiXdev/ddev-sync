@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -387,7 +387,7 @@ def test_an_interrupt_before_the_import_does_not_warn_about_data(tmp_path: Path)
         plan_of(step(1, StepKind.DB_DUMP)),
         context_at(tmp_path),
     )
-    assert message == "Interrupted before the first step finished."
+    assert message == "Interrupted during db.dump, before the first step finished."
 
 
 def test_an_interrupt_once_sanitizing_finished_does_not_warn(tmp_path: Path) -> None:
@@ -397,26 +397,25 @@ def test_an_interrupt_once_sanitizing_finished_does_not_warn(tmp_path: Path) -> 
         context_at(tmp_path),
     )
     assert "after sanitize" in message
-    assert "sanit" not in message.removeprefix("Interrupted after sanitize.")
+    assert "sanit" not in message.removeprefix("Interrupted during setup, after sanitize.")
 
 
-def test_a_finished_pre_hook_does_not_stand_in_for_its_parent_step(tmp_path: Path) -> None:
+def test_a_finished_import_hook_does_not_stand_in_for_the_import(tmp_path: Path) -> None:
     # A hook carries its parent's `kind`, so a finished `pre_db_import` hook
-    # looks like a finished import to anything that only reads `kind`. The
-    # import has not run, though, and saying production data is on the machine
-    # would be false.
+    # looks like a finished import to anything that only reads `kind`. No
+    # import step has finished, though, and saying production data is on the
+    # machine would be false.
     runner = FakeCommandRunner()
     runner.script_prefix(["docker", "exec"])
     message = interrupted_message(
-        interrupting_executor(StepKind.DB_IMPORT),
+        interrupting_executor(StepKind.ENV),
         plan_of(
             step(1, StepKind.DB_IMPORT, is_hook=True, params={"run": "x"}),
-            step(2, StepKind.DB_IMPORT),
+            step(2, StepKind.ENV),
         ),
         replace(context_at(tmp_path), runner=runner),
     )
-    assert message.startswith("Interrupted after a db.import hook.")
-    assert "sanit" not in message
+    assert message == "Interrupted during env, after a db.import hook."
 
 
 def test_a_finished_pre_sanitize_hook_does_not_hide_the_warning(tmp_path: Path) -> None:
@@ -433,7 +432,7 @@ def test_a_finished_pre_sanitize_hook_does_not_hide_the_warning(tmp_path: Path) 
         ),
         replace(context_at(tmp_path), runner=runner),
     )
-    assert "after a sanitize hook" in message
+    assert "during sanitize, after a sanitize hook" in message
     assert "was not sanitized" in message
 
 
@@ -457,7 +456,7 @@ def test_an_interrupted_post_import_hook_still_warns_because_the_import_finished
         ),
         replace(context_at(tmp_path), runner=InterruptingRunner()),
     )
-    assert message.startswith("Interrupted after db.import.")
+    assert message.startswith("Interrupted during a db.import hook, after db.import.")
     assert "was not sanitized" in message
 
 
@@ -489,3 +488,61 @@ def test_the_interrupt_is_chained_so_the_original_is_not_lost(tmp_path: Path) ->
             plan_of(step(1, StepKind.DB_DUMP)), context_at(tmp_path)
         )
     assert isinstance(error.value.__cause__, KeyboardInterrupt)
+
+
+def test_an_interrupt_during_the_import_says_the_database_may_be_partly_replaced(
+    tmp_path: Path,
+) -> None:
+    # This is the moment the warning is needed most, and the one the "last
+    # finished step" alone would stay silent about: nothing has finished
+    # that touches the database, yet it may be half-replaced. "May", because
+    # an interrupt cannot say how far the import got.
+    message = interrupted_message(
+        interrupting_executor(StepKind.DB_IMPORT),
+        plan_of(step(1, StepKind.DB_DUMP), step(2, StepKind.DB_IMPORT)),
+        context_at(tmp_path),
+    )
+    assert message.startswith("Interrupted during db.import, after db.dump.")
+    assert "may be partly replaced" in message
+    assert "is not sanitized" in message
+    assert "has been replaced" not in message
+
+
+def test_an_interrupted_import_hook_says_nothing_about_the_data(tmp_path: Path) -> None:
+    # The same trap as the finished hooks: a `pre_db_import` hook carries
+    # `kind == DB_IMPORT`, but the import has not started when it runs.
+    message = interrupted_message(
+        interrupting_executor(StepKind.DB_IMPORT),
+        plan_of(
+            step(1, StepKind.DB_IMPORT, is_hook=True, params={"run": "x"}),
+            step(2, StepKind.DB_IMPORT),
+        ),
+        replace(context_at(tmp_path), runner=InterruptingRunner()),
+    )
+    assert message == "Interrupted during a db.import hook, before the first step finished."
+
+
+class _InterruptedAfterLastStep(tuple[PlannedStep, ...]):
+    """A step sequence whose iteration is interrupted once it has yielded every step.
+
+    That is Ctrl-C landing in the instant after the last outcome was recorded
+    and before the loop noticed it had finished - the one place no step is
+    running, which an ordinary operation cannot reach.
+    """
+
+    def __iter__(self) -> Iterator[PlannedStep]:
+        yield from super().__iter__()
+        raise KeyboardInterrupt
+
+
+def test_an_interrupt_between_steps_still_reports_what_finished(tmp_path: Path) -> None:
+    # No step is running then, so there is no "during", only what finished -
+    # and the lookup of the running step must not run off the end of the plan.
+    plan = replace(
+        plan_of(step(1, StepKind.DB_DUMP)),
+        steps=_InterruptedAfterLastStep(plan_of(step(1, StepKind.DB_DUMP)).steps),
+    )
+    message = interrupted_message(
+        interrupting_executor(StepKind.PREFLIGHT), plan, context_at(tmp_path)
+    )
+    assert message == "Interrupted after db.dump."

@@ -62,12 +62,18 @@ def test_cancelling_the_step_prompt_returns_none(monkeypatch: pytest.MonkeyPatch
 
 
 class _FakeQuestion:
-    """Stands in for `questionary.Question`; `.ask()` is the only method used."""
+    """Stands in for `questionary.Question`; `.unsafe_ask()` is the only method used.
+
+    It is `unsafe_ask`, not `ask`, on purpose: `ask` swallows Ctrl-C and
+    returns `None`, which the caller cannot tell from "no terminal".
+    """
 
     def __init__(self, answer: object) -> None:
         self._answer = answer
 
-    def ask(self) -> object:
+    def unsafe_ask(self) -> object:
+        if isinstance(self._answer, BaseException):
+            raise self._answer
         return self._answer
 
 
@@ -122,3 +128,22 @@ def test_no_prompt_is_attempted_without_a_terminal(monkeypatch: pytest.MonkeyPat
 
     assert prompts._select("pick one", ["a", "b"]) is None
     assert prompts._checkbox("tick some", ["a", "b"], ["a"]) is None
+
+
+def test_ctrl_c_at_a_prompt_propagates_instead_of_looking_like_no_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `None` means "there was no terminal". A user who cancelled at a real
+    # terminal must not be told otherwise, so the interrupt has to escape the
+    # prompt rather than come back as `None`.
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        questionary, "select", lambda _q, choices: _FakeQuestion(KeyboardInterrupt())
+    )
+    monkeypatch.setattr(
+        questionary, "checkbox", lambda _q, choices: _FakeQuestion(KeyboardInterrupt())
+    )
+    with pytest.raises(KeyboardInterrupt):
+        prompts._select("pick one", ["a", "b"])
+    with pytest.raises(KeyboardInterrupt):
+        prompts._checkbox("tick some", ["a", "b"], ["a"])

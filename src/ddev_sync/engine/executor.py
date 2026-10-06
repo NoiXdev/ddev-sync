@@ -89,9 +89,17 @@ class Executor:
         except KeyboardInterrupt as interrupt:
             # `_run_step` catches only `DdevSyncError`, so an interrupt raised
             # inside a step lands here with `outcomes` still in scope - which
-            # is all the progress tracking the message needs.
+            # is all the progress tracking the message needs. The step that
+            # was running has no outcome yet, so it is the next one in the
+            # plan; there is none when the interrupt landed after the last
+            # step had already been recorded.
+            running = plan.steps[len(outcomes)] if len(outcomes) < len(plan.steps) else None
             raise SyncInterrupted(
-                _interrupted_message(outcomes, post_sync_skipped=bool(_post_sync_entries(context)))
+                _interrupted_message(
+                    outcomes,
+                    running=running,
+                    post_sync_skipped=bool(_post_sync_entries(context)),
+                )
             ) from interrupt
 
         failed = any(outcome.status == "failed" for outcome in outcomes)
@@ -164,34 +172,54 @@ def _post_sync_entries(context: ExecutionContext) -> list[dict[str, Any]]:
     ]
 
 
-def _interrupted_message(outcomes: Sequence[StepOutcome], *, post_sync_skipped: bool) -> str:
+def _describe(step: PlannedStep) -> str:
+    """A step as a person would name it; a hook says it is a hook."""
+    return f"a {step.kind.value} hook" if step.is_hook else step.kind.value
+
+
+def _interrupted_message(
+    outcomes: Sequence[StepOutcome],
+    *,
+    running: PlannedStep | None,
+    post_sync_skipped: bool,
+) -> str:
     """What an interrupt left behind, in the order someone needs to read it.
 
-    The last completed step first, because that is the question. Then the
-    state of the local database, but only when it is genuinely at risk: an
-    interrupt after the import and before sanitising leaves production data
-    on the machine, and a warning that fires when it did not would teach
-    people to ignore it.
+    The step that was running and the last one that finished come first,
+    because those are the questions. Then the state of the local database,
+    but only as far as it is known: an interrupt after the import and before
+    sanitizing leaves production data on the machine, an interrupt *during*
+    the import leaves the database possibly part-way replaced, and one before
+    either must say nothing about data at all - a warning that fires when it
+    did not would teach people to ignore it.
 
     A hook carries its parent's `kind` (see `PlannedStep`), so `kind` alone
     cannot say whether the import itself ran: a finished `pre_db_import` hook
     would look like a finished import and raise that warning falsely, and a
-    finished `pre_sanitize` hook would look like sanitising and hide it when
-    it is true. The database state is therefore read from the non-hook steps
-    only, while the "last completed" sentence names a hook as a hook. An
-    interrupted `post_db_import` hook still warns, correctly, because the
-    import step before it did finish.
+    finished `pre_sanitize` hook would look like sanitizing and hide it when
+    it is true. The database state is therefore read from non-hook steps
+    only, while the sentence names a hook as a hook. An interrupted
+    `post_db_import` hook still warns, correctly, because the import step
+    before it did finish, whereas an interrupted `pre_db_import` hook says
+    nothing about data because the import has not started.
     """
     finished = [outcome.step for outcome in outcomes if outcome.status == "ok"]
-    if finished:
-        last = finished[-1]
-        where = f"after a {last.kind.value} hook" if last.is_hook else f"after {last.kind.value}"
-    else:
-        where = "before the first step finished"
-    message = f"Interrupted {where}."
+    after = f"after {_describe(finished[-1])}" if finished else "before the first step finished"
+    message = (
+        f"Interrupted {after}."
+        if running is None
+        else f"Interrupted during {_describe(running)}, {after}."
+    )
 
     kinds = {step.kind for step in finished if not step.is_hook}
-    if StepKind.DB_IMPORT in kinds and StepKind.SANITIZE not in kinds:
+    if running is not None and running.kind is StepKind.DB_IMPORT and not running.is_hook:
+        # "May", because an interrupt cannot say how far the import got.
+        message += (
+            " The local database may be partly replaced with production data and is not"
+            " sanitized - re-run with --steps db,sanitize, or treat this copy as production"
+            " data until you have."
+        )
+    elif StepKind.DB_IMPORT in kinds and StepKind.SANITIZE not in kinds:
         message += (
             " The local database has been replaced with production data and was not"
             " sanitized - re-run with --steps sanitize, or treat this copy as production"

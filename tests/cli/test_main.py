@@ -1,7 +1,9 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
+import questionary
 
 from ddev_sync.cli.main import main
 from ddev_sync.errors import SyncInterrupted
@@ -775,3 +777,26 @@ def test_an_interrupted_sync_exits_130_and_prints_what_it_says(
     monkeypatch.setattr("ddev_sync.cli.main.cli.main", interrupt)
     assert main(["doctor"]) == 130
     assert capsys.readouterr().err == "Interrupted after db.dump.\n"
+
+
+def test_ctrl_c_at_the_step_picker_says_it_was_interrupted_not_that_there_is_no_terminal(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # questionary used to turn Ctrl-C into `None`, which the caller could not
+    # tell from "no terminal" - so a user at a terminal was told there was
+    # none, with exit code 1. Click also re-raises the interrupt as `Abort`,
+    # so this drives the real path rather than a bare `KeyboardInterrupt`.
+    class Cancelled:
+        def unsafe_ask(self) -> object:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(questionary, "checkbox", lambda _question, choices: Cancelled())
+    assert invoke(project, tmp_path, "--dry-run") == 130
+    error = capsys.readouterr().err
+    assert error.strip().endswith("Interrupted.")
+    assert "terminal" not in error
+    assert "Traceback" not in error

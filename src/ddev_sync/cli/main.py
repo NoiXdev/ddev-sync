@@ -465,10 +465,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         # wrong. 130 is the conventional code for a process ended by SIGINT.
         click.echo(str(error), err=True)
         return 130
-    except KeyboardInterrupt:
+    except (click.exceptions.Abort, KeyboardInterrupt):
         # An interrupt outside a running sync - during the step picker, or
         # while the configuration is still being read. Nothing has been
         # changed, so there is nothing to report beyond the fact itself.
+        # `Abort` is what actually arrives: Click catches the
+        # `KeyboardInterrupt` inside `cli.main` and re-raises it as `Abort`
+        # even with `standalone_mode=False`, so a handler for the bare
+        # interrupt alone would never run and the traceback would remain.
         click.echo("Interrupted.", err=True)
         return 130
     except DdevSyncError as error:
