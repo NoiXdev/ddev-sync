@@ -52,6 +52,10 @@ show_missing = true
 [tool.ruff]
 line-length = 100
 src = [".", "src", "tests"]
+# Specs and plans under docs/ are prose that quotes illustrative Python. The
+# formatter rewriting a design document is worse than an unformatted snippet,
+# and `ruff format --check .` otherwise fails on a document nobody will fix.
+extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN"]
