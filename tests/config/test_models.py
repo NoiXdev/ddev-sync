@@ -49,10 +49,10 @@ def test_resolved_target_requires_user_and_port_without_an_ssh_alias() -> None:
         )
     message = str(caught.value)
     assert "user" in message
-    # The advice to use `ssh_alias` has to say where it works: the sidecar is
-    # given no ~/.ssh/config, so inside the add-on the suggestion cannot be
-    # followed at all.
-    assert "outside the add-on" in message
+    # The advice to use `ssh_alias` has to say what it needs: the add-on gives
+    # the sidecar no ~/.ssh/config, so a reader who follows the suggestion
+    # there finds nothing to put the alias in.
+    assert "does not give the sidecar" in message
 
 
 def test_resolved_target_via_ssh_alias_needs_neither_user_nor_port() -> None:

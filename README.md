@@ -92,8 +92,17 @@ processed-files handling.
 
 A `generic` fallback covers DDEV project types with no dedicated profile; it
 syncs the database and files but leaves the framework-specific work alone,
-and it needs credentials in `.ddev/ddev-sync.yaml` because there is no
-convention to read them from.
+and it needs credentials of its own because there is no convention to read
+them from. They are secrets, so they belong in `.ddev/ddev-sync.local.yaml`
+rather than the project file — and check that your repository ignores that
+path, because nothing here does it for you.
+
+The local database calls speak MariaDB's client protocol. They work against
+DDEV's MariaDB images and its MySQL 5.x ones; a DDEV project on MySQL 8 is
+not supported, because its accounts use an authentication plugin this image's
+client cannot load, and PostgreSQL is not addressed at all. The engine does
+not read `database.type`, so an unsupported project fails at the first local
+call rather than up front.
 
 Which of them have actually been run against a real installation — rather
 than only reasoned about — is recorded per variant in

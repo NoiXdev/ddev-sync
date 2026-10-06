@@ -298,19 +298,34 @@ def dump_is_complete(path: Path) -> bool:
 LOCAL_DB_USER = "db"
 LOCAL_DB_PASSWORD = "db"
 LOCAL_DB_PORT = "3306"
-# DDEV's database server ships with TLS disabled - `have_ssl DISABLED`, on
-# every version it builds, because it configures no certificate - while the
-# MariaDB client in this image is 11.8, which requires TLS by default and
-# refuses to connect with "SSL is required, but the server does not support
-# it". Measured against a real DDEV project: it took out the drop, the create
-# and the import, and every sanitize rule's SQL with them.
+# DDEV's database server does not answer a client that insists on a verified
+# TLS connection, and the MariaDB client in this image - 11.8 - insists by
+# default. How it refuses depends on the image, and both were measured: every
+# MariaDB version DDEV builds configures no certificate at all (`have_ssl`
+# DISABLED on mariadb-10.11), so the client reports "SSL is required, but the
+# server does not support it"; DDEV's MySQL images do offer TLS, but with a
+# self-signed certificate, so the same client fails verification instead. One
+# option covers both. Without it every local call fails: the drop, the create,
+# the import, and every sanitize rule's SQL.
 #
-# Disabling it is not a concession. The connection is to a container on the
-# project's own private network, carrying a dump that was already written to
-# local disk; there is nothing here for TLS to protect. The remote side is a
-# different matter and is not covered by this: that traffic goes through ssh,
-# and the remote's own client decides its policy (see
-# `preflight.py::_show_tables_argv`, which deliberately does not pass this).
+# `--skip-ssl-verify-server-cert` is the opportunistic alternative and was
+# rejected on purpose. In 11.8 verification implies enforcement, so dropping
+# verification alone keeps TLS wherever DDEV offers one and falls back to
+# plaintext where it does not. But unverified TLS authenticates nothing
+# against the only adversary who could reach the project's private Docker
+# network, so it would buy encryption without trust - and it would behave
+# differently per database image, where `--skip-ssl` behaves the same
+# everywhere.
+#
+# So this connection is deliberately not encrypted, and it does carry
+# production rows and the local password across a network namespace on this
+# machine. The remote side is a different matter and is not covered by this:
+# that traffic goes through ssh, and the remote's own client decides its
+# policy - see `preflight.py::_show_tables_argv`, which deliberately does not
+# pass this.
+#
+# The spelling is MariaDB's: MySQL's own client rejects `--skip-ssl`, so this
+# depends on the Dockerfile pinning `mariadb-client`.
 LOCAL_DB_TLS_OPTION = "--skip-ssl"
 
 _DEFINER = re.compile(rb"\sDEFINER=`[^`]*`@`[^`]*`")

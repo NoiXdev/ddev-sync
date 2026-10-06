@@ -390,11 +390,11 @@ def test_a_failed_dump_rewrite_says_the_local_database_is_empty(
 def test_the_local_client_calls_disable_tls_because_ddevs_server_has_none(
     tmp_path: Path,
 ) -> None:
-    # DDEV's database server ships with `have_ssl DISABLED` on every version it
-    # builds, while this image's MariaDB client is 11.8, which requires TLS by
-    # default. Without the option every local call fails with "SSL is required,
-    # but the server does not support it" - measured against a real DDEV
-    # project, where it took out the drop, the create and the import.
+    # No MariaDB version DDEV builds configures a certificate, and its MySQL
+    # images offer only a self-signed one, while this image's client is 11.8,
+    # which requires a verified TLS connection by default. Without the option
+    # every local call fails - measured against a real DDEV project, where it
+    # took out the drop, the create and the import.
     runner = import_runner()
     context = make_context(runner, tmp_path)
     with_dump(context)
