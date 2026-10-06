@@ -84,10 +84,18 @@ of them worse is very welcome.
   `Host key verification failed.` and needs a human to decide whether the key was
   rotated or the host is not what it claims to be.
 
+  **A jump host is the exception, and it is not covered.** `-J` makes OpenSSH start a
+  second ssh for the bastion, and that one does not receive these options. A target
+  that is reached through `jump_host`, with an empty `known_hosts` and no terminal,
+  therefore still fails on the *bastion's* key with `Host key verification failed.`;
+  the bastion is not trusted on first use, and nothing is accepted on its behalf. The
+  way out is to tell ssh about the bastion yourself: connect to it once from a
+  terminal, or give it an entry in the `ssh_config` under `.ddev/ddev-sync/home/.ssh/`
+  (see "Your first sync" in the user documentation).
+
   There is no setting to make this stricter, and none to turn it off. If you need
-  the first connection verified, add the host's key to `known_hosts` yourself before
-  the first sync. A jump host (`-J`) is a second ssh that does not receive these
-  options, so its key follows your own `ssh_config`.
+  the first connection to a host verified, add its key to `known_hosts` yourself
+  before the first sync.
 
 ## What sanitize rules do and do not guarantee
 

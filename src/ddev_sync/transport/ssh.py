@@ -32,10 +32,13 @@ CONNECT_TIMEOUT_SECONDS = 10
 # the DDEV add-on `known_hosts` persists, so trust-on-first-use costs exactly
 # one silent acceptance per host. Do not "simplify" this to `no`.
 #
-# One caveat: `-J` starts a second ssh for the jump host, and OpenSSH does not
-# hand it these `-o` options, so the jump host's own key follows whatever
-# `ssh_config` says about it. The connect timeout still bounds the whole
-# attempt, since the outer ssh gives up waiting for the banner.
+# One exception, and a real one: `-J` starts a second ssh for the jump host,
+# and OpenSSH does not hand that one these `-o` options (checked on 10.3). The
+# bastion's own key therefore follows the ssh default - ask - so a target
+# behind a jump host, with an empty known_hosts and no terminal, still fails
+# with "Host key verification failed." on the bastion's key. The documentation
+# says so and names the workaround (an ssh_config entry for the bastion). The
+# connect timeout is unaffected: the outer ssh gives up waiting for the banner.
 SSH_CONNECTION_OPTIONS: tuple[str, ...] = (
     "-o",
     "StrictHostKeyChecking=accept-new",
