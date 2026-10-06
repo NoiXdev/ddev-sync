@@ -298,35 +298,34 @@ def dump_is_complete(path: Path) -> bool:
 LOCAL_DB_USER = "db"
 LOCAL_DB_PASSWORD = "db"
 LOCAL_DB_PORT = "3306"
-# DDEV's database server does not answer a client that insists on a verified
-# TLS connection, and the MariaDB client in this image - 11.8 - insists by
-# default. How it refuses depends on the image, and both were measured: every
-# MariaDB version DDEV builds configures no certificate at all (`have_ssl`
-# DISABLED on mariadb-10.11), so the client reports "SSL is required, but the
-# server does not support it"; DDEV's MySQL images do offer TLS, but with a
-# self-signed certificate, so the same client fails verification instead. One
-# option covers both. Without it every local call fails: the drop, the create,
-# the import, and every sanitize rule's SQL.
+# The MariaDB client in this image - 11.8 - requires a *verified* TLS
+# connection by default, and no DDEV certificate can be verified: the MariaDB
+# images that have one generate it themselves, and the MySQL images ship a
+# self-signed one. So verification has to go. What is left to decide is
+# whether to keep TLS where it does exist, and it is kept.
 #
-# `--skip-ssl-verify-server-cert` is the opportunistic alternative and was
-# rejected on purpose. In 11.8 verification implies enforcement, so dropping
-# verification alone keeps TLS wherever DDEV offers one and falls back to
-# plaintext where it does not. But unverified TLS authenticates nothing
-# against the only adversary who could reach the project's private Docker
-# network, so it would buy encryption without trust - and it would behave
-# differently per database image, where `--skip-ssl` behaves the same
-# everywhere.
+# Measured with this image's client (11.8.8) against real servers:
 #
-# So this connection is deliberately not encrypted, and it does carry
-# production rows and the local password across a network namespace on this
-# machine. The remote side is a different matter and is not covered by this:
-# that traffic goes through ssh, and the remote's own client decides its
-# policy - see `preflight.py::_show_tables_argv`, which deliberately does not
-# pass this.
+#   server                         no option   --skip-ssl   this option
+#   DDEV mariadb 10.8 (no cert)    fails       plaintext    plaintext
+#   mariadb 11.8 (own cert)        TLS         plaintext    TLS
 #
-# The spelling is MariaDB's: MySQL's own client rejects `--skip-ssl`, so this
-# depends on the Dockerfile pinning `mariadb-client`.
-LOCAL_DB_TLS_OPTION = "--skip-ssl"
+# The two options are equally compatible, so `--skip-ssl` differs only in
+# throwing away encryption where the server offers it - which DDEV's 11.x
+# images do, and those are current defaults. It would also fail against a
+# server with `require_secure_transport` on, where this one still connects.
+#
+# Without either option, every local call fails against a server that has no
+# certificate: the drop, the create, the import, and every sanitize rule's
+# SQL. That is the bug this constant exists for, found on a real DDEV project
+# running mariadb 10.8.
+#
+# The remote side is not covered by this. That traffic goes through ssh, and
+# the remote's own client decides its policy - see
+# `preflight.py::_show_tables_argv`, which deliberately does not pass this.
+#
+# The spelling is the MariaDB client's, which the Dockerfile pins.
+LOCAL_DB_TLS_OPTION = "--skip-ssl-verify-server-cert"
 
 _DEFINER = re.compile(rb"\sDEFINER=`[^`]*`@`[^`]*`")
 

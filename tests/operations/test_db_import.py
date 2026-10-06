@@ -12,6 +12,7 @@ from ddev_sync.errors import InterruptedAtPrompt
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import (
     DUMP_FILENAME,
+    LOCAL_DB_TLS_OPTION,
     DbImportOperation,
     confirm_destructive,
     strip_definers,
@@ -390,15 +391,17 @@ def test_a_failed_dump_rewrite_says_the_local_database_is_empty(
 def test_the_local_client_calls_disable_tls_because_ddevs_server_has_none(
     tmp_path: Path,
 ) -> None:
-    # No MariaDB version DDEV builds configures a certificate, and its MySQL
-    # images offer only a self-signed one, while this image's client is 11.8,
-    # which requires a verified TLS connection by default. Without the option
-    # every local call fails - measured against a real DDEV project, where it
-    # took out the drop, the create and the import.
+    # This image's client is 11.8, which requires a *verified* TLS connection by
+    # default, and no DDEV certificate can be verified. Against a server with
+    # none at all - DDEV's MariaDB 10.x - the client then refuses outright, so
+    # without the option every local call fails. Measured on a real project
+    # running mariadb 10.8, where it took out the drop, the create and the
+    # import. The option is asserted through the constant, so it keeps holding
+    # if the exact spelling changes.
     runner = import_runner()
     context = make_context(runner, tmp_path)
     with_dump(context)
     DbImportOperation().execute(context, {})
     assert [call[0] for call in runner.calls] == ["mysqladmin", "mysqladmin", "mysql"]
     for call in runner.calls:
-        assert "--skip-ssl" in call, call
+        assert LOCAL_DB_TLS_OPTION in call, call

@@ -99,7 +99,8 @@ def _reject_committed_secret(context: ExecutionContext, side: str, key: str) -> 
         raise OperationError(
             f"s3.{side}.{key} is set in {PROJECT_LABEL}, which is committed to "
             "the repository; move S3 credentials to .ddev/ddev-sync.local.yaml "
-            "(gitignored) or the global config instead"
+            "or the global config instead - and check that your repository "
+            "ignores that path, because nothing here does it for you"
         )
 
 

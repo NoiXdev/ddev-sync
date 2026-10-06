@@ -97,12 +97,13 @@ them from. They are secrets, so they belong in `.ddev/ddev-sync.local.yaml`
 rather than the project file — and check that your repository ignores that
 path, because nothing here does it for you.
 
-The local database calls speak MariaDB's client protocol. They work against
-DDEV's MariaDB images and its MySQL 5.x ones; a DDEV project on MySQL 8 is
-not supported, because its accounts use an authentication plugin this image's
-client cannot load, and PostgreSQL is not addressed at all. The engine does
-not read `database.type`, so an unsupported project fails at the first local
-call rather than up front.
+The local database calls speak MariaDB's client protocol. They are verified
+against DDEV's MariaDB images and its MySQL 5.7 one. A DDEV project on MySQL
+8.0 is not supported: its accounts use an authentication plugin this image's
+client cannot load, so the connection is refused whatever TLS does.
+PostgreSQL is not addressed at all. Nothing here reads DDEV's own
+`database.type` from `.ddev/config.yaml`, so an unsupported project fails at
+the first local call rather than up front.
 
 Which of them have actually been run against a real installation — rather
 than only reasoned about — is recorded per variant in

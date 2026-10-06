@@ -93,9 +93,9 @@ def _dump(stack: Stack, cell: Cell, *options: str) -> str:
     dump = stack.web(
         [
             "mariadb-dump",
-            # `--skip-ssl` like the engine's own local calls: `local-db` stands
-            # in for DDEV's server and so has TLS disabled, while the client in
-            # the web image requires it by default.
+            # `local-db` runs with no certificate (see the compose file), and
+            # the client in the web image requires a verified TLS connection by
+            # default.
             "--skip-ssl",
             "--skip-comments",
             f"--host=ddev-{cell.name}-db",

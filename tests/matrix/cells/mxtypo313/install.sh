@@ -23,8 +23,8 @@ TYPO3_SERVER_TYPE=other \
 # local database after the import, and only a schema update against the
 # project's own definitions - what the profile's `extension:setup` setup step
 # is for - can bring it back.
-# `--skip-ssl`: local-db stands in for DDEV's server, which configures no
-# certificate, while this image's client requires TLS by default.
+# `--skip-ssl`: local-db runs with no certificate, while this image's client
+# requires a verified TLS connection by default.
 mariadb --skip-ssl --host=ddev-mxtypo313-db --user=db --password=db db \
   -e 'ALTER TABLE tt_content DROP COLUMN header_link'
 

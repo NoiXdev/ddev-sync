@@ -13,10 +13,12 @@
 # read for this project too, and for every other project you install the
 # add-on into. Keep in this file what the whole team shares.
 #
-# One target key is not available through the add-on: `ssh_alias`, which takes
-# a host from ~/.ssh/config. That file is not mounted, and the entries in a
-# real one point at identity files, Include directives and control paths that
-# do not exist in the container. Name `host`, `user` and `port` here instead.
+# One target key needs something the add-on does not provide: `ssh_alias`
+# takes a host from ~/.ssh/config, and the add-on gives the sidecar no such
+# file. Nor would copying a real one in help much, because its entries point
+# at identity files, Include directives and control paths that do not exist in
+# the container - authentication here goes through the forwarded agent. Name
+# `host`, `user` and `port` here instead.
 version: 1
 
 # targets:

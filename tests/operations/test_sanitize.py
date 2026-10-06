@@ -7,6 +7,7 @@ from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.database import LOCAL_DB_TLS_OPTION
 from ddev_sync.operations.sanitize import (
     SANITIZE_OPERATIONS,
     SanitizeOperation,
@@ -341,8 +342,9 @@ def test_sql_is_passed_as_one_argument_not_shell_text(tmp_path: Path) -> None:
 
 
 def test_the_local_mysql_argv_disables_tls(tmp_path: Path) -> None:
-    # Same reason as the import's own clients: DDEV's server offers no TLS and
-    # the 11.8 client demands it, so every sanitize rule's SQL failed to
-    # connect. See `LOCAL_DB_TLS_OPTION`.
+    # Same reason as the import's own clients: the 11.8 client requires a
+    # verified TLS connection and DDEV offers no certificate it could verify,
+    # so every sanitize rule's SQL failed to connect. Asserted through the
+    # constant, whose comment carries the measurements behind the option.
     argv = local_mysql_argv(make_context(FakeCommandRunner(), tmp_path), "db")
-    assert "--skip-ssl" in argv
+    assert LOCAL_DB_TLS_OPTION in argv

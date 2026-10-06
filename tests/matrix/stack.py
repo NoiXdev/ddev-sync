@@ -152,10 +152,11 @@ class Stack:
             "-T",
             "local-db",
             "mariadb",
-            # `--skip-ssl` for the same reason the engine passes it: this
-            # stand-in has TLS disabled like DDEV's server, and the client in
-            # `mariadb:11` is 11.8, which requires TLS by default even over
-            # the local socket.
+            # `local-db` runs with no certificate (see the compose file), and
+            # the client in `mariadb:11` is 11.8, which requires a verified TLS
+            # connection by default - even over the local socket, which this
+            # is. Any option that relaxes that does here; the engine's own
+            # choice between them is argued at `LOCAL_DB_TLS_OPTION`.
             "--skip-ssl",
             "--user=db",
             "--password=db",

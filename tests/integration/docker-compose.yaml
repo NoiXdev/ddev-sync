@@ -58,14 +58,14 @@ services:
 
   local-db:
     image: mariadb:11
-    # `--skip-ssl`, because this service stands in for DDEV's database, and no
-    # MariaDB version DDEV builds configures a certificate (`have_ssl`
-    # DISABLED). Without this the stand-in offers TLS - mariadb generates its
-    # own certificate since 11.4 - while a real DDEV project does not, and the
-    # suite cannot see a client that insists on it: exactly how the 11.8
-    # client's TLS-by-default broke every local database call in the field
-    # while every suite stayed green. The production stand-in in this file
-    # keeps its TLS, which a real host may well have.
+    # `--skip-ssl`, so this stand-in has no certificate at all - like DDEV's
+    # MariaDB 10.x images, and unlike its 11.x ones, which generate one. The
+    # no-certificate case is the one worth modelling, because it is the one
+    # where a client requiring a verified connection refuses outright: exactly
+    # how the 11.8 client's default broke every local database call in the
+    # field while every suite stayed green. Nothing here covers 11.x with TLS.
+    # The production stand-in in this file keeps its own TLS, which a real host
+    # may well have.
     command: ["--skip-ssl"]
     environment:
       - MARIADB_ROOT_PASSWORD=root
