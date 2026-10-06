@@ -17,4 +17,15 @@
 # containing a space (`--target "a b"`) arrives as two words. The project is
 # mounted at /var/www/html, which is the engine's own default project root,
 # so no path flag is needed here.
-ddev-sync "$@"
+#
+# --home is needed, though. The engine reads its global configuration layer -
+# the file where targets belong, so that production hosts and users are not
+# committed with the project - as <home>/.ddev/ddev-sync/config.yaml, resolved
+# from the home of whoever runs it. In here that home is /home/ddev, a
+# project-local directory, so the developer's own file would never be found.
+# docker-compose.ddev-sync.yaml mounts it read-only under the stand-in home
+# named below; see there for why that is not /home/ddev itself.
+#
+# It comes before "$@" so that a developer who passes their own --home still
+# wins: the engine takes the last occurrence of the flag.
+ddev-sync --home /mnt/ddev-sync-host-home "$@"

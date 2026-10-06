@@ -35,6 +35,35 @@ setup() {
   mkdir -p "${HOME}/tmp"
   TESTDIR="$(mktemp -d "${HOME}/tmp/${PROJNAME}.XXXXXX")"
 
+  # The engine resolves its global configuration layer from the home directory
+  # it runs in, and what the add-on has to make true is that this is the
+  # developer's own home: ~/.ddev/ddev-sync/config.yaml and no other path. So
+  # the suite writes that real path rather than a temporary stand-in, and puts
+  # back whatever was there. The three variables are exported before anything
+  # that can fail, because teardown has to restore even after a setup that died
+  # half way; GLOBAL_WRITTEN is what tells teardown that the file below is the
+  # suite's to delete and not the developer's.
+  export GLOBAL_CONFIG="${HOME}/.ddev/ddev-sync/config.yaml"
+  export GLOBAL_BACKUP=""
+  export GLOBAL_WRITTEN=""
+  mkdir -p "$(dirname "${GLOBAL_CONFIG}")"
+  if [ -e "${GLOBAL_CONFIG}" ]; then
+    GLOBAL_BACKUP="$(mktemp "${GLOBAL_CONFIG}.bats-backup.XXXXXX")"
+    mv "${GLOBAL_CONFIG}" "${GLOBAL_BACKUP}"
+  fi
+  # A host under `.invalid` never resolves, so nothing here can reach anything
+  # even if a test were to try.
+  cat > "${GLOBAL_CONFIG}" <<'YAML'
+version: 1
+targets:
+  bats-global:
+    host: ddev-sync-global.invalid
+    user: deploy
+    path: /srv/global/
+    stage: production
+YAML
+  GLOBAL_WRITTEN=yes
+
   # A project left over from an interrupted earlier run would make `ddev
   # config` below refuse the name.
   ddev delete -Oy "${PROJNAME}" >/dev/null 2>&1 || true
@@ -67,6 +96,15 @@ teardown() {
   cd "${HOME}" || true
   if [ -n "${TESTDIR:-}" ]; then
     rm -rf "${TESTDIR}"
+  fi
+  # The global configuration layer is the developer's own file, so the one the
+  # suite wrote goes away again and anything that was there comes back,
+  # whatever the test did.
+  if [ -n "${GLOBAL_WRITTEN:-}" ]; then
+    rm -f "${GLOBAL_CONFIG}"
+  fi
+  if [ -n "${GLOBAL_BACKUP:-}" ] && [ -e "${GLOBAL_BACKUP}" ]; then
+    mv "${GLOBAL_BACKUP}" "${GLOBAL_CONFIG}"
   fi
 }
 
@@ -123,6 +161,10 @@ entries_in() {
 
   # The pre-start hook has run: the facts it discovers per machine exist.
   grep -q '^DDEV_SYNC_DOCKER_GID=[0-9][0-9]*$' .ddev/.env
+  # -F -x: the home directory is matched as a whole line and literally, so a
+  # path with a regex metacharacter in it cannot turn the assertion into
+  # something else.
+  grep -q -F -x "DDEV_SYNC_HOST_HOME=${HOME}" .ddev/.env
   [ -s .ddev/ddev-sync/passwd ]
   [ -d .ddev/ddev-sync/home ]
 
@@ -140,6 +182,27 @@ entries_in() {
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"ddev-sync, version "* ]] || false
 
+  # The global configuration layer is reachable from inside the sidecar. It is
+  # the one layer that lives outside the project, in the developer's own home,
+  # and nothing of that home exists in the container by itself: without the
+  # compose file's mount and the --home in commands/sync/sync, the engine
+  # resolves the layer to a path that can never exist, and a target defined
+  # there is absent with nothing said about why. The layer's label is asserted
+  # as well as the target's name, because the label is what says the definition
+  # came from that file rather than from the project's own.
+  run ddev sync targets
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"bats-global"* ]] || false
+  [[ "${output}" == *"deploy@ddev-sync-global.invalid:/srv/global/"* ]] || false
+  [[ "${output}" == *"[~/.ddev/ddev-sync/config.yaml]"* ]] || false
+
+  # The mount is read-only, so the developer's global configuration cannot be
+  # rewritten from inside the container by anything the engine or a sync runs.
+  run ddev exec -s sync sh -c 'echo x >> /mnt/ddev-sync-host-home/.ddev/ddev-sync/config.yaml'
+  echo "${output}"
+  [ "${status}" -ne 0 ]
+
   # What the sidecar exists to provide. `doctor` needs a target to run at all,
   # so the project's configuration (which is the test's to edit; it is not
   # generated) gets one that cannot be reached: a name under `.invalid` never
@@ -150,6 +213,11 @@ entries_in() {
   # mounted, usable by the developer's uid and able to reach the web container.
   # The agent row is a filesystem check on the forwarded agent socket; it needs
   # no key to be loaded, so this test never runs `ddev auth ssh`.
+  #
+  # `--target` is named rather than left to the engine's own choice because the
+  # global layer above defines a second target, and with more than one the
+  # engine asks - which it cannot do here, since there is no terminal. Naming
+  # it also puts a flag that takes a value through DDEV's argument handling.
   cat >> .ddev/ddev-sync.yaml <<'YAML'
 
 targets:
@@ -159,7 +227,7 @@ targets:
     path: /srv/app/
     stage: production
 YAML
-  run ddev sync doctor
+  run ddev sync --target unreachable doctor
   echo "${output}"
   [ "${status}" -ne 0 ]
   [[ "${output}" =~ FAIL\ +ssh\ connection ]] || false
@@ -198,7 +266,7 @@ YAML
   [ ! -e .ddev/ddev-sync/home ]
   [ "$(entries_in .ddev/ddev-sync)" = 0 ]
   [ "$(entries_in .ddev/commands/sync)" = 0 ]
-  run grep -c '^DDEV_SYNC_DOCKER_GID=' .ddev/.env
+  run grep -c -e '^DDEV_SYNC_DOCKER_GID=' -e '^DDEV_SYNC_HOST_HOME=' .ddev/.env
   [ "${output}" = 0 ]
 
   # ...and what is not generated stays: the project's own configuration, and

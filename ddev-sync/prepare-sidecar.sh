@@ -3,13 +3,14 @@
 # Runs on the host before every `ddev start` / `ddev restart`, from the
 # pre-start hook in .ddev/config.ddev-sync.yaml.
 #
-# It regenerates the two facts about the sidecar that belong to the machine it
-# runs on rather than to the project: the group that owns the docker socket and
-# a passwd entry for the developer's uid. Both used to be worked out once at
-# install time, but a project's .ddev/ directory is committed and shared, so
-# a teammate would inherit values discovered on somebody else's machine and
-# never run the discovery themselves. Doing it at every start costs one
-# short-lived container and cannot go stale.
+# It regenerates the facts about the sidecar that belong to the machine it
+# runs on rather than to the project: the group that owns the docker socket,
+# the developer's home directory on the host, and a passwd entry for their
+# uid. The first and the last used to be worked out once at install time, but
+# a project's .ddev/ directory is committed and shared, so a teammate would
+# inherit values discovered on somebody else's machine and never run the
+# discovery themselves. Doing it at every start costs one short-lived
+# container and cannot go stale.
 set -eu
 
 approot="${DDEV_APPROOT:?this script is meant to run as a DDEV hook}"
@@ -68,12 +69,43 @@ case "${gid}" in
   '' | *[!0-9]*) fail "unexpected group id '${gid}' for /var/run/docker.sock" ;;
 esac
 
-# Replace the line rather than append, and write through the existing file
+# --- The developer's home directory on the host ------------------------------
+# The engine reads its global configuration layer from
+# ~/.ddev/ddev-sync/config.yaml, which is where targets belong so that
+# production hosts and users are not committed with the project. Inside the
+# sidecar no home directory of the developer's exists, so the compose file
+# mounts that one directory in and commands/sync/sync points the engine at it;
+# this is where its location on the host comes from. It is a per-machine fact
+# like the gid above, because .ddev/ is shared between machines and home
+# directories are not.
+host_home="${HOME:-}"
+[ -n "${host_home}" ] || fail "HOME is not set, so the directory that holds your sync targets (~/.ddev/ddev-sync) cannot be located." "" \
+  "This script runs as a DDEV exec-host hook, which inherits your shell's environment; a HOME that is missing there is worth fixing on its own."
+
+# Created here, as the developer, before the service can start: Docker creates
+# a missing bind-mount source itself, and a daemon running as root creates it
+# owned by root - a directory in the developer's own home that they could then
+# not write their targets into.
+mkdir -p "${host_home}/.ddev/ddev-sync"
+
+# Replace the lines rather than append, and write through the existing file
 # (`cat >`, not `mv`) so that its mode, and a symlink in its place, survive.
+#
+# `grep -v` exits 1 when it matched every line, which here means an .env that
+# holds nothing but these lines, so that is success. Exit 2 is a real failure -
+# an .env that cannot be read - and without a branch of its own `set -e` would
+# kill the script with no message of ours at all.
 new_tmp "${env_file}"
 env_tmp="${tmp}"
-{ [ ! -f "${env_file}" ] || grep -v '^DDEV_SYNC_DOCKER_GID=' "${env_file}" || [ $? -eq 1 ]; } > "${env_tmp}"
-echo "DDEV_SYNC_DOCKER_GID=${gid}" >> "${env_tmp}"
+{
+  [ ! -f "${env_file}" ] \
+    || grep -v -e '^DDEV_SYNC_DOCKER_GID=' -e '^DDEV_SYNC_HOST_HOME=' "${env_file}" \
+    || [ $? -eq 1 ] \
+    || fail "could not read ${env_file}, so the lines ddev-sync keeps there (DDEV_SYNC_DOCKER_GID, DDEV_SYNC_HOST_HOME) cannot be rewritten." "" \
+      "Check that the file is readable and is a regular file or a symlink to one."
+} > "${env_tmp}"
+printf 'DDEV_SYNC_DOCKER_GID=%s\n' "${gid}" >> "${env_tmp}"
+printf 'DDEV_SYNC_HOST_HOME=%s\n' "${host_home}" >> "${env_tmp}"
 cmp -s "${env_tmp}" "${env_file}" 2>/dev/null || cat "${env_tmp}" > "${env_file}"
 
 # --- DDEV's ssh agent ----------------------------------------------------------
@@ -87,11 +119,12 @@ cmp -s "${env_tmp}" "${env_file}" 2>/dev/null || cat "${env_tmp}" > "${env_file}
 # here, where the cause can be named.
 #
 # The question is put to DDEV itself because the omission can come from several
-# places and only DDEV merges them. The probe needs DDEV_SYNC_DOCKER_GID, which
-# the section above has just written, or the compose file would fail on that
-# instead. A failure that does not mention the agent's volume is ignored on
-# purpose: it is not ours to explain, and DDEV will report it on its own a
-# moment later.
+# places and only DDEV merges them. The probe needs DDEV_SYNC_DOCKER_GID and
+# DDEV_SYNC_HOST_HOME, which the sections above have just written, or the
+# compose file would fail on one of those instead - which is why this probe
+# comes after them and not before. A failure that does not mention the agent's
+# volume is ignored on purpose: it is not ours to explain, and DDEV will report
+# it on its own a moment later.
 #
 # The volume's absence is no substitute: before the first start the agent has
 # not created it yet even when nothing is omitted. Declaring the volume

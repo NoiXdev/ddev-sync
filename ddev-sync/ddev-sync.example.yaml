@@ -8,8 +8,15 @@
 # never overwrites it, and `ddev add-on remove` leaves it alone.
 #
 # Targets usually belong in ~/.ddev/ddev-sync/config.yaml instead, so that
-# your hosts and users are not committed with the project. Keep here what
-# the whole team shares.
+# your hosts and users are not committed with the project: the add-on mounts
+# that directory into its container read-only, so a target defined there is
+# read for this project too, and for every other project you install the
+# add-on into. Keep in this file what the whole team shares.
+#
+# One target key is not available through the add-on: `ssh_alias`, which takes
+# a host from ~/.ssh/config. That file is not mounted, and the entries in a
+# real one point at identity files, Include directives and control paths that
+# do not exist in the container. Name `host`, `user` and `port` here instead.
 version: 1
 
 # targets:

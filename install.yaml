@@ -12,9 +12,10 @@ project_files:
   - ddev-sync/.gitignore
   - commands/sync/sync
 
-# The per-machine facts (the docker socket's group and a passwd entry for the
-# developer's uid) are not discovered here but by the pre-start hook in
-# config.ddev-sync.yaml: .ddev/ is shared between machines, an install is not.
+# The per-machine facts (the docker socket's group, the developer's home
+# directory on the host and a passwd entry for their uid) are not discovered
+# here but by the pre-start hook in config.ddev-sync.yaml: .ddev/ is shared
+# between machines, an install is not.
 removal_actions:
   - |
     #ddev-description:Remove what the pre-start hook generated
@@ -22,18 +23,20 @@ removal_actions:
     # is still in place here, but nothing will run it again. The passwd file
     # and the sidecar's home directory (which holds its known_hosts) are not in
     # `project_files` because they are generated, so they are removed here, and
-    # the gid line goes out of the project's own .ddev/.env. The edit goes
-    # through `cat >` to keep that file's mode and any symlink in its place.
+    # the two lines the hook writes go out of the project's own .ddev/.env. The
+    # edit goes through `cat >` to keep that file's mode and any symlink in its
+    # place.
     rm -rf "${DDEV_APPROOT}/.ddev/ddev-sync/passwd" "${DDEV_APPROOT}/.ddev/ddev-sync/home"
     env_file="${DDEV_APPROOT}/.ddev/.env"
     if [ -f "${env_file}" ]; then
       tmp="$(mktemp "${env_file}.XXXXXX")" || exit 1
-      if { grep -v '^DDEV_SYNC_DOCKER_GID=' "${env_file}" || [ $? -eq 1 ]; } > "${tmp}" \
+      if { grep -v -e '^DDEV_SYNC_DOCKER_GID=' -e '^DDEV_SYNC_HOST_HOME=' "${env_file}" \
+          || [ $? -eq 1 ]; } > "${tmp}" \
         && cat "${tmp}" > "${env_file}"; then
         rm -f "${tmp}"
       else
         rm -f "${tmp}"
-        echo "Could not remove DDEV_SYNC_DOCKER_GID from .ddev/.env" >&2
+        echo "Could not remove DDEV_SYNC_DOCKER_GID and DDEV_SYNC_HOST_HOME from .ddev/.env" >&2
         exit 1
       fi
     fi

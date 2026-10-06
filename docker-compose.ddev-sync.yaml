@@ -56,7 +56,28 @@ services:
       # persists, because ssh keeps known_hosts in it and a fresh one after
       # every `ddev stop` would mean trusting each host blindly again.
       - ./ddev-sync/home:/home/ddev
-      - ddev-global-cache:/mnt/ddev-global-cache
+      # The engine's global configuration layer, which is where targets belong
+      # so that production hosts and users are not committed with the project.
+      # The engine resolves that layer as <home>/.ddev/ddev-sync/config.yaml,
+      # so the directory is mounted under a stand-in home and commands/sync/sync
+      # points the engine at it with --home; see there.
+      #
+      # Deliberately NOT under /home/ddev, the home the passwd entry names,
+      # although that is where the engine would look by default: /home/ddev is
+      # itself a bind mount of a project directory, so Docker would create the
+      # mount point for this one inside it, on the host - and while the sidecar
+      # is running, Docker Desktop for Mac then refuses to let the host remove
+      # that directory ("Permission denied"). `ddev add-on remove` does not stop
+      # containers, so removal would fail on exactly the normal case. Under
+      # /mnt the mount point is created in the container's own filesystem and
+      # leaves nothing behind.
+      #
+      # Read-only: the engine only reads this layer, and a sync that could
+      # rewrite the developer's global configuration is a larger thing than
+      # this needs to be. There is deliberately no default, for the same reason
+      # as the gid above - guessing a home directory would mount something
+      # surprising.
+      - "${DDEV_SYNC_HOST_HOME:?not set - the pre-start hook in .ddev/config.ddev-sync.yaml discovers it, so run `ddev restart`, or reinstall the add-on if that file is missing}/.ddev/ddev-sync:/mnt/ddev-sync-host-home/.ddev/ddev-sync:ro"
       - ddev-ssh-agent_socket_dir:/home/.ssh-agent
       # Framework commands run in the web container, which means talking to
       # the daemon. This is host-root-equivalent access and is documented as
