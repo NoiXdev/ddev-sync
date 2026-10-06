@@ -1,6 +1,7 @@
 # A `deployer:` block in a sync target — design
 
-**Status:** approved 2026-10-06. Implementation plan to follow.
+**Status:** approved 2026-10-06, implemented, and amended afterwards: see
+[Amendments](#amendments), which supersede the text above where they differ.
 
 ## Goal
 
@@ -251,3 +252,64 @@ because the add-on was exercised against a real production host first.
   from the credentials source, and this feature does not touch that.
 - **Inferring `stage` from the alias.** Aliases are not stage names — in the
   verified project the alias is a hostname. `stage` stays literal and required.
+
+## Amendments
+
+Writing the plan and then the code disproved three statements above. They are
+left in place so the reasoning stays readable, and corrected here, because a
+spec that silently disagrees with the code is worse than no spec.
+
+### 1. `ddev sync targets` shows the declaration, not the resolution
+
+*Replaces "Where the resolved values surface", first paragraph.*
+
+Both target listings perform no I/O, and must not start to: a stopped project
+has to be able to list its own configuration, and resolution needs the web
+container. For a `deployer:` target the listing therefore shows the block as
+written - the alias, or that the single host is meant - and marks it as a
+declaration. It does not show a hostname, because the configuration does not
+contain one.
+
+The resolved endpoint appears where work is already being done: in the dry-run
+header, and through `doctor`, which fails for such a target when resolution
+fails.
+
+### 2. There is no `doctor` row
+
+*Replaces "Where the resolved values surface", the `doctor` paragraphs.*
+
+The spec gave `doctor` a conditional `deployer config` row. `doctor_command`
+receives a `RunContext` that is already built, and resolution happens inside
+`build_context`, so a failed resolution raises before `doctor` is reached. The
+row could only ever say `OK`: a `bool` whose `False` branch is unreachable, and
+which no test could legitimately cover under this repository's 100 % branch
+rule with `# pragma: no cover` forbidden. A row that cannot fail does not
+report anything, so it was dropped rather than kept as decoration.
+
+The distinction the row was meant to draw - "we could not work out where to
+connect" versus "we could not connect" - is kept, by the error itself: a failed
+resolution aborts the run, `doctor` included, with a `DeployerError` whose
+message names the cause.
+
+### 3. The `extends` chain follows a precedence rule, not a flat rejection
+
+*Amends the validation table, which was written for one spec in isolation.*
+
+The codebase already resolves `host` versus `ssh_alias` across an `extends`
+chain by letting the stronger link win. `deployer:` is a third alternative for
+the same job and follows the same rule: whichever of `host`, `ssh_alias` and
+`deployer` the stronger link sets wins, and the others are dropped. A flat
+rejection would have made it impossible to extend a literal target with a
+`deployer:` one, or the reverse, which is the very thing `extends` is for.
+
+Rejection applies **within one spec**, and across layers that define the same
+target name (which merge into one spec). Two consequences:
+
+- When `deployer:` wins, the weaker links' `user`, `port`, `path` and `layout`
+  are dropped with the weaker `host`. That is the one place a value disappears
+  without an error naming it, and it has to: keeping a base's `port: 2222`
+  would let a Deployer host that states no port connect on a port the block
+  never asked for.
+- A literal `user`, `port`, `path` or `layout` set by a link **stronger** than
+  the `deployer:` block contradicts it exactly as one beside it would, and is
+  rejected.

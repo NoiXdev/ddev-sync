@@ -28,6 +28,16 @@ version: 1
 #     stage: production       # production | staging | testing | dev
 #     layout: plain           # plain | deployer
 
+# Or, when the project is deployed with Deployer, let it state the connection
+# instead of repeating it here, in place of the target above. `user`, `port`,
+# `path`, `layout` and `ssh_alias` must then not be set; `stage` is still
+# required. The connection is read from `dep config` in the web container, so
+# the project has to be running.
+#   production:
+#     deployer:
+#       host: web01.example     # Deployer's alias; omit if there is only one
+#     stage: production
+
 # Where the remote's database credentials come from:
 #   env      - read from a .env on the remote (the default)
 #   explicit - from `database.credentials` below; they are secrets, so put
