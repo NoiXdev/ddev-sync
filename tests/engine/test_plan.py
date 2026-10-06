@@ -882,5 +882,26 @@ def test_a_group_whose_path_escapes_the_project_is_available_too() -> None:
     assert "files" in available_for(data)
 
 
+@pytest.mark.parametrize("bad", [None, 5, {"a": "b"}])
+def test_a_malformed_env_file_is_a_config_error_naming_the_key(bad: object) -> None:
+    data = {**PROFILE_DATA, "env": {"strategy": "patch_keys", "set": {"A": "1"}, "file": bad}}
+    with pytest.raises(ConfigError, match=r"env\.file"):
+        build_plan(
+            target=target(),
+            project=project(),
+            profile=ResolvedProfile(
+                name="typo3",
+                label="typo3@12",
+                data=data,
+                layers=(LayerDoc("profile:typo3@12", data),),
+                notice=None,
+            ),
+            merged=merge_layers([LayerDoc("profile:typo3@12", data)]),
+            steps=steps_for_selection(["db"]),
+        )
+    # The probe must treat it like any other broken group: available, not fatal.
+    assert "db" in available_for(data)
+
+
 def test_every_name_it_returns_is_a_real_selection_group() -> None:
     assert available_for() <= set(SELECTION_GROUPS)

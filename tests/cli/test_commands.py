@@ -781,3 +781,10 @@ def test_an_empty_steps_value_is_refused_rather_than_planning_nothing(steps: str
         commands.resolve_selection(steps, assume_yes=True, available=_AVAILABLE)
     assert "names no step" in str(error.value)
     assert "db, files, sanitize, setup" in str(error.value)
+
+
+def test_nothing_available_reads_none_rather_than_an_empty_list() -> None:
+    with pytest.raises(DdevSyncError, match=r"Available: none\."):
+        commands.resolve_selection("db", assume_yes=True, available=frozenset())
+    with pytest.raises(DdevSyncError, match=r"Available: none\."):
+        commands.resolve_selection("", assume_yes=True, available=frozenset())

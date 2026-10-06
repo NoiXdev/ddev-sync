@@ -169,8 +169,8 @@ def _break_files(project: Path) -> None:
 def test_a_step_that_is_not_selected_is_not_held_to_account_for_its_configuration(
     project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The availability probe plans every group, so a broken `files` entry
-    must not fail a run that only asked for `db`. This ran fine before the
+    """The availability probe plans each group on its own, so a broken `files`
+    entry must not fail a run that only asked for `db`. This ran fine before the
     probe existed and has to keep doing so.
     """
     _break_files(project)
@@ -188,6 +188,31 @@ def test_the_step_with_broken_configuration_still_fails_with_its_own_message(
         assert code == 1
         assert "missing 'remote'" in error
         assert "not available" not in error
+
+
+@pytest.mark.parametrize("value", ["", "5"])
+def test_a_malformed_env_file_is_a_message_and_only_for_the_step_that_uses_it(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], value: str
+) -> None:
+    """`env.file` of null (a bare `file:`) or a number used to escape the plan
+    as a raw TypeError. The probe plans `db` on every run, so that would have
+    been a traceback even for `--steps files`; now it is a `ConfigError` that
+    only the step that really plans it (`db`) reports.
+    """
+    config = project / ".ddev" / "ddev-sync.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + f"env:\n  strategy: patch_keys\n  set: {{APP_ENV: local}}\n  file: {value}\n"
+        + "files:\n  paths:\n    - {remote: uploads/, local: uploads/}\n",
+        encoding="utf-8",
+    )
+    assert invoke(project, tmp_path, "--dry-run", "--steps", "files") == 0
+    assert "files.sync" in capsys.readouterr().out
+
+    assert invoke(project, tmp_path, "--dry-run", "--steps", "db") == 1
+    error = capsys.readouterr().err
+    assert "env.file" in error
+    assert "Traceback" not in error
 
 
 def test_an_empty_steps_value_is_refused_at_the_command_line(

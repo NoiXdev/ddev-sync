@@ -382,6 +382,15 @@ class _Builder:
         if not isinstance(raw_values, dict) or not raw_values:
             return []
         configured = settings.get("file", [".env.local", ".env"])
+        if not isinstance(configured, str | list):
+            # A bare `file:` is read by YAML as null, and anything else that is
+            # neither a name nor a list of names would otherwise reach the
+            # iteration below as a raw TypeError - a traceback instead of a
+            # message, and now reachable on every run because the availability
+            # probe plans the `db` group even when only `files` was asked for.
+            raise ConfigError(
+                f"env.file must be a file name or a list of file names, got {configured!r}"
+            )
         candidates = [configured] if isinstance(configured, str) else [str(c) for c in configured]
         keys = ", ".join(sorted(str(key) for key in raw_values))
         detail = f"{strategy}: {len(raw_values)} key(s) -> {', '.join(candidates)} ({keys})"
