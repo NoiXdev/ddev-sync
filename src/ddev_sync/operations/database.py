@@ -341,7 +341,7 @@ class DbImportOperation:
                 f"could not rewrite {dump} to remove DEFINER clauses: {error}. "
                 f"The local database {database!r} is empty: the drop runs before "
                 "this rewrite, so nothing was imported. The dump itself is "
-                "unchanged, but it still carries the DEFINER clauses that fail to "
+                "unchanged, but it may still carry DEFINER clauses that fail to "
                 "import, so fix the cause and run the sync again rather than "
                 "importing the file directly. A full disk is the likeliest cause - "
                 "the rewrite writes a second copy beside the dump before replacing "
