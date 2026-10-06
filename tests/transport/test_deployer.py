@@ -63,8 +63,11 @@ def test_it_falls_back_to_a_dep_on_the_path_when_vendor_bin_is_absent() -> None:
 
 def test_a_recipe_that_fails_does_not_fall_through_to_the_second_candidate() -> None:
     # Exit 127 means the interpreter could not find the program. Any other
-    # non-zero means dep ran and its own evaluation failed - trying the next
-    # candidate would run a broken recipe twice and report the wrong cause.
+    # non-zero means the command was found and something else went wrong -
+    # usually a recipe that failed, sometimes a stopped container, which
+    # `docker exec` also reports as exit 1. Either way, trying the next
+    # candidate would repeat the failure and report the wrong cause, so the
+    # stderr is handed on as it came.
     runner = FakeCommandRunner()
     runner.script_prefix(["docker", "exec"], returncode=1, stderr="PHP Fatal error in deploy.php")
     resolve = make_deployer_resolver(project(), runner)
@@ -89,6 +92,22 @@ def test_neither_candidate_present_names_both_places_it_looked() -> None:
     # The runner's own words survive: exit 127 is also what a host without
     # `docker` reports, and that must not read as a missing Deployer.
     assert "not found" in str(error.value)
+
+
+def test_neither_candidate_present_says_where_deployer_belongs() -> None:
+    # The design's failure-mode table asks this message for two things: the
+    # places looked in, and the fact that Deployer belongs in the project's
+    # require-dev. Someone reading a terminal error is not reading the
+    # documentation, so the remedy is named as a command they can run.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], returncode=127, stderr="not found")
+    resolve = make_deployer_resolver(project(), runner)
+
+    with pytest.raises(DeployerError) as error:
+        resolve("web-1")
+
+    assert "require-dev" in str(error.value)
+    assert "ddev composer require --dev deployer/deployer" in str(error.value)
 
 
 def test_a_dep_on_the_path_is_used_when_vendor_bin_is_absent() -> None:

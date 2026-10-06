@@ -29,8 +29,12 @@ _CANDIDATES = ("vendor/bin/dep", "dep")
 _SUBCOMMAND = ("config", "--format=json")
 
 # What a shell - and `docker exec` after it - exits with when it cannot find
-# the program. It is the only status that means "try the next place": any other
-# non-zero is `dep` itself reporting that the project's recipe failed.
+# the program. It is the only status that means "try the next place". Any
+# other non-zero is usually `dep` itself reporting that the project's recipe
+# failed, but not always: `docker exec` against a stopped web container exits
+# 1 with "container ... is not running", which looks the same from here. That
+# is why the message below quotes the command's own stderr instead of naming
+# a cause it cannot tell apart.
 _NOT_FOUND = 127
 
 
@@ -68,7 +72,14 @@ def _dep_config(project: DdevProject, runner: CommandRunner) -> str:
     # from a host without `docker` at all, and naming only the two places
     # looked would then send someone hunting for a Deployer that is not the
     # problem.
+    #
+    # The remedy is named as a command because that is the usual cause -
+    # `vendor/bin/dep` is absent because Deployer was never required - and
+    # the alternative, a `dep` on the container's PATH, is already named
+    # above as a place that was looked in.
     raise DeployerError(
         f"could not find Deployer in the web container: neither {_CANDIDATES[0]} "
-        f"nor a `dep` on its PATH ran ({last_stderr})"
+        f"nor a `dep` on its PATH ran ({last_stderr}); Deployer belongs in the "
+        "project's require-dev, so install it with "
+        "'ddev composer require --dev deployer/deployer'"
     )
