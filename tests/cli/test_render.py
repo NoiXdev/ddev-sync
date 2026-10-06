@@ -749,44 +749,57 @@ def test_render_targets_shows_a_deployer_block_as_a_declaration() -> None:
             source="~/.ddev/ddev-sync/config.yaml",
         )
     }
-    line = render_targets(collected)
-    assert "from deployer: web-1" in line
-    assert "?" not in line
+    assert render_targets(collected) == (
+        "  Targets\n\n  prod  from deployer: web-1   [~/.ddev/ddev-sync/config.yaml]\n"
+    )
 
 
 def test_render_targets_shows_a_deployer_block_with_no_alias() -> None:
     # Without the branch this renders `?:?`, which reads like a broken
-    # configuration rather than a deliberate one.
+    # configuration rather than a deliberate one. Exact equality also pins that
+    # no separator is left dangling after "deployer".
     collected = {
         "prod": CollectedTarget(
             spec=TargetSpec(deployer=DeployerRef(), stage=Stage.PRODUCTION),
             source="~/.ddev/ddev-sync/config.yaml",
         )
     }
-    line = render_targets(collected)
-    assert "from deployer" in line
-    assert ": " not in line.split("from deployer", 1)[1].split("[", 1)[0]
-    assert "?" not in line
+    assert render_targets(collected) == (
+        "  Targets\n\n  prod  from deployer   [~/.ddev/ddev-sync/config.yaml]\n"
+    )
 
 
 def test_render_targets_keeps_the_literal_endpoint_and_its_alignment() -> None:
     # Pins the rendering of literal targets, including the `?` fallbacks and the
     # column width, so that sharing the endpoint expression with the picker
     # cannot quietly change what `ddev sync targets` has always printed.
+    # Coverage cannot see inside `a or b` (a short-circuit operand is not a
+    # branch), so each operand of the user and host expressions needs a case of
+    # its own: `alias_user` is the only one where the alias must suppress a
+    # `user@` that is otherwise written, and `alias_wins` the only one where
+    # the alias must beat a `host` beside it.
     collected = {
         "a": CollectedTarget(
             spec=TargetSpec(host="web01.example", user="deploy", path="/srv/app/"),
             source="project",
         ),
-        "longer": CollectedTarget(
-            spec=TargetSpec(ssh_alias="prod", path="/srv/x"), source="global"
+        "alias_user": CollectedTarget(
+            spec=TargetSpec(ssh_alias="prod", user="deploy", path="/srv/x"), source="global"
         ),
+        "alias_wins": CollectedTarget(
+            spec=TargetSpec(ssh_alias="prod", host="h.example", path="/srv/x"), source="global"
+        ),
+        "no_user": CollectedTarget(spec=TargetSpec(host="h.example", path="/srv/y"), source="g"),
+        "no_path": CollectedTarget(spec=TargetSpec(host="h.example", user="u"), source="global"),
         "bare": CollectedTarget(spec=TargetSpec(), source="global"),
     }
     assert render_targets(collected) == (
         "  Targets\n"
         "\n"
-        "  a       deploy@web01.example:/srv/app/   [project]\n"
-        "  bare    ?:?   [global]\n"
-        "  longer  prod:/srv/x   [global]\n"
+        "  a           deploy@web01.example:/srv/app/   [project]\n"
+        "  alias_user  prod:/srv/x   [global]\n"
+        "  alias_wins  prod:/srv/x   [global]\n"
+        "  bare        ?:?   [global]\n"
+        "  no_path     u@h.example:?   [global]\n"
+        "  no_user     h.example:/srv/y   [g]\n"
     )
