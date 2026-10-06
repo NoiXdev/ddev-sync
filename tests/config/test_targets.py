@@ -394,27 +394,67 @@ def test_a_target_without_a_deployer_block_has_none() -> None:
     assert collected["prod"].spec.deployer is None
 
 
-def test_deployer_beside_a_literal_connection_key_is_rejected_by_name() -> None:
-    for key, value in (("host", "web-1"), ("user", "deploy"), ("port", 2222), ("path", "/srv/")):
-        with pytest.raises(TargetError) as error:
-            collected_from({"prod": {"deployer": {}, key: value, "stage": "production"}})
-        assert key in str(error.value)
-        assert "deployer" in str(error.value)
+# These assert on the validator's own sentence, never on a bare key name:
+# `_parse_spec` wraps pydantic's error, whose text echoes the whole input dict
+# (`input_value={...}`), so every key the test wrote is in the message whatever
+# the validator says. Only "so <keys> must not be set beside it" can come from
+# the rejection itself.
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("host", "web-1"),
+        ("ssh_alias", "prod"),
+        ("user", "deploy"),
+        ("port", 2222),
+        ("path", "/srv/"),
+        ("layout", "plain"),
+    ],
+)
+def test_deployer_beside_a_connection_key_is_rejected_by_name(key: str, value: object) -> None:
+    with pytest.raises(TargetError, match=rf"so {key} must not be set beside it"):
+        collected_from({"prod": {"deployer": {}, key: value, "stage": "production"}})
+
+
+def test_deployer_beside_several_connection_keys_names_all_of_them() -> None:
+    with pytest.raises(TargetError, match=r"so host, user, path must not be set beside it"):
+        collected_from(
+            {
+                "prod": {
+                    "deployer": {},
+                    "path": "/srv/",
+                    "user": "deploy",
+                    "host": "web-1",
+                    "stage": "production",
+                }
+            }
+        )
 
 
 def test_deployer_beside_an_explicit_default_port_is_still_rejected() -> None:
     # `port` defaults to 22, so "is it set" cannot be answered by looking at
     # the value: a user who writes `port: 22` beside a block has contradicted
     # it just as much as one who writes 2222.
-    with pytest.raises(TargetError, match="port"):
+    with pytest.raises(TargetError, match=r"so port must not be set beside it"):
         collected_from({"prod": {"deployer": {}, "port": 22, "stage": "production"}})
 
 
-def test_deployer_beside_layout_or_ssh_alias_is_rejected() -> None:
-    for key, value in (("layout", "plain"), ("ssh_alias", "prod")):
-        with pytest.raises(TargetError) as error:
-            collected_from({"prod": {"deployer": {}, key: value, "stage": "production"}})
-        assert key in str(error.value)
+def test_a_deployer_block_in_one_layer_and_literals_in_another_is_rejected() -> None:
+    # Layers are merged key by key *before* a target is validated, so the same
+    # target name defined with literals in one layer and a `deployer:` block in
+    # another ends up with both on one spec. That is rejected on purpose: two
+    # mechanisms for one target must not be silently blended. To override a
+    # target's connection, define a new target that `extends` it - there the
+    # stronger link wins (see the chain tests below).
+    with pytest.raises(TargetError, match=r"so host, user, path must not be set beside it"):
+        collect_targets(
+            [
+                layer(
+                    "global",
+                    {"prod": {"host": "old.example", "user": "deploy", "path": "/srv/"}},
+                ),
+                layer("project", {"prod": {"deployer": {}, "stage": "production"}}),
+            ]
+        )
 
 
 def test_deployer_beside_a_jump_host_is_allowed() -> None:
@@ -596,10 +636,9 @@ def test_a_literal_beside_an_inherited_deployer_block_is_rejected_by_name() -> N
     with pytest.raises(TargetError) as error:
         resolve_target("prod", collected, resolve_deployer=fake_resolver())
     message = str(error.value)
-    assert "prod" in message
-    assert "user" in message
-    assert "path" in message
-    assert "deployer" in message
+    assert "target 'prod'" in message
+    assert "user, path cannot be set" in message
+    assert "'deployer:' block" in message
 
 
 def test_a_deployer_target_without_a_resolver_says_so() -> None:
