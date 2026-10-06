@@ -64,6 +64,31 @@ of them worse is very welcome.
   root-group access to the daemon there, not merely membership of a `docker`
   group.
 
+- **An unknown ssh host is trusted the first time it is seen.** Every ssh, scp and
+  rsync the engine runs sets `StrictHostKeyChecking=accept-new`, so a host that is not
+  yet in `known_hosts` is accepted without asking. Whoever answers on the very first
+  connection to a host is trusted from then on: if that first connection is
+  intercepted, the interceptor's key is the one remembered, and nothing here can tell.
+  This was chosen over ssh's default, which asks, because the add-on runs the engine
+  in a container with no terminal and an empty `known_hosts`, so asking means the
+  first connection to any host simply fails. Under the add-on `known_hosts` persists,
+  so the exposure is one silent acceptance per host, ever.
+
+  A host whose key *changes* is still refused, and that is the part worth keeping:
+  `accept-new` is not `no`. `StrictHostKeyChecking=no`, usually paired with
+  `UserKnownHostsFile=/dev/null`, would also accept a changed key, which is exactly
+  what a man-in-the-middle presents to a host you have connected to before. For a tool
+  that transfers production databases and reads the production database's credentials
+  over the same channel, that protection is not worth one saved confirmation, and the
+  setting must not be loosened to `no`. A refused change surfaces in `doctor` as
+  `Host key verification failed.` and needs a human to decide whether the key was
+  rotated or the host is not what it claims to be.
+
+  There is no setting to make this stricter, and none to turn it off. If you need
+  the first connection verified, add the host's key to `known_hosts` yourself before
+  the first sync. A jump host (`-J`) is a second ssh that does not receive these
+  options, so its key follows your own `ssh_config`.
+
 ## What sanitize rules do and do not guarantee
 
 Sanitize rules are what keep production data from living on a laptop: they truncate
