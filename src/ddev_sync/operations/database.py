@@ -328,7 +328,25 @@ class DbImportOperation:
         # only runs mysqladmin drop/create, and the completeness check above
         # already ran against the unmodified file.
         self._recreate(context, database)
-        strip_definers(dump)
+        try:
+            strip_definers(dump)
+        except OSError as error:
+            # The drop above has already happened, so this is not a failure
+            # that left everything as it was - and the rewrite needs as much
+            # free space again as the dump occupies, which makes a full disk
+            # its likeliest cause. `dump.sql` is unchanged whatever raised: the
+            # rewrite builds a separate file and only touches the dump in the
+            # final atomic replace.
+            raise OperationError(
+                f"could not rewrite {dump} to remove DEFINER clauses: {error}. "
+                f"The local database {database!r} is empty: the drop runs before "
+                "this rewrite, so nothing was imported. The dump itself is "
+                "unchanged, but it still carries the DEFINER clauses that fail to "
+                "import, so fix the cause and run the sync again rather than "
+                "importing the file directly. A full disk is the likeliest cause - "
+                "the rewrite writes a second copy beside the dump before replacing "
+                "it."
+            ) from error
         self._import(context, database, dump)
         if not context.keep_dump:
             dump.unlink(missing_ok=True)

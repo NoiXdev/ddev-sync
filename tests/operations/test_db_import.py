@@ -357,3 +357,31 @@ def test_confirm_destructive_raises_a_clean_error_when_stdin_is_closed(
     with pytest.raises(OperationError) as caught:
         confirm_destructive("Drop the local database?")
     assert "--yes" in str(caught.value)
+
+
+def test_a_failed_dump_rewrite_says_the_local_database_is_empty(
+    tmp_path: Path,
+) -> None:
+    # The drop runs before the rewrite (see `execute`'s own comment), so an
+    # OSError here leaves an empty database behind - the one thing the user
+    # has to know, and the one thing a bare traceback did not say.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["mysqladmin"], stdout="")
+    runner.script_prefix(["mysqladmin"], stdout="")
+    context = make_context(runner, tmp_path)
+    dump = with_dump(context)
+    (context.downloads_dir / f"{DUMP_FILENAME}.tmp").mkdir()
+
+    with pytest.raises(OperationError) as error:
+        DbImportOperation().execute(context, {})
+
+    message = str(error.value)
+    assert "is empty" in message
+    assert str(dump) in message
+    # The message promises both of these, so they are the test's business.
+    assert dump.read_text(encoding="utf-8") == COMPLETE_DUMP
+    assert repr("db") in message
+    # The drop really did run first, which is what makes that claim true -
+    # and `mysql` never ran, so nothing was imported.
+    assert [call[0] for call in runner.calls] == ["mysqladmin", "mysqladmin"]
+    assert "drop" in runner.calls[0]
