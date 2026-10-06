@@ -9,7 +9,7 @@ from typing import Any, Protocol
 from ddev_sync.config.merge import MergeResult
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.ddev.project import DdevProject
-from ddev_sync.errors import DdevSyncError
+from ddev_sync.errors import DdevSyncError, InterruptedAtPrompt
 from ddev_sync.transport.runner import CommandRunner
 
 
@@ -38,9 +38,16 @@ def confirm(question: str, *, subject: str) -> bool:
     downloaded production dump, a diffed env rewrite). `subject` names what
     could not be confirmed, so each call site's error reads as the same
     decision applied again, not two unrelated ones.
+
+    Ctrl-C is re-raised as `InterruptedAtPrompt`. Every caller asks before
+    doing its destructive part, so an interrupt here means that part has not
+    started - which the executor could not otherwise tell from an interrupt in
+    the middle of it, and would report as possible damage that did not happen.
     """
     try:
         answer = input(f"{question} [y/N] ").strip().lower()
+    except KeyboardInterrupt as error:
+        raise InterruptedAtPrompt from error
     except EOFError as error:
         raise OperationError(
             f"cannot confirm {subject}: no input is available (stdin is "

@@ -12,7 +12,7 @@ from typing import Any, Protocol
 from ddev_sync.engine.plan import Plan, PlannedStep, command_entries_at, resolve_command_path
 from ddev_sync.engine.registry import OPERATIONS
 from ddev_sync.engine.steps import StepKind
-from ddev_sync.errors import DdevSyncError, SyncInterrupted
+from ddev_sync.errors import DdevSyncError, InterruptedAtPrompt, SyncInterrupted
 from ddev_sync.operations.base import ExecutionContext, Operation
 from ddev_sync.operations.exec import run_command_entry
 
@@ -77,6 +77,7 @@ class Executor:
 
         outcomes: list[StepOutcome] = []
         stopped = False
+        in_post_sync = False
         try:
             for step in plan.steps:
                 if stopped:
@@ -86,24 +87,30 @@ class Executor:
                 outcomes.append(outcome)
                 if outcome.status == "failed":
                     stopped = True
+
+            failed = any(outcome.status == "failed" for outcome in outcomes)
+            in_post_sync = True
+            self._run_post_sync(context)
         except KeyboardInterrupt as interrupt:
             # `_run_step` catches only `DdevSyncError`, so an interrupt raised
             # inside a step lands here with `outcomes` still in scope - which
             # is all the progress tracking the message needs. The step that
             # was running has no outcome yet, so it is the next one in the
             # plan; there is none when the interrupt landed after the last
-            # step had already been recorded.
+            # step had already been recorded, or in the `post_sync` hooks
+            # that follow. Those hooks are inside the `try` for that reason:
+            # an interrupt there must still say what the database was left
+            # holding, because the steps before it are finished either way.
             running = plan.steps[len(outcomes)] if len(outcomes) < len(plan.steps) else None
             raise SyncInterrupted(
                 _interrupted_message(
                     outcomes,
                     running=running,
-                    post_sync_skipped=bool(_post_sync_entries(context)),
+                    at_prompt=isinstance(interrupt, InterruptedAtPrompt),
+                    post_sync_note=_post_sync_note(context, interrupted_in_it=in_post_sync),
                 )
             ) from interrupt
 
-        failed = any(outcome.status == "failed" for outcome in outcomes)
-        self._run_post_sync(context)
         return RunReport(outcomes=tuple(outcomes), failed=failed)
 
     def _run_step(self, step: PlannedStep, context: ExecutionContext) -> StepOutcome:
@@ -172,6 +179,25 @@ def _post_sync_entries(context: ExecutionContext) -> list[dict[str, Any]]:
     ]
 
 
+def _post_sync_note(context: ExecutionContext, *, interrupted_in_it: bool) -> str:
+    """The sentence about `post_sync` hooks, or nothing when there is nothing true to say.
+
+    Said only when hooks are configured: "did not run" about hooks that do not
+    exist would be noise. If the configuration cannot be read here, nothing is
+    claimed either - this runs while an interrupt is being reported, and a
+    `ConfigError` replacing that report would end in exit code 1 and lose it.
+    """
+    try:
+        configured = bool(_post_sync_entries(context))
+    except DdevSyncError:
+        return ""
+    if not configured:
+        return ""
+    if interrupted_in_it:
+        return " The post_sync hooks were interrupted and may not have finished."
+    return " The post_sync hooks did not run."
+
+
 def _describe(step: PlannedStep) -> str:
     """A step as a person would name it; a hook says it is a hook."""
     return f"a {step.kind.value} hook" if step.is_hook else step.kind.value
@@ -181,7 +207,8 @@ def _interrupted_message(
     outcomes: Sequence[StepOutcome],
     *,
     running: PlannedStep | None,
-    post_sync_skipped: bool,
+    at_prompt: bool,
+    post_sync_note: str,
 ) -> str:
     """What an interrupt left behind, in the order someone needs to read it.
 
@@ -192,6 +219,12 @@ def _interrupted_message(
     the import leaves the database possibly part-way replaced, and one before
     either must say nothing about data at all - a warning that fires when it
     did not would teach people to ignore it.
+
+    `at_prompt` means the running step was only waiting for a confirmation,
+    so it has changed nothing: the "possibly part-way" claims about it are
+    dropped. What *finished* steps left behind is still true and still said -
+    an interrupt at the env prompt after a completed, unsanitized import
+    leaves exactly the data the warning is about.
 
     A hook carries its parent's `kind` (see `PlannedStep`), so `kind` alone
     cannot say whether the import itself ran: a finished `pre_db_import` hook
@@ -205,14 +238,19 @@ def _interrupted_message(
     """
     finished = [outcome.step for outcome in outcomes if outcome.status == "ok"]
     after = f"after {_describe(finished[-1])}" if finished else "before the first step finished"
-    message = (
-        f"Interrupted {after}."
-        if running is None
-        else f"Interrupted during {_describe(running)}, {after}."
-    )
+    if running is None:
+        message = f"Interrupted {after}."
+    elif at_prompt:
+        message = (
+            f"Interrupted at the confirmation prompt of {_describe(running)}, {after}."
+            " It was waiting for your answer, so that step had not changed anything."
+        )
+    else:
+        message = f"Interrupted during {_describe(running)}, {after}."
 
     kinds = {step.kind for step in finished if not step.is_hook}
-    if running is not None and running.kind is StepKind.DB_IMPORT and not running.is_hook:
+    mid_work = running.kind if running and not running.is_hook and not at_prompt else None
+    if mid_work is StepKind.DB_IMPORT:
         # "May", because an interrupt cannot say how far the import got.
         message += (
             " The local database may be partly replaced with production data and is not"
@@ -220,11 +258,11 @@ def _interrupted_message(
             " data until you have."
         )
     elif StepKind.DB_IMPORT in kinds and StepKind.SANITIZE not in kinds:
+        # Interrupted mid-sanitize, some rules may already have been applied.
+        state = "not fully sanitized" if mid_work is StepKind.SANITIZE else "not sanitized"
         message += (
-            " The local database has been replaced with production data and was not"
-            " sanitized - re-run with --steps sanitize, or treat this copy as production"
+            f" The local database has been replaced with production data and was {state}"
+            " - re-run with --steps sanitize, or treat this copy as production"
             " data until you have."
         )
-    if post_sync_skipped:
-        message += " The post_sync hooks did not run."
-    return message
+    return message + post_sync_note

@@ -466,9 +466,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         click.echo(str(error), err=True)
         return 130
     except (click.exceptions.Abort, KeyboardInterrupt):
-        # An interrupt outside a running sync - during the step picker, or
-        # while the configuration is still being read. Nothing has been
-        # changed, so there is nothing to report beyond the fact itself.
+        # An interrupt that reached here was raised outside the executor -
+        # during the step picker, while the configuration was being read, or
+        # while the plan was built - because one raised inside it, steps and
+        # `post_sync` hooks included, has already become `SyncInterrupted`.
+        # No step was cut short, so there is nothing to report beyond the
+        # fact itself.
         # `Abort` is what actually arrives: Click catches the
         # `KeyboardInterrupt` inside `cli.main` and re-raises it as `Abort`
         # even with `standalone_mode=False`, so a handler for the bare

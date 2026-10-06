@@ -13,6 +13,7 @@ from ddev_sync.engine.plan import Plan, PlannedStep
 from ddev_sync.engine.steps import StepKind
 from ddev_sync.errors import SyncInterrupted
 from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.database import confirm_destructive
 from ddev_sync.transport.fake import FakeCommandRunner
 from ddev_sync.transport.runner import CommandResult
 
@@ -368,14 +369,17 @@ def test_an_interrupt_reports_the_last_step_that_finished(tmp_path: Path) -> Non
     assert "after db.dump" in message
 
 
-def test_an_interrupt_after_the_import_warns_the_database_is_unsanitized(tmp_path: Path) -> None:
+def test_an_interrupt_during_sanitize_warns_the_database_is_not_fully_sanitized(
+    tmp_path: Path,
+) -> None:
     message = interrupted_message(
         interrupting_executor(StepKind.SANITIZE),
         plan_of(step(1, StepKind.DB_IMPORT), step(2, StepKind.SANITIZE)),
         context_at(tmp_path),
     )
-    assert "after db.import" in message
-    assert "was not sanitized" in message
+    assert "during sanitize, after db.import" in message
+    # Not "not sanitized": an interrupt mid-sanitize may have applied some rules.
+    assert "was not fully sanitized" in message
     assert "--steps sanitize" in message
 
 
@@ -433,7 +437,7 @@ def test_a_finished_pre_sanitize_hook_does_not_hide_the_warning(tmp_path: Path) 
         replace(context_at(tmp_path), runner=runner),
     )
     assert "during sanitize, after a sanitize hook" in message
-    assert "was not sanitized" in message
+    assert "was not fully sanitized" in message
 
 
 class InterruptingRunner(FakeCommandRunner):
@@ -546,3 +550,96 @@ def test_an_interrupt_between_steps_still_reports_what_finished(tmp_path: Path) 
         interrupting_executor(StepKind.PREFLIGHT), plan, context_at(tmp_path)
     )
     assert message == "Interrupted after db.dump."
+
+
+class PromptingOperation:
+    """An operation that asks `confirm_destructive` first, as `db.import` does.
+
+    `interrupting_executor` raises the moment `execute` is called, so it cannot
+    tell "waiting at the prompt" from "in the middle of the import". This asks
+    through the real `confirm_destructive`, so what reaches the executor is
+    whatever the real prompt raises on Ctrl-C.
+    """
+
+    def execute(self, _context: ExecutionContext, _params: Any) -> None:
+        confirm_destructive("This will drop the local database. Continue?")
+
+
+def ctrl_c_at_the_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    def interrupted(_prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", interrupted)
+
+
+def test_an_interrupt_at_the_drop_prompt_says_nothing_was_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The likeliest Ctrl-C of the whole run: the user is asked whether to drop
+    # their database and changes their mind. Nothing has been touched, so
+    # "may be partly replaced" would be the false alarm this tool must not raise.
+    ctrl_c_at_the_prompt(monkeypatch)
+    executor = Executor(
+        reporter=RecordingReporter(),
+        operations={StepKind.DB_DUMP: _SpyOperation(), StepKind.DB_IMPORT: PromptingOperation()},
+    )
+    message = interrupted_message(
+        executor,
+        plan_of(step(1, StepKind.DB_DUMP), step(2, StepKind.DB_IMPORT)),
+        context_at(tmp_path),
+    )
+    assert message.startswith("Interrupted at the confirmation prompt of db.import, after db.dump.")
+    assert "had not changed anything" in message
+    assert "replaced" not in message
+    assert "sanit" not in message
+
+
+def test_an_interrupt_at_a_later_prompt_still_reports_what_earlier_steps_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The prompt tells us the running step changed nothing - not that the
+    # import before it did not happen. That data is still on the machine
+    # unsanitized, and still the one thing worth saying.
+    ctrl_c_at_the_prompt(monkeypatch)
+    executor = Executor(
+        reporter=RecordingReporter(),
+        operations={StepKind.DB_IMPORT: _SpyOperation(), StepKind.ENV: PromptingOperation()},
+    )
+    message = interrupted_message(
+        executor,
+        plan_of(step(1, StepKind.DB_IMPORT), step(2, StepKind.ENV)),
+        context_at(tmp_path),
+    )
+    assert "confirmation prompt of env, after db.import" in message
+    assert "has been replaced with production data and was not sanitized" in message
+
+
+def test_an_interrupt_in_the_post_sync_hooks_still_reports_the_unsanitized_database(
+    tmp_path: Path,
+) -> None:
+    # The steps are finished by then, so what they left behind is known - and
+    # `post_sync` is no reason to lose it.
+    message = interrupted_message(
+        interrupting_executor(StepKind.SANITIZE),
+        plan_of(step(1, StepKind.DB_IMPORT)),
+        replace(context_with_post_sync(tmp_path), runner=InterruptingRunner()),
+    )
+    assert message.startswith("Interrupted after db.import.")
+    assert "was not sanitized" in message
+    assert "post_sync hooks were interrupted and may not have finished" in message
+    assert "did not run" not in message
+
+
+def test_an_unreadable_post_sync_block_does_not_replace_the_interrupt_report(
+    tmp_path: Path,
+) -> None:
+    # `mode` without `commands` is a ConfigError when the hooks are resolved.
+    # Reporting the interrupt must not die of it and end with exit code 1.
+    context = replace(
+        context_at(tmp_path),
+        merged=merge_layers([LayerDoc("project", {"hooks": {"post_sync": {"mode": "append"}}})]),
+    )
+    message = interrupted_message(
+        interrupting_executor(StepKind.DB_DUMP), plan_of(step(1, StepKind.DB_DUMP)), context
+    )
+    assert message == "Interrupted during db.dump, before the first step finished."

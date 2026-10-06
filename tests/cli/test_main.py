@@ -748,13 +748,14 @@ def test_no_features_combined_with_build_is_a_usage_error(
     assert "build" in error
 
 
-def test_a_bare_interrupt_exits_130_without_a_traceback(
+def test_main_ends_a_keyboard_interrupt_that_reaches_it_with_130(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # 130 is the conventional code for a process ended by SIGINT, and the
-    # traceback it used to print told a user nothing they could act on. This
-    # is the interrupt outside a running sync - the step picker, or
-    # configuration still being read - where nothing has changed.
+    # traceback it used to print told a user nothing they could act on. Click
+    # normally turns the interrupt into `Abort` before it gets here (the
+    # step-picker test below drives that path), so this only pins what `main`
+    # does with a bare one should it ever arrive.
     def interrupt(*_args: object, **_kwargs: object) -> int:
         raise KeyboardInterrupt
 

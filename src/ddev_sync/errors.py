@@ -47,3 +47,16 @@ class SyncInterrupted(DdevSyncError):
     Carries what had already completed, because the state a half-finished
     sync leaves behind is the only thing worth saying at that moment.
     """
+
+
+class InterruptedAtPrompt(KeyboardInterrupt):
+    """Ctrl-C arrived while a confirmation prompt was waiting for an answer.
+
+    A `KeyboardInterrupt` subclass, deliberately not a `DdevSyncError`: it must
+    keep travelling like an interrupt through anything that does not know about
+    it. It exists because a step that is merely *asking* whether it may do
+    something destructive has done nothing yet, and the executor cannot see
+    that from a bare interrupt - which looks the same as one in the middle of
+    the work. Saying so once, where the prompt is, is cheaper and harder to
+    get wrong than teaching every step's message about its own prompts.
+    """

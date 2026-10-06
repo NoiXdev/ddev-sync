@@ -32,7 +32,9 @@ def test_several_targets_are_offered_with_their_descriptions(
     assert "deploy@a:/p/" in offered[0][0]
 
 
-def test_cancelling_the_target_prompt_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_choose_target_passes_a_missing_terminal_through_as_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(prompts, "_select", lambda _q, _c: None)
     assert prompts.choose_target(["a", "b"], {"a": "", "b": ""}) is None
 
@@ -56,7 +58,9 @@ def test_steps_are_offered_as_a_checkbox_with_sensible_defaults(
     assert seen[0] == ["db", "files", "sanitize"]
 
 
-def test_cancelling_the_step_prompt_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_choose_steps_passes_a_missing_terminal_through_as_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(prompts, "_checkbox", lambda _q, _c, _d: None)
     assert prompts.choose_steps(["db"]) is None
 

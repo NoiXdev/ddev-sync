@@ -6,6 +6,7 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import Layout, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
+from ddev_sync.errors import InterruptedAtPrompt
 from ddev_sync.operations.base import (
     ExecutionContext,
     OperationError,
@@ -124,6 +125,22 @@ def test_confirm_reads_the_answer_from_stdin(
 ) -> None:
     monkeypatch.setattr("builtins.input", lambda _prompt: typed)
     assert confirm("Continue?", subject="a destructive action") is expected
+
+
+def test_ctrl_c_at_the_prompt_is_raised_as_an_interrupt_at_a_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Still a `KeyboardInterrupt`, so anything that does not know about the
+    # subclass treats it as the interrupt it is; the subclass says that the
+    # destructive part had not started.
+    def interrupted(_prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", interrupted)
+    with pytest.raises(InterruptedAtPrompt) as caught:
+        confirm("Continue?", subject="a destructive action")
+    assert isinstance(caught.value, KeyboardInterrupt)
+    assert isinstance(caught.value.__cause__, KeyboardInterrupt)
 
 
 def test_confirm_raises_a_clean_error_naming_the_subject_when_stdin_is_closed(
