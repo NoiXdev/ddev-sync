@@ -379,14 +379,19 @@ def _run(options: _Options, *, steps: str | None, dry_run: bool, assume_yes: boo
             only_feature_setup=options.only_feature_setup,
         ),
     )
+    use_colour = colour_enabled(os.environ, sys.stdout)
     return run_command(
         context,
         selection,
         runner=options.runner,
         dry_run=dry_run,
         assume_yes=assume_yes,
-        echo=click.echo,
+        # `color=True` only when colour was chosen: click strips escapes from a
+        # non-terminal unless told otherwise, which is the very case
+        # `FORCE_COLOR` asks for. `None` leaves click's default in place.
+        echo=partial(click.echo, color=True if use_colour else None),
         only_feature_setup=options.only_feature_setup,
+        colour=use_colour,
     )
 
 

@@ -88,7 +88,7 @@ def test_another_term_value_does_not_disable_colour() -> None:
 
 @pytest.mark.parametrize("colour", list(Colour))
 def test_every_colour_is_a_plain_ansi_foreground_code(colour: Colour) -> None:
-    # Green and red only, no bold, no background, no 256-colour or truecolour:
+    # Green, red and yellow only, no bold, no background, no 256-colour or truecolour:
     # the sixteen-colour foreground range every terminal has understood for
     # decades.
-    assert colour.value in {"31", "32"}
+    assert colour.value in {"31", "32", "33"}

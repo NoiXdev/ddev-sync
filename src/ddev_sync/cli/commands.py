@@ -85,6 +85,7 @@ def run_command(
     assume_yes: bool,
     echo: Callable[[str], None],
     only_feature_setup: bool = False,
+    colour: bool = False,
 ) -> int:
     """Plan and, unless `dry_run`, execute a sync."""
     plan = build_plan(
@@ -100,7 +101,7 @@ def run_command(
         echo(render_plan(plan))
         return 0
 
-    reporter = ConsoleReporter(write=echo)
+    reporter = ConsoleReporter(write=echo, colour=colour)
     execution = _execution_context(context, runner=runner, assume_yes=assume_yes)
     report = Executor(reporter=reporter).run(plan, execution)
     if "sanitize" not in selection:

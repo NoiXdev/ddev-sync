@@ -54,9 +54,48 @@ def test_the_sanitize_warning_fires_when_sanitize_is_not_in_the_plan() -> None:
     assert "not sanitized" in joined.lower()
 
 
-def test_no_ansi_escapes_reach_the_write_callback() -> None:
+def test_no_ansi_escapes_reach_the_write_callback_when_colour_is_off() -> None:
     reporter, lines = capture()
     reporter.starting(step(StepKind.DB_DUMP))
     reporter.finished(StepOutcome(step=step(StepKind.DB_DUMP), status="ok"))
     reporter.notice("x")
     assert all("\x1b[" not in line for line in lines)
+
+
+def test_the_default_line_describes_the_step_rather_than_its_command() -> None:
+    reporter, lines = capture()
+    reporter.starting(step(StepKind.DB_DUMP, detail="mysqldump --single-transaction $DB"))
+    assert lines == ["  ..    db.dump       dumping the remote database"]
+    assert "mysqldump" not in lines[0]
+
+
+def test_a_finished_step_does_not_repeat_the_description() -> None:
+    reporter, lines = capture()
+    reporter.finished(StepOutcome(step=step(StepKind.DB_DUMP), status="ok"))
+    assert lines == ["  OK    db.dump"]
+
+
+def test_a_failed_step_keeps_a_separator_before_its_name() -> None:
+    # The regression this guards: `_MARKS` used to carry its own padding, and
+    # `FAIL` filled the field exactly, so a failure printed `FAILdb.import`.
+    reporter, lines = capture()
+    reporter.finished(
+        StepOutcome(step=step(StepKind.DB_IMPORT), status="failed", error=DdevSyncError("x"))
+    )
+    assert lines[0].startswith("  FAIL  db.import")
+
+
+def test_colour_marks_success_green_failure_red_and_notices_yellow() -> None:
+    lines: list[str] = []
+    reporter = ConsoleReporter(write=lines.append, colour=True)
+    reporter.finished(StepOutcome(step=step(StepKind.DB_DUMP), status="ok"))
+    reporter.finished(
+        StepOutcome(step=step(StepKind.DB_IMPORT), status="failed", error=DdevSyncError("x"))
+    )
+    reporter.notice("heads up")
+    assert "\x1b[32mOK\x1b[0m" in lines[0]
+    assert "\x1b[31mFAIL\x1b[0m" in lines[1]
+    # `lines[2]` is the failed step's error text, so the notice is the fourth line.
+    assert "\x1b[33m!\x1b[0m" in lines[3]
+    # The padding stays outside the escapes, so every column still lines up.
+    assert lines[0].index("db.dump") == lines[1].index("db.import")

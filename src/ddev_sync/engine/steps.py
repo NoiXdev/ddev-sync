@@ -34,6 +34,23 @@ STEP_ORDER: tuple[StepKind, ...] = (
     StepKind.SETUP,
 )
 
+# What the default output shows instead of a command line. Kept beside the
+# enum rather than in the reporter so that adding a kind without describing it
+# fails in the module that defines it - the reporter would only print a blank
+# column. The text is English like every other string this tool prints; there
+# is no i18n layer.
+STEP_DESCRIPTIONS: dict[StepKind, str] = {
+    StepKind.PREFLIGHT: "checking the connection, paths and free space",
+    StepKind.DB_DUMP: "dumping the remote database",
+    StepKind.DB_DOWNLOAD: "fetching the dump",
+    StepKind.DB_IMPORT: "replacing the local database",
+    StepKind.ENV: "updating the local env file",
+    StepKind.FILES_SYNC: "syncing files from the remote",
+    StepKind.S3_SYNC: "syncing the S3 bucket",
+    StepKind.SANITIZE: "removing production data",
+    StepKind.SETUP: "running the project's setup commands",
+}
+
 ALWAYS: frozenset[StepKind] = frozenset({StepKind.PREFLIGHT})
 
 SELECTION_GROUPS: dict[str, tuple[StepKind, ...]] = {

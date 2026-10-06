@@ -9,8 +9,8 @@ the program, and hands the boolean to the pure renderers - a renderer that
 sniffed the environment itself would no longer be snapshot-testable.
 
 `paint` and `paint_padded` apply the colour. Only plain ANSI foreground codes
-are supported (green and red): every terminal has understood them for decades,
-so there is nothing to detect beyond "is colour wanted at all".
+are supported (green, red and yellow): every terminal has understood them for
+decades, so there is nothing to detect beyond "is colour wanted at all".
 """
 
 from collections.abc import Mapping
@@ -26,6 +26,7 @@ class Colour(StrEnum):
 
     RED = "31"
     GREEN = "32"
+    YELLOW = "33"
 
 
 def colour_enabled(environ: Mapping[str, str], stream: TextIO) -> bool:

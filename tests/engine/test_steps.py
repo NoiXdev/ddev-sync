@@ -3,6 +3,7 @@ import pytest
 from ddev_sync.engine.steps import (
     ALWAYS,
     SELECTION_GROUPS,
+    STEP_DESCRIPTIONS,
     STEP_ORDER,
     StepKind,
     hook_name,
@@ -89,3 +90,12 @@ def test_an_unknown_selection_lists_the_valid_ones() -> None:
 def test_the_selection_groups_cover_every_non_preflight_step() -> None:
     covered = {kind for group in SELECTION_GROUPS.values() for kind in group}
     assert covered == set(STEP_ORDER) - ALWAYS
+
+
+def test_every_step_kind_has_a_description() -> None:
+    # The description is what the default output shows instead of a command
+    # line, so a new kind without one would print an empty column - or raise
+    # mid-sync, depending on how it is looked up. Keeping the check beside the
+    # enum means the failure arrives when the kind is added.
+    assert set(STEP_DESCRIPTIONS) == set(StepKind)
+    assert all(text and text == text.strip() for text in STEP_DESCRIPTIONS.values())
