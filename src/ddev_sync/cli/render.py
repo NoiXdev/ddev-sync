@@ -154,7 +154,9 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget) -> str:
     marker of its own.
     """
     checks = [
-        ("ssh connection", report.ssh_ok, f"{target.host}"),
+        # `ssh_detail` carries ssh's own reason when the connection failed;
+        # the bare host is the fallback for a report that predates the field.
+        ("ssh connection", report.ssh_ok, report.ssh_detail or target.host),
         ("deploy path", report.remote_path_ok, target.path),
         (
             "disk space",

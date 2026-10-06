@@ -626,3 +626,37 @@ def test_rows_that_were_not_probed_are_left_out() -> None:
     output = render_doctor(PreflightReport(True, True, 50 * 1024**3), _target())
     assert "web container" not in output
     assert "ssh agent" not in output
+
+
+def test_render_doctor_shows_the_host_beside_a_working_ssh_connection() -> None:
+    report = PreflightReport(
+        ssh_ok=True, remote_path_ok=True, free_bytes=50 * 1024**3, ssh_detail="web01.example"
+    )
+    line = next(
+        line for line in render_doctor(report, _target()).splitlines() if "ssh connection" in line
+    )
+    assert line.strip().startswith("OK")
+    assert line.endswith("web01.example")
+
+
+def test_render_doctor_shows_why_the_ssh_connection_failed() -> None:
+    report = PreflightReport(
+        ssh_ok=False,
+        remote_path_ok=False,
+        free_bytes=50 * 1024**3,
+        ssh_detail="web01.example: Host key verification failed.",
+    )
+    line = next(
+        line for line in render_doctor(report, _target()).splitlines() if "ssh connection" in line
+    )
+    assert line.strip().startswith("FAIL")
+    assert "Host key verification failed." in line
+
+
+def test_render_doctor_falls_back_to_the_host_when_a_report_has_no_ssh_detail() -> None:
+    # Reports built before the field existed still render a useful row.
+    report = PreflightReport(ssh_ok=True, remote_path_ok=True, free_bytes=50 * 1024**3)
+    line = next(
+        line for line in render_doctor(report, _target()).splitlines() if "ssh connection" in line
+    )
+    assert line.endswith("web01.example")

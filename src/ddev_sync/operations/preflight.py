@@ -67,6 +67,12 @@ class PreflightReport:
     the field that genuinely can be. `web_ok` says
     whether a `web` step could reach the project's DDEV web container at all;
     `agent_ok` whether the forwarded ssh agent socket is usable by this user.
+
+    `ssh_detail` is what the `ssh connection` row shows beside the verdict: the
+    host when ssh connected, and when it did not, the host plus ssh's own
+    reason on one line (see `_one_line_reason`). It defaults to empty like
+    the other details, and `doctor` then falls back to the bare host, so a
+    report built without it still renders a useful row.
     """
 
     ssh_ok: bool
@@ -78,6 +84,7 @@ class PreflightReport:
     web_detail: str = ""
     agent_ok: bool | None = None
     agent_detail: str = ""
+    ssh_detail: str = ""
 
     @property
     def free_space_ok(self) -> bool:
@@ -139,7 +146,7 @@ class PreflightOperation:
         and the forwarded ssh agent (`_check_ssh_agent`, a filesystem check).
         Both previously surfaced only mid-sync, after the dump was imported.
         """
-        report, _stderr = self._probe(context)
+        report, stderr = self._probe(context)
         sanitize_ok, sanitize_detail = self._check_sanitize_tables(context, report)
         web_ok, web_detail = self._check_web_container(context)
         agent_ok, agent_detail = self._check_ssh_agent()
@@ -153,6 +160,7 @@ class PreflightOperation:
             web_detail=web_detail,
             agent_ok=agent_ok,
             agent_detail=agent_detail,
+            ssh_detail=self._ssh_detail(context, report, stderr),
         )
 
     def _probe(self, context: ExecutionContext) -> tuple[PreflightReport, str]:
@@ -247,6 +255,20 @@ class PreflightOperation:
         return True, configured
 
     @staticmethod
+    def _ssh_detail(context: ExecutionContext, report: PreflightReport, stderr: str) -> str:
+        """What the `ssh connection` row says beside OK or FAIL.
+
+        A failed probe used to show only the host, so a user whose real
+        problem was `Host key verification failed.` went looking at their key.
+        The host stays in front of the reason so the row still says which
+        target it is about.
+        """
+        host = context.target.host
+        if report.ssh_ok:
+            return host
+        return _clip(f"{host}: {_one_line_reason(stderr)}")
+
+    @staticmethod
     def _ssh_help(context: ExecutionContext, stderr: str) -> str:
         return (
             f"cannot reach {context.target.host} over ssh. "
@@ -315,6 +337,41 @@ class PreflightOperation:
             return False, problem
         plural = "table" if len(required) == 1 else "tables"
         return True, f"{len(required)} required {plural} present"
+
+
+_MAX_DETAIL = 200
+
+
+def _one_line_reason(stderr: str) -> str:
+    """Condense ssh's stderr into the one line that names why it failed.
+
+    ssh's verdict is at the end: its last line, or last two when the cause
+    is split in them. A changed host key prints a dozen lines of banner and
+    advice that end `Host key for H has changed and you have requested strict
+    checking.` and `Host key verification failed.`, and a jump host that times
+    out prints `Connection timed out during banner exchange` followed by the
+    second line that completes it. Anything earlier is context that a
+    checklist row has no room for - and the full text is still what a failed
+    sync reports.
+
+    `Warning:` lines are dropped first. With `accept-new`, ssh prints
+    `Warning: Permanently added ...` on the first contact with a host, and
+    when the connection then fails for another reason that notice is the first
+    thing on stderr - reporting it as the cause would send the user
+    the wrong way once more.
+    """
+    lines = [line.strip() for line in stderr.splitlines()]
+    kept = [line for line in lines if line and not line.startswith("Warning:")]
+    if not kept:
+        return "ssh failed without saying why"
+    return " ".join(kept[-2:])
+
+
+def _clip(text: str) -> str:
+    """Cap a detail so a pathological stderr cannot wreck `doctor`'s layout."""
+    if len(text) <= _MAX_DETAIL:
+        return text
+    return text[: _MAX_DETAIL - 3] + "..."
 
 
 def _required_tables(rules: list[SanitizeRule]) -> list[tuple[str, str]]:

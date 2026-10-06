@@ -367,6 +367,115 @@ def test_the_remote_credentials_password_is_redacted_from_a_table_listing_failur
     assert "REDACTED" in message
 
 
+# --- `doctor` must say *why* the ssh check failed --------------------------
+#
+# A first real run printed `FAIL ssh connection` with only the host beside it.
+# The cause was "Host key verification failed.", which sends a user looking at
+# their key - the wrong trail. `_probe` already had ssh's stderr and
+# `execute()` used it; `check()` threw it away.
+
+# What OpenSSH really prints when a known host presents a different key,
+# trimmed of nothing: the reason is its last two lines, not its first.
+_CHANGED_HOST_KEY = """\
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
+Someone could be eavesdropping on you right now (man-in-the-middle attack)!
+It is also possible that a host key has just been changed.
+The fingerprint for the ED25519 key sent by the remote host is
+SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG.
+Please contact your system administrator.
+Add correct host key in /home/ddev/.ssh/known_hosts to get rid of this message.
+Offending ED25519 key in /home/ddev/.ssh/known_hosts:1
+Host key for web01.example has changed and you have requested strict checking.
+Host key verification failed.
+"""
+
+
+def failing_ssh(stderr: str, returncode: int = 255) -> FakeCommandRunner:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=returncode, stderr=stderr)
+    return runner
+
+
+def test_a_report_built_without_ssh_detail_has_an_empty_one() -> None:
+    # Defaulted like `web_detail`, so every construction that predates the
+    # field keeps working.
+    assert PreflightReport(True, True, 1).ssh_detail == ""
+
+
+def test_check_names_the_host_when_ssh_works(tmp_path: Path) -> None:
+    report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
+    assert report.ssh_detail == "web01.example"
+
+
+def test_check_carries_the_reason_ssh_failed(tmp_path: Path) -> None:
+    runner = failing_ssh("deploy@web01.example: Permission denied (publickey).")
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+    assert report.ssh_ok is False
+    assert report.ssh_detail == (
+        "web01.example: deploy@web01.example: Permission denied (publickey)."
+    )
+
+
+def test_a_changed_host_key_is_condensed_to_one_line_that_says_so(tmp_path: Path) -> None:
+    report = PreflightOperation().check(make_context(failing_ssh(_CHANGED_HOST_KEY), tmp_path))
+    assert "\n" not in report.ssh_detail
+    assert "has changed" in report.ssh_detail
+    assert "Host key verification failed." in report.ssh_detail
+    # The banner and the advice paragraph are noise on a checklist row.
+    assert "@@@" not in report.ssh_detail
+    assert "eavesdropping" not in report.ssh_detail
+
+
+def test_a_connect_timeout_reports_ssh_own_words(tmp_path: Path) -> None:
+    runner = failing_ssh("ssh: connect to host web01.example port 22: Operation timed out")
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+    assert report.ssh_detail.endswith("Operation timed out")
+
+
+def test_the_notice_ssh_prints_for_a_newly_trusted_host_is_not_the_reason(
+    tmp_path: Path,
+) -> None:
+    # `accept-new` makes ssh print this on the first contact with a host. When
+    # the connection then fails for another reason it comes first on stderr,
+    # and reporting it as the cause would again send the user the wrong way.
+    stderr = (
+        "Warning: Permanently added 'web01.example' (ED25519) to the list of known hosts.\n"
+        "deploy@web01.example: Permission denied (publickey).\n"
+    )
+    report = PreflightOperation().check(make_context(failing_ssh(stderr), tmp_path))
+    assert "Permanently added" not in report.ssh_detail
+    assert "Permission denied" in report.ssh_detail
+
+
+def test_a_failure_with_no_stderr_still_says_something(tmp_path: Path) -> None:
+    report = PreflightOperation().check(make_context(failing_ssh("", returncode=1), tmp_path))
+    assert report.ssh_detail == "web01.example: ssh failed without saying why"
+
+
+def test_an_absurdly_long_stderr_line_cannot_wreck_the_row(tmp_path: Path) -> None:
+    report = PreflightOperation().check(make_context(failing_ssh("x" * 5000), tmp_path))
+    assert len(report.ssh_detail) <= 200
+    assert report.ssh_detail.endswith("...")
+
+
+def test_a_reason_exactly_at_the_limit_is_not_cut(tmp_path: Path) -> None:
+    host = "web01.example: "
+    reason = "y" * (200 - len(host))
+    report = PreflightOperation().check(make_context(failing_ssh(reason), tmp_path))
+    assert report.ssh_detail == host + reason
+
+
+def test_execute_still_reports_the_full_stderr(tmp_path: Path) -> None:
+    # The condensed form is for `doctor`'s one-line row only; the exception
+    # a failed sync raises keeps every line ssh printed.
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(make_context(failing_ssh(_CHANGED_HOST_KEY), tmp_path), {})
+    assert "eavesdropping" in str(caught.value)
+
+
 # --- `doctor` must be able to report the sanitize-table probe too ----------
 #
 # `check()` is documented never to raise, so every one of these exercises the
