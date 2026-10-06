@@ -114,6 +114,29 @@ def test_checkbox_asks_questionary_with_checked_defaults(
     assert [choice.checked for choice in choices] == [True, False]
 
 
+def test_a_picker_is_preceded_by_a_blank_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A question flush against the step line above it does not read as a
+    # question; this is the separation the owner asked for. Driving `_select`
+    # directly, because every other test in this file replaces it - here it is
+    # the thing under test, so questionary is replaced instead.
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(questionary, "select", lambda *_a, **_k: _FakeQuestion("production"))
+    assert prompts._select("Which target?", ["production"]) == "production"
+    assert capsys.readouterr().out == "\n"
+
+
+def test_no_blank_line_without_a_terminal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # With no terminal there is no question, so a stray newline would appear
+    # in a piped log for nothing.
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    assert prompts._select("Which target?", ["production"]) is None
+    assert capsys.readouterr().out == ""
+
+
 def test_no_prompt_is_attempted_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     """A prompt with nowhere to read from blocks forever; return instead.
 

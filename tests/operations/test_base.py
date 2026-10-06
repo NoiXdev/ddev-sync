@@ -127,6 +127,16 @@ def test_confirm_reads_the_answer_from_stdin(
     assert confirm("Continue?", subject="a destructive action") is expected
 
 
+def test_a_confirmation_is_preceded_by_a_blank_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The destructive confirmation is the prompt the owner saw flush against
+    # the `db.import` line above it.
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+    assert confirm("Continue?", subject="a destructive action") is True
+    assert capsys.readouterr().out == "\n"
+
+
 def test_ctrl_c_at_the_prompt_is_raised_as_an_interrupt_at_a_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

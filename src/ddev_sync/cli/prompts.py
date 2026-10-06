@@ -29,6 +29,10 @@ def _select(question: str, choices: list[str]) -> str | None:
     """Ask the user to pick one of `choices`, or `None` with no terminal."""
     if not sys.stdin.isatty():
         return None
+    # A blank line so the question separates from the step lines above it.
+    # After the guard, not before: with no terminal there is no question, and
+    # a stray newline would then appear in a piped log for no reason.
+    print()
     answer: str = questionary.select(question, choices=choices).unsafe_ask()
     return answer
 
@@ -45,6 +49,10 @@ def _checkbox(question: str, choices: list[str], defaults: list[str]) -> list[st
     """
     if not sys.stdin.isatty():
         return None
+    # A blank line so the question separates from the step lines above it.
+    # After the guard, not before: with no terminal there is no question, and
+    # a stray newline would then appear in a piped log for no reason.
+    print()
     options = [questionary.Choice(title=choice, checked=choice in defaults) for choice in choices]
     answer: list[str] = questionary.checkbox(question, choices=options).unsafe_ask()
     return answer

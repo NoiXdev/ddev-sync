@@ -45,6 +45,10 @@ def confirm(question: str, *, subject: str) -> bool:
     the middle of it, and would report as possible damage that did not happen.
     """
     try:
+        # A blank line so the question separates from the step lines above it.
+        # After the guard, not before: with no terminal there is no question, and
+        # a stray newline would then appear in a piped log for no reason.
+        print()
         answer = input(f"{question} [y/N] ").strip().lower()
     except KeyboardInterrupt as error:
         raise InterruptedAtPrompt from error
