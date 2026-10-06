@@ -103,10 +103,12 @@ def test_a_subdirectory_of_the_project_keeps_its_offset_under_the_mount_point() 
 
 
 def test_a_workdir_outside_the_project_is_rejected_rather_than_silently_mapped() -> None:
-    # Every call site passes `project.root`, `project.docroot_path` or a path
-    # `ExecutionContext.local` has already confined to the root, so this is a
-    # programming error - and guessing a mapping for it would run a command in
-    # whatever the container happens to have at that path.
+    # Call sites pass `project.root`, `project.docroot_path` or a path
+    # `ExecutionContext.local` has already confined to the root. Only the last
+    # is checked for confinement: `docroot_path` is built from the `docroot:`
+    # in `.ddev/config.yaml` unvalidated, so an absolute `docroot:` reaches
+    # here as a user error. Either way, guessing a mapping would run a command
+    # in whatever the container happens to have at that path.
     with pytest.raises(ValueError, match="is not inside the project"):
         web_command(
             project(root="/Users/me/code/acme"),

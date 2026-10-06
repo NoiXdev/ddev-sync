@@ -194,7 +194,7 @@ def test_a_workdir_under_a_symlinked_root_still_reaches_the_container_path(
     real_project = tmp_path / "real"
     symlink_project = tmp_path / "link"
     real_project.mkdir()
-    (real_project / ".ddev").mkdir(parents=True, exist_ok=True)
+    (real_project / ".ddev").mkdir()
     (real_project / ".ddev" / "config.yaml").write_text(
         "name: acme\ntype: php\ndocroot: public\n", encoding="utf-8"
     )
@@ -202,7 +202,7 @@ def test_a_workdir_under_a_symlinked_root_still_reaches_the_container_path(
     project = read_ddev_project(symlink_project)
     runner = ok_runner()
     context = replace(
-        make_context(runner, tmp_path, run="true"),
+        make_context(runner, tmp_path),
         project=project,
     )
     ExecOperation().execute(context, {"run": "true", "workdir": "public"})

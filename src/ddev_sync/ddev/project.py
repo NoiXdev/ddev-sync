@@ -23,6 +23,9 @@ class DdevProject:
     name: str
     type: str
     docroot: str
+    # Expected to be absolute and resolved: `transport/container.py` compares
+    # it lexically against other paths. `read_ddev_project` guarantees this;
+    # code that builds a `DdevProject` directly has to.
     root: Path
 
     @property
@@ -51,11 +54,11 @@ def read_ddev_project(project_root: Path) -> DdevProject:
 
     `root` is compared lexically against other paths - `transport/container.py`
     maps a workdir onto the container's mount point with `Path.relative_to`,
-    and the paths it compares come from `operations/base.py::resolve_local_path`,
-    which always returns a resolved path. A relative or symlinked
-    `--project-root` would therefore make a directory inside the project look
-    like one outside it. Resolving here, the one place a `DdevProject` is
-    built, is what keeps the two sides comparable.
+    and a workdir that came from `operations/base.py::resolve_local_path` (an
+    explicit `workdir:` in a setup command) is a resolved path. A relative or
+    symlinked `--project-root` would therefore make a directory inside the
+    project look like one outside it. Resolving here, the one place a
+    `DdevProject` is built, is what keeps the two sides comparable.
     """
     canonical_root = project_root.resolve()
     config_path = canonical_root / ".ddev" / "config.yaml"

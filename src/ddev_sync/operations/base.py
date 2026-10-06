@@ -167,19 +167,20 @@ def preview_local_path(root: Path, relative: str) -> Path:
     the same escape check as `resolve_local_path` without touching the
     filesystem.
 
-    The plan builder has no running project to inspect - `root` may not
-    exist yet, and `--dry-run` must render identically wherever it runs.
-    `resolve_local_path`'s `.resolve()` follows real symlinks, which makes it
-    sensitive to details of the machine it runs on that have nothing to do
-    with the configured value: on macOS, `/var` is a symlink to `/private/var`
-    and a project rooted there would render as `/private/var/...`; on Linux
-    it would not. A dry run is still useful protection against the thing
-    spec §1.1 and this fix actually care about - a `files.paths` entry whose
-    `local:` escapes the project root with a `../` - which plain lexical
-    normalisation (`os.path.normpath`) catches exactly as well, with no
-    filesystem access and no platform-dependent symlink surprises. The real
-    run still goes through `resolve_local_path`/`ExecutionContext.local`,
-    which remains the authoritative check.
+    `root` is already canonical here - `read_ddev_project` resolves it - so
+    the preview renders the resolved project root on every platform. What
+    `resolve_local_path`'s `.resolve()` would add on top is following a
+    symlink *inside* the configured `local:` suffix, which makes the result
+    depend on what happens to be on this machine's disk rather than on the
+    configured value: a dry run would then show a target the profile never
+    wrote, and one that differs between machines. A dry run is still useful
+    protection against the thing spec §1.1 and this fix actually care about -
+    a `files.paths` entry whose `local:` escapes the project root with a
+    `../` - which plain lexical normalisation (`os.path.normpath`) catches
+    exactly as well, with no filesystem access and no symlink surprises. The
+    real run still goes through `resolve_local_path`/`ExecutionContext.local`,
+    which remains the authoritative check, and which does follow such a
+    symlink.
     """
     normalized_root = Path(os.path.normpath(root))
     candidate = Path(os.path.normpath(normalized_root / relative))

@@ -15,7 +15,7 @@ def test_reads_name_type_and_docroot(tmp_path: Path) -> None:
     write_ddev_config(tmp_path, "name: acme-website\ntype: typo3\ndocroot: public\n")
     project = read_ddev_project(tmp_path)
     assert project == DdevProject(
-        name="acme-website", type="typo3", docroot="public", root=tmp_path
+        name="acme-website", type="typo3", docroot="public", root=tmp_path.resolve()
     )
 
 
@@ -113,4 +113,3 @@ def test_canonicalises_a_symlinked_root(tmp_path: Path) -> None:
     symlink_project.symlink_to(real_project)
     project = read_ddev_project(symlink_project)
     assert project.root == real_project.resolve()
-    assert project.root != symlink_project
