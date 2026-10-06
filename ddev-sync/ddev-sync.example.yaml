@@ -29,9 +29,9 @@ version: 1
 #     layout: plain           # plain | deployer
 
 # Or, when the project is deployed with Deployer, let it state the connection
-# instead of repeating it here, in place of the target above. `user`, `port`,
-# `path`, `layout` and `ssh_alias` must then not be set; `stage` is still
-# required. The connection is read from `dep config` in the web container, so
+# instead of repeating it here, in place of the target above. Beside the
+# block, `host`, `user`, `port`, `path`, `layout` and `ssh_alias` must then not
+# be set; `stage` is still required. The connection is read from `dep config` in the web container, so
 # the project has to be running.
 #   production:
 #     deployer:

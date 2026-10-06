@@ -236,9 +236,13 @@ Required coverage, under the repository's 100 % line-and-branch gate with
 
 **End to end**, by hand against `t3-13-ssg`, whose add-on is installed and
 whose `doctor` is green: replace the literal target with a `deployer:` block
-and confirm `targets`, the dry run and `doctor` agree with the literal version.
+and confirm the dry run and `doctor` agree with the literal version, and that
+`targets` shows the declaration rather than the resolution (see Amendment 1).
 That is the acceptance evidence for the whole feature, and it is available
-because the add-on was exercised against a real production host first.
+because the add-on was exercised against a real production host first. It has
+been done: the dry run resolved through `dep config` and printed the same
+endpoint and `deployer`-layout paths the literal target did, and `doctor` was
+fully green.
 
 ## Not in this design
 
@@ -263,12 +267,19 @@ spec that silently disagrees with the code is worse than no spec.
 
 *Replaces "Where the resolved values surface", first paragraph.*
 
-Both target listings perform no I/O, and must not start to: a stopped project
-has to be able to list its own configuration, and resolution needs the web
-container. For a `deployer:` target the listing therefore shows the block as
-written - the alias, or that the single host is meant - and marks it as a
-declaration. It does not show a hostname, because the configuration does not
-contain one.
+Both target listings perform no I/O, and must not start to: they read the
+configuration and nothing else, so they never run `dep config` and never
+contact anything remote. A listing that depended on resolution would depend on
+the project's own `deploy.php` evaluating cleanly, and a broken recipe would
+then hide the very configuration needed to fix it. For a `deployer:` target the
+listing therefore shows the block as written - `from deployer`, plus the alias
+when one is given - and does not show a hostname, because the configuration
+does not contain one.
+
+This is a property of the listing, not a promise that a stopped project stays
+stopped: invoked as `ddev sync targets`, the command is a DDEV service command,
+and DDEV starts the project to run one. That happens for every `ddev sync`
+invocation and is DDEV's behaviour, not the listing's.
 
 The resolved endpoint appears where work is already being done: in the dry-run
 header, and through `doctor`, which fails for such a target when resolution
@@ -302,8 +313,10 @@ the same job and follows the same rule: whichever of `host`, `ssh_alias` and
 rejection would have made it impossible to extend a literal target with a
 `deployer:` one, or the reverse, which is the very thing `extends` is for.
 
-Rejection applies **within one spec**, and across layers that define the same
-target name (which merge into one spec). Two consequences:
+Only a combination **with `deployer:`** is ever rejected: `host` together with
+`ssh_alias` stays allowed, with the alias winning, as before. The rejection
+applies **within one spec**, and across layers that define the same target name
+(which merge into one spec). Two consequences:
 
 - When `deployer:` wins, the weaker links' `user`, `port`, `path` and `layout`
   are dropped with the weaker `host`. That is the one place a value disappears
