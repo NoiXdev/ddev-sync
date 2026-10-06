@@ -1,8 +1,12 @@
 name: ddev-sync
 
 # The floor is the oldest DDEV this add-on is meant to run on; it is only
-# checked at install time.
-ddev_version_constraint: ">= v1.24.0"
+# checked at install time. It says v1.25 rather than v1.24 because two things
+# the add-on depends on were only established there: `ddev debug compose-config`
+# (which the pre-start hook uses, and whose location differs on 1.24.x) and an
+# `exec-host` hook being given DDEV_UID and DDEV_GID, verified on v1.25.4. A
+# floor is a claim users act on, so it names what has been exercised.
+ddev_version_constraint: ">= v1.25.0"
 
 project_files:
   - ddev-sync/ddev-sync.example.yaml

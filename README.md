@@ -61,8 +61,9 @@ ssh asks you to confirm the host; run `doctor` from a terminal for that.
 The user documentation (`NoiXdev/noix-docs`, in its ddev-sync section) walks
 through installation, the first sync and removal.
 
-Only macOS with Docker Desktop and DDEV v1.25.4 has been exercised. Linux,
-Colima, OrbStack, rootless Docker and DDEV 1.24.x have not, and no real sync
+The add-on declares **DDEV v1.25.0** as its floor, which is what it has been
+exercised against: only macOS with Docker Desktop and DDEV v1.25.4. Linux,
+Colima, OrbStack and rootless Docker have not been tried, and no real sync
 against a real remote host has yet been run through the add-on. The CI workflow
 that tests the add-on has not run yet either.
 
