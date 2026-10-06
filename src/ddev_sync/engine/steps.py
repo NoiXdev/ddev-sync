@@ -35,20 +35,22 @@ STEP_ORDER: tuple[StepKind, ...] = (
 )
 
 # What the default output shows instead of a command line. Kept beside the
-# enum rather than in the reporter so that adding a kind without describing it
-# fails in the module that defines it - the reporter would only print a blank
-# column. The text is English like every other string this tool prints; there
-# is no i18n layer.
+# enum so the table is read next to the kinds it describes.
+# `test_every_step_kind_has_a_description` is what enforces completeness: a
+# kind added without an entry would otherwise be a `KeyError` in the reporter's
+# `starting` in the middle of a sync - not a `DdevSyncError`, so it would reach
+# the user as a traceback. The text is English like every other string this
+# tool prints; there is no i18n layer.
 STEP_DESCRIPTIONS: dict[StepKind, str] = {
     StepKind.PREFLIGHT: "checking the connection, paths and free space",
     StepKind.DB_DUMP: "dumping the remote database",
-    StepKind.DB_DOWNLOAD: "fetching the dump",
+    StepKind.DB_DOWNLOAD: "nothing to fetch - db.dump streamed it already",
     StepKind.DB_IMPORT: "replacing the local database",
     StepKind.ENV: "updating the local env file",
     StepKind.FILES_SYNC: "syncing files from the remote",
-    StepKind.S3_SYNC: "syncing the S3 bucket",
-    StepKind.SANITIZE: "removing production data",
-    StepKind.SETUP: "running the project's setup commands",
+    StepKind.S3_SYNC: "pulling the S3 bucket",
+    StepKind.SANITIZE: "sanitizing the local database",
+    StepKind.SETUP: "running the setup commands",
 }
 
 ALWAYS: frozenset[StepKind] = frozenset({StepKind.PREFLIGHT})

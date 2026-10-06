@@ -99,3 +99,28 @@ def test_colour_marks_success_green_failure_red_and_notices_yellow() -> None:
     assert "\x1b[33m!\x1b[0m" in lines[3]
     # The padding stays outside the escapes, so every column still lines up.
     assert lines[0].index("db.dump") == lines[1].index("db.import")
+
+
+def test_a_hook_line_shows_its_own_command_not_its_parents_description() -> None:
+    # A hook keeps its parent's kind, but its command is the user's own, so the
+    # parent's fixed description would describe something that is not running.
+    reporter, lines = capture()
+    hook = PlannedStep(
+        index=1,
+        kind=StepKind.DB_IMPORT,
+        where="web",
+        detail="pre_db_import: ./scripts/backup.sh",
+        source="project",
+        is_hook=True,
+    )
+    reporter.starting(hook)
+    assert lines == ["  ..    db.import     pre_db_import: ./scripts/backup.sh"]
+    assert "replacing the local database" not in lines[0]
+
+
+def test_error_text_sits_under_the_step_name() -> None:
+    reporter, lines = capture()
+    reporter.finished(
+        StepOutcome(step=step(StepKind.DB_IMPORT), status="failed", error=DdevSyncError("boom"))
+    )
+    assert lines[1].index("boom") == lines[0].index("db.import")

@@ -580,6 +580,88 @@ def test_force_color_reaches_the_output_even_though_it_is_not_a_terminal(
     assert "\x1b[31mFAIL\x1b[0m" in output
 
 
+def _stub_sync_runner(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the project one files path and make every command a sync runs succeed.
+
+    The `files` step is only offered when the project has something to sync, and
+    no ssh or ddev is involved: the stubbed runner answers every command.
+    """
+    config = project / ".ddev" / "ddev-sync.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + "files:\n  paths:\n    - {remote: uploads/, local: uploads/}\n",
+        encoding="utf-8",
+    )
+
+    def run(
+        self: object,
+        argv: list[str],
+        *,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        stdout_path: Path | None = None,
+    ) -> CommandResult:
+        return CommandResult(tuple(argv), 0, "ddev-sync-ok\n", "")
+
+    monkeypatch.setattr("ddev_sync.transport.runner.SubprocessRunner.run", run)
+
+
+def test_force_color_colours_the_sync_markers_on_a_stream_that_is_not_a_terminal(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two things have to hold for this to pass: the decision reaches the
+    # reporter, and `click.echo` is told not to strip the escapes it writes to
+    # a stream that is not a terminal.
+    _stub_sync_runner(project, monkeypatch)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    assert invoke(project, tmp_path, "--yes", "--target", "production", "--steps", "files") == 0
+    output = capsys.readouterr().out
+    assert "\x1b[32mOK\x1b[0m" in output
+    # sanitize was not selected, so the unsanitized-data warning fires.
+    assert "\x1b[33m!\x1b[0m" in output
+    running = [line for line in output.splitlines() if line.lstrip().startswith("..")]
+    assert running
+    assert all("\x1b" not in line for line in running)
+
+
+def test_the_sync_output_stays_plain_when_it_is_not_a_terminal(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_sync_runner(project, monkeypatch)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    assert invoke(project, tmp_path, "--yes", "--target", "production", "--steps", "files") == 0
+    output = capsys.readouterr().out
+    assert "OK" in output
+    assert "\x1b" not in output
+
+
+def test_no_color_keeps_the_sync_output_plain_on_a_terminal(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # On a terminal `click.echo` does not strip escapes, so unlike the
+    # non-terminal case this is where a reporter that ignored the decision
+    # would show.
+    _stub_sync_runner(project, monkeypatch)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert invoke(project, tmp_path, "--yes", "--target", "production", "--steps", "files") == 0
+    output = capsys.readouterr().out
+    assert "OK" in output
+    assert "\x1b" not in output
+
+
 def test_a_deployer_target_is_resolved_and_synced_through_one_runner(
     project: Path,
     tmp_path: Path,

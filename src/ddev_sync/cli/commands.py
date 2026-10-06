@@ -87,7 +87,11 @@ def run_command(
     only_feature_setup: bool = False,
     colour: bool = False,
 ) -> int:
-    """Plan and, unless `dry_run`, execute a sync."""
+    """Plan and, unless `dry_run`, execute a sync.
+
+    `colour` is decided by the caller, which knows the real terminal and
+    environment; this function only passes it on to the reporter.
+    """
     plan = build_plan(
         target=context.target,
         project=context.project,

@@ -22,6 +22,8 @@ _MARK_WIDTH = 6
 _NAME_WIDTH = 14
 _RUNNING = ".."
 _MARKS = {"ok": "OK", "failed": "FAIL", "skipped": "--"}
+# Failure text sits under the step name, one column in from the marker.
+_ERROR_INDENT = " " * (2 + _MARK_WIDTH)
 _MARK_COLOURS = {"ok": Colour.GREEN, "failed": Colour.RED}
 
 
@@ -33,11 +35,14 @@ class ConsoleReporter:
         self._colour = colour
 
     def starting(self, step: PlannedStep) -> None:
-        """Announce a step that is about to run, and say what it will do."""
-        self._write(
-            f"  {_RUNNING:<{_MARK_WIDTH}}{step.kind.value:<{_NAME_WIDTH}}"
-            f"{STEP_DESCRIPTIONS[step.kind]}"
-        )
+        """Announce a step that is about to run, and say what it will do.
+
+        A hook keeps its parent's `kind` but is the user's own command, so the
+        parent's fixed description would be false for it; its `detail` is the
+        command itself.
+        """
+        what = step.detail if step.is_hook else STEP_DESCRIPTIONS[step.kind]
+        self._write(f"  {_RUNNING:<{_MARK_WIDTH}}{step.kind.value:<{_NAME_WIDTH}}{what}")
 
     def finished(self, outcome: StepOutcome) -> None:
         """Report how a step ended.
@@ -51,7 +56,7 @@ class ConsoleReporter:
         self._write(line.rstrip())
         if outcome.error is not None:
             for text in str(outcome.error).splitlines():
-                self._write(f"      {text}")
+                self._write(f"{_ERROR_INDENT}{text}")
 
     def notice(self, text: str) -> None:
         """Report something the user should read."""
