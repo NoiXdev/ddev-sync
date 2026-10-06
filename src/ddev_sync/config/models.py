@@ -40,6 +40,22 @@ class DeployerRef(BaseModel):
 
     host: str | None = None
 
+    @field_validator("host")
+    @classmethod
+    def _an_alias_has_to_name_a_host(cls, value: str | None) -> str | None:
+        # A blank or whitespace-only alias is not the same as omitting the
+        # key. Left to stand it produces two bad outcomes at once: the
+        # listing renders `from deployer: ` with a dangling separator, and
+        # resolution then fails with `Deployer has no host ''`, which names
+        # the symptom and not the mistake. Rejecting it here reports what is
+        # actually wrong, in the file where it was written.
+        if value is not None and not value.strip():
+            raise ValueError(
+                "'deployer.host' must name a host in the project's Deployer "
+                "configuration; omit the key entirely to let a single host be used"
+            )
+        return value
+
 
 # What a `deployer:` block supplies, and therefore what may not be written
 # beside it. `jump_host` and its siblings are deliberately absent: Deployer
@@ -78,6 +94,13 @@ class TargetSpec(BaseModel):
         # read as "the field is absent" - indistinguishable from a target that
         # never mentioned Deployer at all. The two mean different things, so
         # the null is normalised to an empty ref before validation.
+        #
+        # The key being present is all this can see, so it cannot tell that
+        # YAML shape from a Python caller passing `deployer=None` on purpose:
+        # `TargetSpec(**{**spec_dict, "deployer": None})` to *clear* a block
+        # sets an empty one instead. That is deliberate for the shape it was
+        # written for - a config file can only say it the YAML way - but in
+        # code the way to clear a block is to omit the key, not to null it.
         if isinstance(data, dict) and "deployer" in data and data["deployer"] is None:
             data = {**data, "deployer": {}}
         return data

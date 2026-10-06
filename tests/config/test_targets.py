@@ -457,6 +457,25 @@ def test_a_deployer_block_in_one_layer_and_literals_in_another_is_rejected() -> 
         )
 
 
+@pytest.mark.parametrize("alias", ["", "   ", "\t"])
+def test_a_blank_deployer_alias_is_rejected_where_it_was_written(alias: str) -> None:
+    # Accepting it costs twice: the listing renders `from deployer: ` with a
+    # dangling separator, and resolution then reports `Deployer has no host
+    # ''`, which names neither the file nor the mistake. The assertion is on
+    # the validator's own sentence, since pydantic echoes the input dict.
+    with pytest.raises(TargetError, match=r"must name a host in the project's Deployer"):
+        collected_from({"prod": {"deployer": {"host": alias}, "stage": "production"}})
+
+
+def test_a_deployer_block_with_no_alias_at_all_is_still_fine() -> None:
+    # The counterpart to the test above: rejecting a blank alias must not
+    # reject an omitted one, which is the documented way to say "there is
+    # only one host".
+    spec = collected_from({"prod": {"deployer": {}, "stage": "production"}})["prod"].spec
+    assert spec.deployer is not None
+    assert spec.deployer.host is None
+
+
 def test_deployer_beside_a_jump_host_is_allowed() -> None:
     # Deployer carries no canonical field for a bastion, so there is nothing
     # for the block to supply and no conflict to have. Rejecting it would put
