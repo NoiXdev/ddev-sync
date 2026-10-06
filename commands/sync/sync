@@ -28,4 +28,11 @@
 #
 # It comes before "$@" so that a developer who passes their own --home still
 # wins: the engine takes the last occurrence of the flag.
+#
+# Worth knowing while debugging the sidecar: `ddev exec -s sync ddev-sync ...`
+# bypasses this file and therefore this flag, so the engine looks for the
+# global layer under the container's own home, finds nothing, and reports
+# "No sync targets are defined." - which is the very symptom the mount exists
+# to prevent. Reach for `ddev sync ...` instead; it is the only form that
+# carries the flag.
 ddev-sync --home /mnt/ddev-sync-host-home "$@"

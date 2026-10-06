@@ -35,14 +35,18 @@ setup() {
   mkdir -p "${HOME}/tmp"
   TESTDIR="$(mktemp -d "${HOME}/tmp/${PROJNAME}.XXXXXX")"
 
-  # The engine resolves its global configuration layer from the home directory
-  # it runs in, and what the add-on has to make true is that this is the
-  # developer's own home: ~/.ddev/ddev-sync/config.yaml and no other path. So
-  # the suite writes that real path rather than a temporary stand-in, and puts
-  # back whatever was there. The three variables are exported before anything
-  # that can fail, because teardown has to restore even after a setup that died
-  # half way; GLOBAL_WRITTEN is what tells teardown that the file below is the
-  # suite's to delete and not the developer's.
+  # This writes the developer's real ~/.ddev/ddev-sync/config.yaml and puts back
+  # whatever was there. Not because the engine insists on that path - it reads
+  # whatever `--home` names - but because both alternatives are worse here. A
+  # stand-in home outside $HOME is not shared with Docker's VM on macOS, for the
+  # reason given just above, so the mount would come up empty; and overriding
+  # HOME wholesale would move DDEV's own global_config.yaml with it, changing
+  # what the ssh-agent test is testing.
+  #
+  # The three variables are exported before anything that can fail, because
+  # teardown has to restore even after a setup that died half way;
+  # GLOBAL_WRITTEN is what tells teardown that the file below is the suite's to
+  # delete and not the developer's.
   export GLOBAL_CONFIG="${HOME}/.ddev/ddev-sync/config.yaml"
   export GLOBAL_BACKUP=""
   export GLOBAL_WRITTEN=""

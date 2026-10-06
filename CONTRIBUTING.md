@@ -51,6 +51,19 @@ minutes, because it builds the container image and starts a project. `--filter-t
 '!release'` leaves out the one test that installs from a published release, which
 cannot pass until there is one.
 
+It is not hermetic, and two of the things it touches are yours. It deletes any DDEV
+project named `ddevsync-bats`, and it temporarily replaces
+`~/.ddev/ddev-sync/config.yaml` with a target of its own, putting your file back
+afterwards — the add-on's whole point is that the engine reads that path, so there is
+nowhere else to prove it from. Every failure bats can trap restores it; a `kill -9`
+cannot, and leaves yours beside it as `config.yaml.bats-backup.*`. If you ever find
+one of those, that is where your targets went.
+
+While debugging the sidecar by hand, reach for `ddev sync` rather than
+`ddev exec -s sync ddev-sync`. The latter skips `commands/sync/sync`, and with it the
+`--home` that points the engine at your global configuration, so it reports no
+targets however correct the mount is.
+
 **Run it for any change under the add-on packaging** — `install.yaml`,
 `docker-compose.ddev-sync.yaml`, `config.ddev-sync.yaml`, `ddev-sync/` or
 `commands/` — because it is the only test in this repository that exercises
