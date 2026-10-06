@@ -221,7 +221,8 @@ def _from_wp_cli(context: ExecutionContext) -> RemoteCredentials:
     remote_root = context.remote_code("")
     gets = " && ".join(f"wp config get {key}" for key in _WP_CREDENTIAL_KEYS)
     script = f"cd {shlex.quote(remote_root)} && {gets} && {_WP_TABLE_PREFIX_GET}"
-    # The output is the database password, alone on a line.
+    # The output is five lines - name, user, password, host, table prefix - so the
+    # database password is one of them, among values nobody has registered yet.
     result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]), sensitive=True)
     if not result.ok:
         raise OperationError(

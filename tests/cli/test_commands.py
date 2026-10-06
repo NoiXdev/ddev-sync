@@ -780,6 +780,61 @@ def test_the_secrets_set_is_handed_to_the_execution_context_not_copied(
     assert execution.secrets is secrets
 
 
+@pytest.mark.parametrize("flag", ["-vv", "-vvv"])
+def test_a_production_password_read_during_the_run_is_scrubbed_from_later_output(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str,
+) -> None:
+    """The one place a one-word edit is a security regression.
+
+    `run_command` creates one set and hands it to the narrator and to the
+    execution context. The password is registered on the context's side after
+    the credential read, long after the narrator was built, so the two must
+    hold the same object: `secrets=set(secrets)` at either hand-off would
+    leave this password on the screen, and no test of either side alone would
+    notice. The read itself is `sensitive`, so it is withheld; the password
+    then comes back in a later command's stderr, which is what gets scrubbed.
+    """
+    password = "hunter2-production-only"
+    env_file = (
+        "/srv/app/.env\n"
+        "DATABASE_NAME=app\nDATABASE_USER=deploy\n"
+        f"DATABASE_PASSWORD={password}\n"
+        "DATABASE_HOST=db.internal\nDATABASE_PORT=3306\n"
+    )
+
+    def run(
+        self: object,
+        argv: list[str],
+        *,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        stdout_path: Path | None = None,
+        sensitive: bool = False,
+        passthrough: bool = False,
+    ) -> CommandResult:
+        if sensitive:
+            return CommandResult(tuple(argv), 0, env_file, "")
+        if stdout_path is not None:
+            stdout_path.parent.mkdir(parents=True, exist_ok=True)
+            stdout_path.write_text("-- Dump completed\n", encoding="utf-8")
+            return CommandResult(tuple(argv), 0, "", f"using password {password}\n")
+        return CommandResult(tuple(argv), 0, "ddev-sync-ok\n", "")
+
+    _configure(project, "database:\n  remote_credentials: env\n")
+    monkeypatch.setattr("ddev_sync.transport.runner.SubprocessRunner.run", run)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    code = invoke(project, tmp_path, flag, "--yes", "--target", "production", "--steps", "db")
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "using password ***" in output
+    assert password not in output
+
+
 def test_a_deployer_target_is_resolved_and_synced_through_one_runner(
     project: Path,
     tmp_path: Path,

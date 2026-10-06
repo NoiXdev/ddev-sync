@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations.base import ExecutionContext, OperationError, PathEscapesProject
 from ddev_sync.operations.files import FilePair, FilesRsyncOperation, validate_path_pairs
 from ddev_sync.transport.fake import FakeCommandRunner
+from ddev_sync.transport.runner import CommandResult
 
 
 def make_context(
@@ -202,6 +204,44 @@ def test_a_failed_passthrough_rsync_still_reports_its_stderr(tmp_path: Path) -> 
     # Passthrough inherits stdout only. stderr stays captured precisely so
     # this message keeps working.
     runner = FakeCommandRunner()
+    runner.script_prefix(["rsync"], returncode=23, stderr="rsync: link_stat failed")
+    context = replace(make_context(runner, tmp_path), stdout_is_terminal=True)
+    with pytest.raises(OperationError) as caught:
+        FilesRsyncOperation().execute(context, PAIR)
+    assert "link_stat failed" in str(caught.value)
+
+
+class _StdoutIsTheTerminals(CommandResult):
+    """A result whose stdout may not be read, as a passthrough call's cannot.
+
+    The fake already returns `""` for a passthrough call, which a caller that
+    did read it would take for "rsync printed nothing" and carry on.
+    """
+
+    @property
+    def stdout(self) -> str:
+        raise AssertionError("stdout was handed to the terminal; there is nothing to read")
+
+    @stdout.setter
+    def stdout(self, _value: str) -> None:
+        """Accept the dataclass constructor's assignment and discard it."""
+
+
+class _TrappedStdoutRunner(FakeCommandRunner):
+    def run(self, argv: Sequence[str], **kwargs: Any) -> CommandResult:
+        result = super().run(argv, **kwargs)
+        return _StdoutIsTheTerminals(result.argv, result.returncode, "", result.stderr)
+
+
+def test_a_successful_passthrough_rsync_does_not_read_stdout(tmp_path: Path) -> None:
+    runner = _TrappedStdoutRunner()
+    runner.script_prefix(["rsync"])
+    context = replace(make_context(runner, tmp_path), stdout_is_terminal=True)
+    FilesRsyncOperation().execute(context, PAIR)
+
+
+def test_a_failed_passthrough_rsync_does_not_read_stdout_either(tmp_path: Path) -> None:
+    runner = _TrappedStdoutRunner()
     runner.script_prefix(["rsync"], returncode=23, stderr="rsync: link_stat failed")
     context = replace(make_context(runner, tmp_path), stdout_is_terminal=True)
     with pytest.raises(OperationError) as caught:

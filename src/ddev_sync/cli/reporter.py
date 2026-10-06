@@ -40,7 +40,8 @@ class ConsoleReporter:
     def starting(self, step: PlannedStep) -> None:
         """Announce a step that is about to run, and say what it will do.
 
-        From `-v` up every step shows its `detail`, the command it runs. Below
+        From `-v` up every step shows its `detail`: its plan detail, as the dry
+        run prints it, which is the command line only for some kinds. Below
         that a step shows its kind's fixed description - except a hook, which
         keeps its parent's `kind` but is the user's own command, so the
         parent's description would be false for it; its `detail` is the command

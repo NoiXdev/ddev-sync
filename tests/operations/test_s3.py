@@ -193,3 +193,11 @@ def test_the_secret_never_appears_in_the_error(tmp_path: Path) -> None:
             make_context(runner, tmp_path), {"remote": REMOTE, "local": LOCAL}
         )
     assert "remote-secret" not in str(caught.value)
+
+
+def test_both_secret_keys_are_registered_for_the_narrator_to_scrub(tmp_path: Path) -> None:
+    # rclone's stderr can carry them, and at `-vv` the narrator prints that
+    # stderr before this operation's own failure path redacts it.
+    context = make_context(ok_runner(), tmp_path)
+    S3SyncOperation().execute(context, {"remote": REMOTE, "local": LOCAL})
+    assert context.secrets == {"remote-secret", "ddevminio"}

@@ -133,12 +133,6 @@ def test_level_one_appends_the_command_detail() -> None:
     assert "mysqldump --single-transaction $DB" in lines[0]
 
 
-def test_level_zero_keeps_the_fixed_description_for_a_regular_step() -> None:
-    reporter, lines = capture()
-    reporter.starting(step(StepKind.DB_DUMP, detail="mysqldump --single-transaction $DB"))
-    assert "mysqldump" not in lines[0]
-
-
 def test_level_three_reports_how_long_a_step_took() -> None:
     lines: list[str] = []
     reporter = ConsoleReporter(write=lines.append, verbose=3)

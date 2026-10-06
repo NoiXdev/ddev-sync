@@ -111,6 +111,11 @@ class S3SyncOperation:
         """Copy, or with `delete: true` sync, remote bucket to local."""
         remote = _endpoint(context, params, "remote")
         local = _endpoint(context, params, "local")
+        # rclone's stderr can carry these - the failure path below redacts
+        # them out of its own message for that reason. Registering them is
+        # what also covers the narrator at `-vv`, which prints that same
+        # stderr before this operation ever sees it.
+        context.secrets.update({remote.secret_key, local.secret_key})
         subcommand = "sync" if params.get("delete", False) else "copy"
         result = context.runner.run(
             [

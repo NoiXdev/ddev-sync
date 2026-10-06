@@ -125,7 +125,7 @@ class _Options:
     "-v",
     "--verbose",
     count=True,
-    help="Show more: -v the commands, -vv their output, -vvv the full argv and timings.",
+    help="Show more: -v each step's plan detail, -vv command output, -vvv argv and timings.",
 )
 @click.option(
     "--dry-run",
@@ -327,8 +327,9 @@ def targets_cmd(options: _Options) -> int:
 def doctor_cmd(options: _Options) -> int:
     """Run the preflight checks against a target and print a checklist."""
     context = _build_run_context(options)
-    # The one place the real environment and the real stdout are consulted;
-    # everything below this call receives the answer as a plain boolean.
+    # The real environment and the real stdout are consulted here, at the
+    # edge, as `_run` does too; nothing below this call sniffs them, it
+    # receives the answer as a plain boolean.
     #
     # Inside the DDEV add-on this follows the terminal only: DDEV allocates a
     # TTY for a service command when stdin and stdout are both terminals, and
