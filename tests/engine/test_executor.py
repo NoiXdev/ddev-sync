@@ -394,6 +394,42 @@ def test_an_interrupt_before_the_import_does_not_warn_about_data(tmp_path: Path)
     assert message == "Interrupted during db.dump, before the first step finished."
 
 
+def test_a_sanitize_only_rerun_interrupted_says_what_it_cannot_know(tmp_path: Path) -> None:
+    """`--steps sanitize` is the remedy the two definite warnings recommend,
+    and it was the one blind spot: the data branch required DB_IMPORT among
+    the finished steps, so an interrupt halfway through a sanitize-only
+    re-run said "Interrupted during sanitize, after preflight." and nothing
+    at all about the data. This run cannot know what the database holds - the
+    import was in an earlier one - so the sentence is conditional rather than
+    absent, and still carries the remedy.
+    """
+    message = interrupted_message(
+        interrupting_executor(StepKind.SANITIZE),
+        plan_of(step(1, StepKind.PREFLIGHT), step(2, StepKind.SANITIZE)),
+        context_at(tmp_path),
+    )
+    assert message.startswith("Interrupted during sanitize, after preflight.")
+    assert "Sanitizing did not finish" in message
+    assert "if the local database holds production data" in message
+    assert "may be only partly sanitized" in message
+    assert "--steps sanitize" in message
+    # It must claim no more than that: nothing here knows the database *was*
+    # replaced, and saying so would be the false alarm the hedge exists for.
+    assert "has been replaced" not in message
+
+
+def test_a_sanitize_only_rerun_that_finished_sanitizing_says_nothing(tmp_path: Path) -> None:
+    # The conditional sentence is about sanitizing having been cut short. A
+    # run that got through it has nothing left to warn about, whatever an
+    # earlier run imported.
+    message = interrupted_message(
+        interrupting_executor(StepKind.SETUP),
+        plan_of(step(1, StepKind.SANITIZE), step(2, StepKind.SETUP)),
+        context_at(tmp_path),
+    )
+    assert message == "Interrupted during setup, after sanitize."
+
+
 def test_an_interrupt_once_sanitizing_finished_does_not_warn(tmp_path: Path) -> None:
     message = interrupted_message(
         interrupting_executor(StepKind.SETUP),
@@ -501,6 +537,14 @@ def test_an_interrupt_during_the_import_says_the_database_may_be_partly_replaced
     # finished step" alone would stay silent about: nothing has finished
     # that touches the database, yet it may be half-replaced. "May", because
     # an interrupt cannot say how far the import got.
+    #
+    # The fake operation raises at the entry of `execute`, so this pins the
+    # message for "the import step was running and was not at its prompt" and
+    # nothing finer - it cannot tell one instant inside the step from
+    # another. What makes the message true of every such instant is the
+    # operation's own ordering (the drop before any rewrite of the dump),
+    # which `tests/operations/test_db_import.py::
+    # test_the_dump_is_rewritten_after_the_drop_and_before_the_import` pins.
     message = interrupted_message(
         interrupting_executor(StepKind.DB_IMPORT),
         plan_of(step(1, StepKind.DB_DUMP), step(2, StepKind.DB_IMPORT)),

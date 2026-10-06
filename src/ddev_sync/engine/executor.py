@@ -71,6 +71,13 @@ class Executor:
         user asked everything to stop, and running further commands after
         that would be the tool deciding it knows better. The error says so
         when hooks were configured, rather than leaving that to be inferred.
+
+        That is about an interrupt during the *steps*. The `post_sync` call
+        itself is nevertheless inside the same `try` - see the `except`'s own
+        comment - so that an interrupt raised *in* a hook is still reported
+        as an interrupt, with what the finished steps left behind. "Hooks do
+        not run" and "an interrupt in the hooks still reports" are both true;
+        they are about the two sides of the same call.
         """
         for text in plan.notices:
             self.reporter.notice(text)
@@ -78,6 +85,12 @@ class Executor:
         outcomes: list[StepOutcome] = []
         stopped = False
         in_post_sync = False
+        # Initialised here, not only inside the `try`: it is assigned before
+        # `_run_post_sync` and the `except` below always raises, so today the
+        # `return` can only be reached with it bound. That is a guarantee one
+        # edit away from failing as an `UnboundLocalError` at run time instead
+        # of a type error at commit time, which is the wrong place to find out.
+        failed = False
         try:
             for step in plan.steps:
                 if stopped:
@@ -220,6 +233,13 @@ def _interrupted_message(
     either must say nothing about data at all - a warning that fires when it
     did not would teach people to ignore it.
 
+    Sanitizing interrupted in a run that did no import of its own is the one
+    case where neither "nothing to say" nor a definite claim is right: a
+    `--steps sanitize` re-run cannot see what an earlier run left, so the
+    sentence is conditional ("if the local database holds production data").
+    Silence there would have been a blind spot in exactly the follow-up this
+    message recommends.
+
     `at_prompt` means the running step was only waiting for a confirmation,
     so it has changed nothing: the "possibly part-way" claims about it are
     dropped. What *finished* steps left behind is still true and still said -
@@ -264,5 +284,18 @@ def _interrupted_message(
             f" The local database has been replaced with production data and was {state}"
             " - re-run with --steps sanitize, or treat this copy as production"
             " data until you have."
+        )
+    elif mid_work is StepKind.SANITIZE:
+        # Sanitizing was interrupted in a run that did not import: `ddev sync
+        # --steps sanitize`, which is the very remedy the two branches above
+        # recommend. This run cannot know what the database holds - the import
+        # it would have read that from happened in an earlier one - so the
+        # claim is conditional on what only the user can see. Saying nothing
+        # was the worse of the two errors available: the state is unknown, not
+        # known to be fine, and the remedy is the same either way.
+        message += (
+            " Sanitizing did not finish, so if the local database holds production data"
+            " it may be only partly sanitized - re-run with --steps sanitize, or treat"
+            " this copy as production data until you have."
         )
     return message + post_sync_note
