@@ -220,6 +220,15 @@ def _group_produces_work(
     wrongly, so it counts as available: it belongs in the menu, and the error
     surfaces where that group is really planned, with the message it has
     always had. Nothing is swallowed, only deferred to the place that owns it.
+
+    One consequence is worth knowing before it surprises someone: a malformed
+    `hooks.pre_sync` makes *every* group available. `pre_sync` is a global
+    hook and attaches to PREFLIGHT, which is in `StepKind.ALWAYS` and so part
+    of every group's throwaway plan, so each probe raises and each one is
+    answered "available". It is self-limiting - the run then fails
+    immediately with that hook's own error, whichever group was picked - but
+    a full menu on a project that has work for one group is not what a reader
+    of this function would predict.
     """
     try:
         plan = build_plan(

@@ -1,4 +1,8 @@
-"""The exception hierarchy. Every error this tool raises deliberately is one of these."""
+"""The exception hierarchy. Every error this tool raises deliberately is one of
+these, with one deliberate exception: `InterruptedAtPrompt` at the bottom of
+this file is a `KeyboardInterrupt`, not a `DdevSyncError`, because it has to
+keep travelling like the interrupt it reports (see its own docstring).
+"""
 
 
 class DdevSyncError(Exception):
@@ -44,8 +48,12 @@ class DeployerError(DdevSyncError):
 class SyncInterrupted(DdevSyncError):
     """The user interrupted a sync part-way through.
 
-    Carries what had already completed, because the state a half-finished
-    sync leaves behind is the only thing worth saying at that moment.
+    Its message is a formatted sentence, built by
+    `engine.executor._interrupted_message` from what had already completed -
+    not the outcomes themselves. The state a half-finished sync leaves behind
+    is the only thing worth saying at that moment, and `main` prints this
+    string as-is, so the wording is decided where the progress is known
+    rather than here.
     """
 
 
