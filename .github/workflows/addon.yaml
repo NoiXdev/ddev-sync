@@ -1,9 +1,14 @@
 name: Add-on
 
 on:
-  # Every branch, as in ci.yaml, and for the same reason. `workflow_dispatch`
-  # is here so the job can be run by hand once the file is on GitHub.
+  # Every branch, as in ci.yaml, and for the same reason. The branch filter is
+  # what keeps a bare `push:` from firing on tags as well: a release tag would
+  # otherwise build an image and start a DDEV project for nothing, since this
+  # job tests the add-on against the checkout it is run from and a tag has no
+  # more to say about that than its branch did. `workflow_dispatch` is here so
+  # the job can be run by hand once the file is on GitHub.
   push:
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 
@@ -71,5 +76,19 @@ jobs:
       - name: Install from the checkout, use it, remove it
         run: bats tests/test.bats --filter-tags '!release' --print-output-on-failure
 
+      # This step's whole value is that the release test is wired in, so it has
+      # to fail if the selection stops reaching it - a typo in
+      # `# bats test_tags=release` must not quietly empty the step. Bats 1.14,
+      # the version pinned above, does exit 1 on a selection that matches
+      # nothing, but that is a property of the runner rather than of this
+      # workflow, so the TAP plan is asserted here: exactly one test selected,
+      # and that one skipped rather than run. The day the release exists, the
+      # `# skip` assertion is what has to be taken out.
       - name: Install from a release
-        run: bats tests/test.bats --filter-tags release
+        run: |
+          out="$(bats tests/test.bats --filter-tags release --formatter tap)"
+          echo "${out}"
+          grep -qx '1\.\.1' <<<"${out}" \
+            || { echo "the release test was not selected - check its test_tags" >&2; exit 1; }
+          grep -q '^ok 1 .* # skip' <<<"${out}" \
+            || { echo "the release test did not skip" >&2; exit 1; }
