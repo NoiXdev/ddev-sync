@@ -629,14 +629,17 @@ def test_rows_that_were_not_probed_are_left_out() -> None:
 
 
 def test_render_doctor_shows_the_host_beside_a_working_ssh_connection() -> None:
+    # A detail that differs from the target's host, so a renderer that ignored
+    # `ssh_detail` and printed the host itself would not pass.
     report = PreflightReport(
-        ssh_ok=True, remote_path_ok=True, free_bytes=50 * 1024**3, ssh_detail="web01.example"
+        ssh_ok=True, remote_path_ok=True, free_bytes=50 * 1024**3, ssh_detail="reached via bastion"
     )
     line = next(
         line for line in render_doctor(report, _target()).splitlines() if "ssh connection" in line
     )
     assert line.strip().startswith("OK")
-    assert line.endswith("web01.example")
+    assert line.endswith("reached via bastion")
+    assert "web01.example" not in line
 
 
 def test_render_doctor_shows_why_the_ssh_connection_failed() -> None:

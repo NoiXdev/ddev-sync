@@ -341,6 +341,21 @@ class PreflightOperation:
 
 _MAX_DETAIL = 200
 
+# Lines ssh prints on stderr that are never the reason a connection failed:
+# - `Warning:` is the notice `accept-new` prints on the first contact with a
+#   host ("Permanently added ..."). When the connection then fails for another
+#   reason it is the first thing on stderr, and reporting it as the cause would
+#   send the user the wrong way once more.
+# - `**` starts OpenSSH 10.1+'s three-line post-quantum notice, printed for
+#   every connection to a server that offers no post-quantum key exchange - so
+#   the image's 10.3 prints it ahead of a real `Permission denied`.
+_NOISE_PREFIXES = ("Warning:", "**")
+
+# What ssh prints in place of an address for a connection that went through a
+# proxy (`-J`). The line carries no information and, being last, would push the
+# real verdict out of the two lines `_one_line_reason` keeps.
+_PROXY_PLACEHOLDER = "UNKNOWN port 65535"
+
 
 def _one_line_reason(stderr: str) -> str:
     """Condense ssh's stderr into the one line that names why it failed.
@@ -348,30 +363,34 @@ def _one_line_reason(stderr: str) -> str:
     ssh's verdict is at the end: its last line, or last two when the cause
     is split in them. A changed host key prints a dozen lines of banner and
     advice that end `Host key for H has changed and you have requested strict
-    checking.` and `Host key verification failed.`, and a jump host that times
-    out prints `Connection timed out during banner exchange` followed by the
-    second line that completes it. Anything earlier is context that a
-    checklist row has no room for - and the full text is still what a failed
-    sync reports.
+    checking.` and `Host key verification failed.` - and it is the first of
+    those that tells a changed key from a jump host's unknown one, which ends
+    in the second alone. Anything earlier is context that a checklist row has
+    no room for; the full text is still what a failed sync reports.
 
-    `Warning:` lines are dropped first. With `accept-new`, ssh prints
-    `Warning: Permanently added ...` on the first contact with a host, and
-    when the connection then fails for another reason that notice is the first
-    thing on stderr - reporting it as the cause would send the user
-    the wrong way once more.
+    Lines that are never the cause (`_NOISE_PREFIXES`, `_PROXY_PLACEHOLDER`)
+    are dropped first.
     """
     lines = [line.strip() for line in stderr.splitlines()]
-    kept = [line for line in lines if line and not line.startswith("Warning:")]
+    kept = [
+        line
+        for line in lines
+        if line and not line.startswith(_NOISE_PREFIXES) and _PROXY_PLACEHOLDER not in line
+    ]
     if not kept:
         return "ssh failed without saying why"
     return " ".join(kept[-2:])
 
 
 def _clip(text: str) -> str:
-    """Cap a detail so a pathological stderr cannot wreck `doctor`'s layout."""
+    """Cap a detail so a pathological stderr cannot wreck `doctor`'s layout.
+
+    Cuts from the front: the verdict is at the end of ssh's output, and it is
+    the part that must survive.
+    """
     if len(text) <= _MAX_DETAIL:
         return text
-    return text[: _MAX_DETAIL - 3] + "..."
+    return "..." + text[-(_MAX_DETAIL - 3) :]
 
 
 def _required_tables(rules: list[SanitizeRule]) -> list[tuple[str, str]]:

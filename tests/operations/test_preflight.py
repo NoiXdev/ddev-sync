@@ -450,15 +450,56 @@ def test_the_notice_ssh_prints_for_a_newly_trusted_host_is_not_the_reason(
     assert "Permission denied" in report.ssh_detail
 
 
+def test_the_post_quantum_notice_is_not_the_reason_either(tmp_path: Path) -> None:
+    # OpenSSH 10.1 and later, which the image ships, print this on stderr for
+    # every connection to a server without a post-quantum key exchange - the
+    # exact wording below is what 10.3 printed against such a server.
+    stderr = (
+        "Warning: Permanently added '[web01.example]:22' (ED25519) to the list of known hosts.\n"
+        "** WARNING: connection is not using a post-quantum key exchange algorithm.\n"
+        '** This session may be vulnerable to "store now, decrypt later" attacks.\n'
+        "** The server may need to be upgraded. See https://openssh.com/pq.html\n"
+        "deploy@web01.example: Permission denied (publickey).\n"
+    )
+    report = PreflightOperation().check(make_context(failing_ssh(stderr), tmp_path))
+    assert report.ssh_detail == (
+        "web01.example: deploy@web01.example: Permission denied (publickey)."
+    )
+
+
+def test_a_jump_hosts_unknown_key_is_reported_without_the_proxy_placeholder(
+    tmp_path: Path,
+) -> None:
+    # Through `-J` ssh ends with a line about "UNKNOWN port 65535", the
+    # placeholder for a connection that has no address of its own. It says
+    # nothing, and left in it would push the real verdict out of the last two.
+    stderr = "Host key verification failed.\nConnection closed by UNKNOWN port 65535\n"
+    report = PreflightOperation().check(make_context(failing_ssh(stderr), tmp_path))
+    assert report.ssh_detail == "web01.example: Host key verification failed."
+
+
+def test_a_changed_key_behind_a_jump_host_still_says_it_changed(tmp_path: Path) -> None:
+    stderr = _CHANGED_HOST_KEY + "Connection closed by UNKNOWN port 65535\n"
+    report = PreflightOperation().check(make_context(failing_ssh(stderr), tmp_path))
+    assert "has changed" in report.ssh_detail
+    assert report.ssh_detail.endswith("Host key verification failed.")
+
+
 def test_a_failure_with_no_stderr_still_says_something(tmp_path: Path) -> None:
     report = PreflightOperation().check(make_context(failing_ssh("", returncode=1), tmp_path))
     assert report.ssh_detail == "web01.example: ssh failed without saying why"
 
 
-def test_an_absurdly_long_stderr_line_cannot_wreck_the_row(tmp_path: Path) -> None:
-    report = PreflightOperation().check(make_context(failing_ssh("x" * 5000), tmp_path))
+def test_an_absurdly_long_stderr_line_is_cut_from_the_front_not_the_verdict(
+    tmp_path: Path,
+) -> None:
+    # ssh's verdict is the end of its output, so when something has to go it is
+    # the beginning that goes.
+    stderr = "y" * 5000 + " Host key verification failed."
+    report = PreflightOperation().check(make_context(failing_ssh(stderr), tmp_path))
     assert len(report.ssh_detail) <= 200
-    assert report.ssh_detail.endswith("...")
+    assert report.ssh_detail.startswith("...")
+    assert report.ssh_detail.endswith("Host key verification failed.")
 
 
 def test_a_reason_exactly_at_the_limit_is_not_cut(tmp_path: Path) -> None:
