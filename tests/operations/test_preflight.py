@@ -10,7 +10,6 @@ from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations import preflight
 from ddev_sync.operations.base import ExecutionContext, OperationError
-from ddev_sync.operations.database import LOCAL_DB_TLS_OPTION
 from ddev_sync.operations.preflight import MIN_FREE_BYTES, PreflightOperation, PreflightReport
 from ddev_sync.transport.container import web_command
 from ddev_sync.transport.fake import FakeCommandRunner
@@ -781,11 +780,12 @@ def test_check_reports_a_usable_agent_socket(
     assert "proxy-socket" in report.agent_detail
 
 
-def test_the_remote_table_probe_does_not_disable_tls(tmp_path: Path) -> None:
-    # The local clients relax TLS because no DDEV certificate can be verified.
-    # This probe is the opposite case: it runs through ssh on the production
-    # host, with that host's client and its own TLS policy, so carrying the
-    # option across would weaken a connection we do not own.
+def test_the_remote_table_probe_does_not_relax_tls(tmp_path: Path) -> None:
+    # The local clients relax TLS verification because DDEV's own server either
+    # has no certificate or a self-signed one. This probe is the opposite case:
+    # it runs through ssh on the production host, with that host's client and
+    # its own TLS policy, so carrying any such option across would weaken a
+    # connection we do not own.
     runner = healthy_runner()
     runner.script_prefix(["ssh"], stdout="users\n")
     context = context_with_rules(
@@ -798,4 +798,9 @@ def test_the_remote_table_probe_does_not_disable_tls(tmp_path: Path) -> None:
     # probe's own flags live in that string rather than in the argv.
     probe = runner.calls[1][-1]
     assert "SHOW TABLES" in probe
-    assert LOCAL_DB_TLS_OPTION not in probe
+    # The literal prefix, not `LOCAL_DB_TLS_OPTION`: `--skip-ssl` is a prefix of
+    # the option the engine passes, so this one substring catches both
+    # spellings. Asserting the constant would let the older, blunter `--skip-ssl`
+    # reach the remote probe unnoticed - verified by injecting it, which the
+    # constant-based assertion did not catch.
+    assert "--skip-ssl" not in probe

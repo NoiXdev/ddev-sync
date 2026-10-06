@@ -40,10 +40,11 @@ services:
     image: mariadb:11
     # `--skip-ssl`, so this stand-in has no certificate at all - like DDEV's
     # MariaDB 10.x images, and unlike its 11.x ones, which generate one. The
-    # no-certificate case is the one worth modelling, because it is the one
-    # where a client requiring a verified connection refuses outright: exactly
-    # how the 11.8 client's default broke every local database call in the
-    # field while every suite stayed green. Nothing here covers 11.x with TLS.
+    # no-certificate case is the one worth modelling, because it is how the 11.8
+    # client's default broke every local database call in the field while every
+    # suite stayed green. It is not the only way a server can refuse - DDEV's
+    # MySQL images fail verification on a self-signed certificate instead - and
+    # nothing here covers either that or 11.x with TLS.
     # The production stand-in in this file keeps its own TLS, which a real host
     # may well have.
     command: ["--skip-ssl"]

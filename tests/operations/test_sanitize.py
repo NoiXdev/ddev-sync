@@ -341,10 +341,11 @@ def test_sql_is_passed_as_one_argument_not_shell_text(tmp_path: Path) -> None:
     assert argv[-1] == "UPDATE t SET x = 'a; DROP TABLE y'"
 
 
-def test_the_local_mysql_argv_disables_tls(tmp_path: Path) -> None:
+def test_the_local_mysql_argv_relaxes_tls_verification(tmp_path: Path) -> None:
     # Same reason as the import's own clients: the 11.8 client requires a
-    # verified TLS connection and DDEV offers no certificate it could verify,
-    # so every sanitize rule's SQL failed to connect. Asserted through the
-    # constant, whose comment carries the measurements behind the option.
+    # verified TLS connection, and against a DDEV MariaDB 10.x server - which
+    # has no certificate - it refuses, so every sanitize rule's SQL failed to
+    # connect. Asserted through the constant, whose comment carries the
+    # measurements behind the option.
     argv = local_mysql_argv(make_context(FakeCommandRunner(), tmp_path), "db")
     assert LOCAL_DB_TLS_OPTION in argv

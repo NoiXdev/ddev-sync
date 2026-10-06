@@ -171,7 +171,7 @@ def test_a_secret_committed_to_the_project_config_is_refused(tmp_path: Path, key
 
 
 @pytest.mark.parametrize("label", [LOCAL_LABEL, GLOBAL_LABEL])
-def test_a_secret_from_the_gitignored_or_global_layer_is_fine(tmp_path: Path, label: str) -> None:
+def test_a_secret_from_the_local_or_global_layer_is_fine(tmp_path: Path, label: str) -> None:
     layer = LayerDoc(label, {"s3": {"remote": REMOTE, "local": LOCAL}})
     context = context_with_layers(ok_runner(), tmp_path, layer)
     S3SyncOperation().execute(context, {"remote": REMOTE, "local": LOCAL})

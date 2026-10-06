@@ -388,16 +388,16 @@ def test_a_failed_dump_rewrite_says_the_local_database_is_empty(
     assert "drop" in runner.calls[0]
 
 
-def test_the_local_client_calls_disable_tls_because_ddevs_server_has_none(
+def test_every_local_client_call_relaxes_tls_verification(
     tmp_path: Path,
 ) -> None:
-    # This image's client is 11.8, which requires a *verified* TLS connection by
-    # default, and no DDEV certificate can be verified. Against a server with
-    # none at all - DDEV's MariaDB 10.x - the client then refuses outright, so
-    # without the option every local call fails. Measured on a real project
-    # running mariadb 10.8, where it took out the drop, the create and the
-    # import. The option is asserted through the constant, so it keeps holding
-    # if the exact spelling changes.
+    # This image's client is 11.8, which requires a verified TLS connection by
+    # default. DDEV's MariaDB 10.x images configure no certificate at all, so
+    # the client refuses outright and every local call fails - measured on a
+    # real project running 10.8, where it took out the drop, the create and the
+    # import. See `LOCAL_DB_TLS_OPTION` for what the option costs on the
+    # versions that do have one. Asserted through the constant, so it keeps
+    # holding if the spelling changes.
     runner = import_runner()
     context = make_context(runner, tmp_path)
     with_dump(context)

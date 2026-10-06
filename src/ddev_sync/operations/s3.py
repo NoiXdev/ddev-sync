@@ -91,7 +91,7 @@ def _reject_committed_secret(context: ExecutionContext, side: str, key: str) -> 
     Spec §10: no credentials live in the add-on's configuration, because
     `.ddev/ddev-sync.yaml` is committed to the repo. The merge tracks
     provenance per value (`context.merged.scalar_sources`), so this can tell
-    *where* `s3.<side>.<key>` came from, not just what it is - the gitignored
+    *where* `s3.<side>.<key>` came from, not just what it is - the local
     local override and the global `~/.ddev/ddev-sync/config.yaml` are both
     fine; only the committed layer is refused.
     """

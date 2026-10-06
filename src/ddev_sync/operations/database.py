@@ -298,27 +298,35 @@ def dump_is_complete(path: Path) -> bool:
 LOCAL_DB_USER = "db"
 LOCAL_DB_PASSWORD = "db"
 LOCAL_DB_PORT = "3306"
-# The MariaDB client in this image - 11.8 - requires a *verified* TLS
-# connection by default, and no DDEV certificate can be verified: the MariaDB
-# images that have one generate it themselves, and the MySQL images ship a
-# self-signed one. So verification has to go. What is left to decide is
-# whether to keep TLS where it does exist, and it is kept.
+# The MariaDB client in this image - 11.8 - requires a verified TLS connection
+# by default, and what that costs depends on the server. Measured with this
+# image's client against real DDEV database containers (v1.25.4) and, in the
+# last row, a stock `mariadb:11.8`:
 #
-# Measured with this image's client (11.8.8) against real servers:
+#   server                      no option   --skip-ssl   this option
+#   DDEV mariadb 10.8           fails       plaintext    plaintext
+#   DDEV mariadb 10.11          fails       plaintext    plaintext
+#   DDEV mariadb 11.8           TLS         plaintext    TLS
+#   mariadb:11.8                TLS         plaintext    TLS
 #
-#   server                         no option   --skip-ssl   this option
-#   DDEV mariadb 10.8 (no cert)    fails       plaintext    plaintext
-#   mariadb 11.8 (own cert)        TLS         plaintext    TLS
+# So there are two different failures, not one. DDEV's MariaDB 10.x images
+# configure no certificate at all, and the client then refuses outright: that
+# is the bug this constant exists for, found on a real project running 10.8,
+# where it took out the drop, the create, the import and every sanitize rule's
+# SQL. DDEV's MySQL images do have one, but self-signed, and there the client
+# fails verification instead - a separate review measured that, and 8.0 is
+# refused on its authentication plugin regardless, so that project type does
+# not work at all.
 #
-# The two options are equally compatible, so `--skip-ssl` differs only in
-# throwing away encryption where the server offers it - which DDEV's 11.x
-# images do, and those are current defaults. It would also fail against a
-# server with `require_secure_transport` on, where this one still connects.
-#
-# Without either option, every local call fails against a server that has no
-# certificate: the drop, the create, the import, and every sanitize rule's
-# SQL. That is the bug this constant exists for, found on a real DDEV project
-# running mariadb 10.8.
+# DDEV's MariaDB 11.x images are the interesting case: they generate a
+# certificate, the unflagged client accepts it - the handshake is verified
+# through the password, so no CA is needed - and it connects over TLS. That is
+# what this option gives up there, and it is the honest cost of it: one argv
+# that works everywhere, at the price of the client's own verification on the
+# servers that could offer it. `--skip-ssl` was the first choice here and is
+# worse on exactly those servers, because it drops to plaintext; it would also
+# be refused by a server with `require_secure_transport` on, where this one
+# connects.
 #
 # The remote side is not covered by this. That traffic goes through ssh, and
 # the remote's own client decides its policy - see
