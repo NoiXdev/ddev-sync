@@ -135,7 +135,17 @@ class _Options:
     ),
 )
 @click.option(
-    "--steps", default=None, help=f"Comma-separated: {', '.join(sorted(SELECTION_GROUPS))}."
+    "--steps",
+    default=None,
+    # The five group names are the vocabulary, not the offer: the runtime
+    # accepts only those this project would produce work for
+    # (`available_selection_groups`), and refuses the rest by name. Listing
+    # all five unconditionally and saying nothing about that left the help
+    # advertising steps the very next run rejects.
+    help=(
+        f"Comma-separated: {', '.join(sorted(SELECTION_GROUPS))}. "
+        "Only the ones this project has work for are accepted."
+    ),
 )
 @click.option(
     "--framework-version",
@@ -269,14 +279,30 @@ def _reject_build_conflicts(
 
 
 @cli.command("help")
+@click.argument("command", required=False)
 @click.pass_context
-def help_cmd(ctx: click.Context) -> int:
-    """Show this help."""
+def help_cmd(ctx: click.Context, command: str | None) -> int:
+    """Show this help, or the help of COMMAND."""
     # `ddev help` works for DDEV itself, so `ddev sync help` is what a user
     # guesses. The group's help is what they want, not this command's, which
     # is why it reaches for the parent context.
-    parent = ctx.parent
-    click.echo((parent or ctx).get_help())
+    #
+    # `ddev help <command>` works for DDEV too, so `ddev sync help doctor` is
+    # the same user's second guess; without the argument it exited 2 with
+    # "Got unexpected extra argument". A name that is not a subcommand falls
+    # back to the group help rather than failing, but says so first - the
+    # help it then prints is not the help that was asked for, and printing it
+    # silently would answer a question nobody asked.
+    group_context = ctx.parent or ctx
+    if command is not None:
+        subcommand = cli.get_command(group_context, command)
+        if subcommand is None:
+            click.echo(f"There is no '{command}' command; here is the full help.", err=True)
+        else:
+            with click.Context(subcommand, info_name=command, parent=group_context) as sub:
+                click.echo(sub.get_help())
+            return 0
+    click.echo(group_context.get_help())
     return 0
 
 

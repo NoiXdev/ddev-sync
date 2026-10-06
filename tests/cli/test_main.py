@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import questionary
 
+from ddev_sync.cli import main as main_module
 from ddev_sync.cli.main import main
 from ddev_sync.errors import SyncInterrupted
 
@@ -68,6 +69,47 @@ def test_the_dry_run_help_does_not_promise_that_nothing_runs(
     output = capsys.readouterr().out
     assert "execute nothing" not in output
     assert "Deployer is still resolved" in " ".join(output.split())
+
+
+def test_the_steps_help_says_only_available_steps_are_accepted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The help listed all five group names and said nothing about the
+    # runtime refusing most of them on a given project, so it advertised
+    # steps the very next run rejects by name.
+    assert main(["--help"]) == 0
+    output = " ".join(capsys.readouterr().out.split())
+    assert "db, files, s3, sanitize, setup" in output
+    assert "Only the ones this project has work for are accepted" in output
+
+
+def test_help_with_a_command_name_prints_that_command_s_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # `ddev help <command>` works for DDEV, so this is the same guess one
+    # step further; it used to exit 2 with "Got unexpected extra argument".
+    assert main(["help", "doctor"]) == 0
+    output = capsys.readouterr().out
+    assert "Run the preflight checks" in output
+    assert "Usage:" in output
+
+
+def test_help_with_an_unknown_command_name_falls_back_and_says_so(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["help", "frobnicate"]) == 0
+    captured = capsys.readouterr()
+    assert "There is no 'frobnicate' command" in captured.err
+    assert "Pull remote database, files and setup" in captured.out
+
+
+def test_help_without_an_argument_still_prints_the_group_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["help"]) == 0
+    output = capsys.readouterr().out
+    assert "Pull remote database, files and setup" in output
+    assert "doctor" in output
 
 
 def test_a_configuration_error_exits_one_with_a_readable_message(
@@ -152,12 +194,26 @@ def test_a_step_the_project_has_no_work_for_is_refused_by_name(
 
 
 def test_yes_does_not_select_a_step_the_project_has_no_work_for(
-    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The assertion has to be on the *selection*, not on the plan.
+
+    This test used to check that "s3.sync" was absent from the dry-run
+    output - which it was before this behaviour existed too, because the
+    planner emitted no S3_SYNC entry either way. The output was byte
+    identical, so the test passed against the very bug it names. What
+    changed is what `--yes` selects, so that is what is observed: only `db`
+    produces work for this bare project, and `--yes` must ask for only that.
+    """
+    selected: list[list[str]] = []
+
+    def record(_context: object, selection: list[str], **_kwargs: object) -> int:
+        selected.append(selection)
+        return 0
+
+    monkeypatch.setattr(main_module, "run_command", record)
     assert invoke(project, tmp_path, "--dry-run", "--yes") == 0
-    output = capsys.readouterr().out
-    assert "db.dump" in output
-    assert "s3.sync" not in output
+    assert selected == [["db"]]
 
 
 def _break_files(project: Path) -> None:
