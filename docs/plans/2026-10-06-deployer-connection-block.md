@@ -25,6 +25,12 @@
 
 The spec was written before this plan read the code. Three of its statements do not survive contact with it, and the plan implements the corrected version. Amend the spec in Task 5.
 
+> **Superseded in part.** The *decision* below stands, but its stated reason —
+> that a stopped project must be able to list — was measured and found false:
+> DDEV starts the project for any service command. See Amendment 1 in the design
+> document for the reason that survives. The paragraphs below are the
+> pre-implementation record and are left unedited.
+
 **1. `ddev sync targets` must not resolve.** The spec says the listing "shows the resolved endpoint". `render_targets` (`src/ddev_sync/cli/render.py:132-146`) reads the *collected spec* and performs no I/O at all; `cli/commands.py:46` calls it with `collect_targets(layers)` and never builds a `ResolvedTarget`. Making it resolve would mean shelling into the web container to list targets, so a stopped project could not list its own configuration. The listing shows the **declaration** instead. Resolution surfaces in the dry-run plan and in `doctor`, both of which already do work.
 
 **2. There is no `doctor` row.** The spec gives `doctor` a conditional `deployer config` row. `doctor_command` (`cli/commands.py:51`) receives an already-built `RunContext`, and resolution happens inside `build_context` — so a failure raises before `doctor` is reached, and the row could only ever say `OK`. A `bool` field whose `False` branch is unreachable is dead code that no test can legitimately cover under the 100 % branch rule. Task 4 carries the full reasoning and what replaces it.
