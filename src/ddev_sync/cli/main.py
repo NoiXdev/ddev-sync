@@ -56,6 +56,7 @@ from ddev_sync.cli.commands import (
 )
 from ddev_sync.cli.context import RunContext, build_context
 from ddev_sync.ddev.project import DEFAULT_PROJECT_ROOT
+from ddev_sync.engine.plan import available_selection_groups
 from ddev_sync.engine.steps import SELECTION_GROUPS
 from ddev_sync.errors import AmbiguousTargetError, DdevSyncError
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT
@@ -328,7 +329,18 @@ def build_cmd(options: _Options) -> int:
 def _run(options: _Options, *, steps: str | None, dry_run: bool, assume_yes: bool) -> int:
     """Plan (and maybe execute) a sync; the one code path both `cli` and `build_cmd` call."""
     context = _build_run_context(options)
-    selection = resolve_selection(steps, assume_yes)
+    selection = resolve_selection(
+        steps,
+        assume_yes,
+        available=available_selection_groups(
+            target=context.target,
+            project=context.project,
+            profile=context.profile,
+            merged=context.merged,
+            features=context.features,
+            only_feature_setup=options.only_feature_setup,
+        ),
+    )
     return run_command(
         context,
         selection,

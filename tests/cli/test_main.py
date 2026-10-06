@@ -132,11 +132,45 @@ def test_an_unknown_step_name_is_rejected(
     assert "unknown step 'database'" in capsys.readouterr().err
 
 
+def test_a_step_the_project_has_no_work_for_is_refused_by_name(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No shipped profile configures S3, so `--steps s3` would plan nothing
+    but a preflight and report success - the failure this refusal exists to
+    prevent. It must also say what *is* available, and must not claim the
+    name is unknown, because `s3` is a real step.
+    """
+    code = invoke(project, tmp_path, "--dry-run", "--steps", "s3")
+    assert code == 1
+    error = capsys.readouterr().err
+    assert "not available for this project: s3 " in error
+    assert "db" in error
+    assert "unknown step" not in error
+
+
+def test_yes_does_not_select_a_step_the_project_has_no_work_for(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert invoke(project, tmp_path, "--dry-run", "--yes") == 0
+    output = capsys.readouterr().out
+    assert "db.dump" in output
+    assert "s3.sync" not in output
+
+
 def test_steps_accepts_a_comma_separated_list(
     project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # `files` is only selectable once the project has a path to sync.
+    config = project / ".ddev" / "ddev-sync.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + "files:\n  paths:\n    - {remote: uploads/, local: uploads/}\n",
+        encoding="utf-8",
+    )
     assert invoke(project, tmp_path, "--dry-run", "--steps", "db,files") == 0
-    assert "db.dump" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "db.dump" in output
+    assert "files.sync" in output
 
 
 def test_no_steps_flag_plans_everything(
@@ -491,6 +525,85 @@ def test_build_only_runs_feature_contributed_setup_commands(
     assert "migrate" not in output
     assert "composer install" not in output
     assert "[profile:laravel]" not in output
+
+
+def test_build_hands_the_availability_probe_the_flags_the_run_will_use(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`build` is `--steps=setup --only-feature-setup`, and the probe only
+    answers the question the run asks if it is given the same flags. Wrapping
+    the real function (rather than replacing it) records what `build_cmd`'s
+    forced options actually deliver, while still letting the run proceed.
+
+    Whether `setup` can ever come out *unavailable* under `build` is a
+    separate question that no CLI-level test can reach: forcing
+    `--features=node-build` either activates the feature, which contributes
+    setup commands, or fails earlier with "no lockfile found" when the project
+    has nothing to build. The probe-level test in `tests/engine/test_plan.py`
+    pins the case the CLI cannot construct.
+    """
+    from ddev_sync.cli import main as cli_main
+    from ddev_sync.engine.plan import available_selection_groups
+
+    seen: list[dict[str, object]] = []
+
+    def record(**kwargs: object) -> frozenset[str]:
+        seen.append(kwargs)
+        return available_selection_groups(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cli_main, "available_selection_groups", record)
+    _write_node_build(project)
+    code = main(
+        [
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--feature-root",
+            str(FEATURE_ROOT),
+            "--type",
+            "laravel",
+            "--dry-run",
+            "--yes",
+            "build",
+        ]
+    )
+    assert code == 0
+    assert len(seen) == 1
+    assert seen[0]["only_feature_setup"] is True
+    activated = seen[0]["features"].activated  # type: ignore[attr-defined]
+    assert [entry.feature.name for entry in activated] == ["node-build"]
+
+
+def test_build_on_a_project_with_nothing_to_build_still_fails_before_planning(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Pins what `build` does today when there is nothing to build, so a later
+    change to the availability rule cannot quietly alter it: the forced
+    node-build feature refuses at context-building time, before any selection
+    is resolved, and the exit code is non-zero rather than a silent success.
+    """
+    code = main(
+        [
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--feature-root",
+            str(FEATURE_ROOT),
+            "--type",
+            "laravel",
+            "--dry-run",
+            "--yes",
+            "build",
+        ]
+    )
+    assert code == 1
+    assert "no lockfile found" in capsys.readouterr().err
 
 
 def test_only_feature_setup_combined_with_build_is_a_usage_error(

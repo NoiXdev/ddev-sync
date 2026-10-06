@@ -12,7 +12,7 @@ from typing import Any
 from ddev_sync.config.merge import LIST_MODES, MergeResult
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.ddev.project import DdevProject
-from ddev_sync.engine.steps import StepKind, hook_name
+from ddev_sync.engine.steps import SELECTION_GROUPS, StepKind, hook_name, steps_for_selection
 from ddev_sync.errors import ConfigError
 from ddev_sync.features.resolver import ActivatedFeature, FeatureResolution
 from ddev_sync.operations.base import preview_local_path
@@ -152,6 +152,49 @@ def build_plan(
         features=features.activated,
         features_detection_enabled=features.detection_enabled,
         features_disabled_reason=features.disabled_reason,
+    )
+
+
+def available_selection_groups(
+    *,
+    target: ResolvedTarget,
+    project: DdevProject,
+    profile: ResolvedProfile,
+    merged: MergeResult,
+    features: FeatureResolution = _NO_FEATURES,
+    only_feature_setup: bool = False,
+) -> frozenset[str]:
+    """Which selection groups would actually produce work for this project.
+
+    Answered by building a throwaway plan with everything selected and
+    seeing which kinds came out, rather than by a second set of rules about
+    what a project contains. Building a plan is pure - nothing in this
+    module runs a command or reads a file - so the probe costs nothing and
+    cannot drift from what a real run would do, which a hand-written "does
+    this project have S3" check eventually would.
+
+    A group counts as available when *any* of its kinds appears, not all of
+    them: `db` names four, and a profile that writes no env file (TYPO3's
+    does not) still dumps and imports.
+
+    The caller must pass the same `features` and `only_feature_setup` the
+    real run will use. The probe answers "what would this run do", and a
+    probe that did not see `only_feature_setup` (which `ddev sync build`
+    sets) would call `setup` available on the strength of commands the run
+    then filters out.
+    """
+    plan = build_plan(
+        target=target,
+        project=project,
+        profile=profile,
+        merged=merged,
+        steps=steps_for_selection(sorted(SELECTION_GROUPS)),
+        features=features,
+        only_feature_setup=only_feature_setup,
+    )
+    produced = {step.kind for step in plan.steps}
+    return frozenset(
+        name for name, kinds in SELECTION_GROUPS.items() if any(kind in produced for kind in kinds)
     )
 
 

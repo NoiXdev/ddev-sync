@@ -8,6 +8,7 @@ from ddev_sync.cli import commands
 from ddev_sync.cli.context import build_context
 from ddev_sync.cli.main import main
 from ddev_sync.config.merge import MergeResult
+from ddev_sync.errors import DdevSyncError
 from ddev_sync.transport.runner import CommandResult, SubprocessRunner
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
@@ -333,6 +334,16 @@ def test_cancelling_the_step_prompt_exits_one(
     assert "no steps selected" in capsys.readouterr().err
 
 
+def _configure(project: Path, extra_yaml: str) -> None:
+    """Append top-level configuration to the project's `.ddev/ddev-sync.yaml`.
+
+    Steps a project has no configuration for are no longer selectable, so a
+    test that needs one has to give the project something to do for it.
+    """
+    config = project / ".ddev" / "ddev-sync.yaml"
+    config.write_text(config.read_text(encoding="utf-8") + extra_yaml, encoding="utf-8")
+
+
 def _fake_ssh_ok(
     _self: object,
     argv: list[str],
@@ -368,9 +379,14 @@ def test_a_real_run_with_nothing_to_do_exits_zero(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Preflight is the only step that can run for the generic profile with no
-    configured file paths; this covers the success path of a real run.
+    """The success path of a real run, with the smallest step that is available.
+
+    The generic profile configures no file paths, so `--steps files` would now
+    be refused as a step with nothing to do - this test used to rely on exactly
+    that, running a plan of preflight alone and calling it a success. One
+    configured path gives `files` real work for the fake runner to accept.
     """
+    _configure(project, "files:\n  paths:\n    - {remote: uploads/, local: uploads/}\n")
     monkeypatch.setattr("ddev_sync.transport.runner.SubprocessRunner.run", _fake_ssh_ok)
     code = invoke(project, tmp_path, "--yes", "--target", "production", "--steps", "files")
     output = capsys.readouterr().out
@@ -384,6 +400,9 @@ def test_a_real_run_with_sanitize_selected_skips_the_warning(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _configure(
+        project, 'sanitize:\n  rules:\n    - {name: clear, sql: "TRUNCATE TABLE sessions"}\n'
+    )
     monkeypatch.setattr("ddev_sync.transport.runner.SubprocessRunner.run", _fake_ssh_ok)
     code = invoke(project, tmp_path, "--yes", "--target", "production", "--steps", "sanitize")
     output = capsys.readouterr().out
@@ -573,7 +592,8 @@ def test_a_deployer_target_is_resolved_and_synced_through_one_runner(
     it - is what would show a second `SubprocessRunner` being constructed.
     """
     (project / ".ddev" / "ddev-sync.yaml").write_text(
-        "version: 1\ntargets:\n  production:\n    deployer: {host: web-1}\n    stage: production\n",
+        "version: 1\ntargets:\n  production:\n    deployer: {host: web-1}\n    stage: production\n"
+        "files:\n  paths:\n    - {remote: uploads/, local: uploads/}\n",
         encoding="utf-8",
     )
     payload = json.dumps(
@@ -694,3 +714,62 @@ def test_describe_targets_shows_a_deployer_block_as_a_declaration(
     assert described["prod"] == "from deployer: web-1"
     assert described["anywhere"] == "from deployer"
     assert described["staging"] == "deploy@web02.example:/srv/staging/"
+
+
+_AVAILABLE = frozenset({"db", "files", "sanitize", "setup"})
+
+
+def test_an_explicit_step_that_would_do_nothing_here_is_refused() -> None:
+    with pytest.raises(DdevSyncError) as error:
+        commands.resolve_selection("db,s3", assume_yes=True, available=_AVAILABLE)
+    message = str(error.value)
+    assert "s3" in message
+    assert "not available for this project: s3 " in message
+    assert "db, files, sanitize, setup" in message
+
+
+def test_an_unknown_step_name_still_says_it_is_unknown() -> None:
+    # Distinct from the case above: "nosuchstep" is not a step at all, while
+    # "s3" is a real one this project has no work for. The two deserve
+    # different sentences, and conflating them would send someone hunting
+    # for a typo they did not make.
+    with pytest.raises(ValueError, match="unknown step 'nosuchstep'") as error:
+        commands.resolve_selection("nosuchstep", assume_yes=True, available=_AVAILABLE)
+    assert "not available" not in str(error.value)
+
+
+def test_assume_yes_selects_only_what_is_available() -> None:
+    assert commands.resolve_selection(None, assume_yes=True, available=_AVAILABLE) == [
+        "db",
+        "files",
+        "sanitize",
+        "setup",
+    ]
+
+
+def test_an_explicit_available_step_is_kept() -> None:
+    assert commands.resolve_selection("db", assume_yes=True, available=_AVAILABLE) == ["db"]
+
+
+def test_the_picker_is_offered_only_the_available_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    offered: list[list[str]] = []
+
+    def record(available: list[str]) -> list[str]:
+        offered.append(available)
+        return ["db"]
+
+    monkeypatch.setattr(commands, "choose_steps", record)
+    commands.resolve_selection(None, assume_yes=False, available=_AVAILABLE)
+
+    assert offered == [["db", "files", "sanitize", "setup"]]
+
+
+def test_without_a_terminal_the_hint_lists_only_the_available_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(commands, "choose_steps", lambda _available: None)
+    with pytest.raises(DdevSyncError) as error:
+        commands.resolve_selection(None, assume_yes=False, available=_AVAILABLE)
+    assert "--steps (db,files,sanitize,setup)" in str(error.value)

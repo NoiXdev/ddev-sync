@@ -18,7 +18,7 @@ from ddev_sync.config.merge import MergeResult
 from ddev_sync.config.targets import collect_targets, list_target_names
 from ddev_sync.engine.executor import Executor
 from ddev_sync.engine.plan import build_plan
-from ddev_sync.engine.steps import SELECTION_GROUPS, steps_for_selection
+from ddev_sync.engine.steps import steps_for_selection
 from ddev_sync.errors import DdevSyncError, TargetError
 from ddev_sync.operations.base import ExecutionContext
 from ddev_sync.operations.preflight import PreflightOperation
@@ -108,23 +108,43 @@ def run_command(
     return 1 if report.failed else 0
 
 
-def resolve_selection(steps: str | None, assume_yes: bool) -> list[str]:
+def resolve_selection(
+    steps: str | None, assume_yes: bool, *, available: frozenset[str]
+) -> list[str]:
     """Turn `--steps` into a selection, asking when it is absent.
+
+    `available` is what the project would actually produce work for (see
+    `available_selection_groups`). Offering a step the project has nothing
+    for is noise, and accepting one explicitly would report a successful
+    sync that did nothing, so the picker, `--yes` and `--steps` all stay
+    within it.
 
     `setup` is deliberately not part of the default selection: it runs
     `composer install` and framework commands that can take minutes, and
     someone who just wants fresh data should not wait for a frontend build
     they did not ask for.
     """
+    offered = sorted(available)
     if steps is not None:
-        return [part.strip() for part in steps.split(",") if part.strip()]
+        names = [part.strip() for part in steps.split(",") if part.strip()]
+        # Unknown names are checked first, and by the engine's own function,
+        # so a typo keeps saying "unknown step" and is never mistaken for a
+        # real step this project merely has no work for.
+        steps_for_selection(names)
+        unavailable = [name for name in names if name not in available]
+        if unavailable:
+            raise DdevSyncError(
+                f"not available for this project: {', '.join(unavailable)} - it has nothing "
+                f"to do for them. Available: {', '.join(offered)}."
+            )
+        return names
     if assume_yes:
-        return sorted(SELECTION_GROUPS)
-    chosen = choose_steps(sorted(SELECTION_GROUPS))
+        return offered
+    chosen = choose_steps(offered)
     if chosen is None:
         raise DdevSyncError(
             "no steps selected. Without a terminal there is nothing to ask, so pass "
-            f"--steps ({','.join(sorted(SELECTION_GROUPS))}) or --yes for all of them."
+            f"--steps ({','.join(offered)}) or --yes for all of them."
         )
     return chosen
 

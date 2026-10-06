@@ -6,8 +6,8 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import Layout, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
-from ddev_sync.engine.plan import Plan, build_plan
-from ddev_sync.engine.steps import StepKind, steps_for_selection
+from ddev_sync.engine.plan import Plan, available_selection_groups, build_plan
+from ddev_sync.engine.steps import SELECTION_GROUPS, StepKind, steps_for_selection
 from ddev_sync.errors import ConfigError
 from ddev_sync.operations.base import PathEscapesProject
 from ddev_sync.profiles.registry import ResolvedProfile
@@ -755,3 +755,116 @@ def test_the_env_step_stays_local() -> None:
     plan = plan_for(["db"], user_layers=[extra])
     env = next(step for step in plan.steps if step.kind is StepKind.ENV)
     assert env.where == "local"
+
+
+def available_for(
+    data: dict[str, Any] = PROFILE_DATA, *, only_feature_setup: bool = False
+) -> frozenset[str]:
+    profile = ResolvedProfile(
+        name="typo3",
+        label="typo3@12",
+        data=data,
+        layers=(LayerDoc("profile:typo3@12", data),),
+        notice=None,
+    )
+    return available_selection_groups(
+        target=target(),
+        project=project(),
+        profile=profile,
+        merged=merge_layers([LayerDoc("profile:typo3@12", data)]),
+        only_feature_setup=only_feature_setup,
+    )
+
+
+def test_a_group_is_available_when_it_would_produce_at_least_one_step() -> None:
+    available = available_for()
+    assert {"db", "files", "sanitize", "setup"} <= available
+
+
+def test_a_group_that_would_produce_nothing_is_not_offered() -> None:
+    # No shipped profile configures S3, so a project that never mentions it
+    # must not be asked about it - which is the report this task came from.
+    assert "s3" not in available_for()
+
+
+def test_a_group_the_project_configures_becomes_available() -> None:
+    data = {
+        **PROFILE_DATA,
+        "s3": {"remote": {"bucket": "prod"}, "local": {"bucket": "dev"}},
+    }
+    assert "s3" in available_for(data)
+
+
+@pytest.mark.parametrize(
+    ("group", "section"),
+    [("files", "files"), ("sanitize", "sanitize"), ("setup", "setup")],
+)
+def test_a_group_whose_configuration_is_absent_is_not_offered(group: str, section: str) -> None:
+    data = {key: value for key, value in PROFILE_DATA.items() if key != section}
+    assert group not in available_for(data)
+
+
+def test_db_is_available_even_when_the_profile_writes_no_env_file() -> None:
+    # `db` names four kinds and TYPO3 produces no ENV entry at all, so the
+    # test is that availability asks "any of these", not "all of these".
+    data = {**PROFILE_DATA, "env": {"strategy": "none"}}
+    plan = build_plan(
+        target=target(),
+        project=project(),
+        profile=ResolvedProfile(
+            name="typo3",
+            label="typo3@12",
+            data=data,
+            layers=(LayerDoc("profile:typo3@12", data),),
+            notice=None,
+        ),
+        merged=merge_layers([LayerDoc("profile:typo3@12", data)]),
+        steps=steps_for_selection(["db"]),
+    )
+    assert StepKind.ENV not in {step.kind for step in plan.steps}
+    assert "db" in available_for(data)
+
+
+def test_a_hook_alone_makes_its_group_available() -> None:
+    # The probe asks what a run would do, and a run of `s3` with only a
+    # `pre_s3_sync` hook configured would run that hook. Pinning this keeps
+    # the rule honest: availability follows the plan, hooks included.
+    data = {**PROFILE_DATA, "hooks": {"pre_s3_sync": [{"run": "echo hi"}]}}
+    assert "s3" in available_for(data)
+
+
+def test_only_feature_setup_hides_setup_that_no_feature_contributed() -> None:
+    # `ddev sync build` passes this flag, so the probe has to see it too:
+    # otherwise it would call `setup` available on the strength of commands
+    # the run is about to filter out.
+    assert "setup" in available_for()
+    assert "setup" not in available_for(only_feature_setup=True)
+
+
+def test_only_feature_setup_keeps_setup_that_a_feature_contributed() -> None:
+    # The other half of the test above: `build` on a project whose frontend
+    # feature supplies commands must still find `setup` available, or it
+    # could never run at all.
+    data = {k: v for k, v in PROFILE_DATA.items() if k != "setup"}
+    feature_layer = LayerDoc(
+        "feature:node-build", {"setup": {"commands": [{"run": "npm run build"}]}}
+    )
+    profile = ResolvedProfile(
+        name="typo3",
+        label="typo3@12",
+        data=data,
+        layers=(LayerDoc("profile:typo3@12", data),),
+        notice=None,
+    )
+    available = available_selection_groups(
+        target=target(),
+        project=project(),
+        profile=profile,
+        merged=merge_layers([LayerDoc("profile:typo3@12", data), feature_layer]),
+        only_feature_setup=True,
+    )
+    assert "setup" in available
+
+
+def test_every_name_it_returns_is_a_real_selection_group() -> None:
+    assert available_for() <= set(SELECTION_GROUPS)
