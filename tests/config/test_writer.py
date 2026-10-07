@@ -126,7 +126,7 @@ def test_a_missing_file_is_created_with_a_version(tmp_path: Path) -> None:
 def test_a_second_targets_key_beside_a_flow_mapping_is_undone(tmp_path: Path) -> None:
     # The scan matches only a line that is exactly `targets:`, so a flow-style
     # mapping is missed and the block is appended as a second `targets:` key.
-    # `config/yamlfile.py` is what refuses that: plain `safe_load` would keep
+    # `yamlfile.py` is what refuses that: plain `safe_load` would keep
     # the last of the two and report a clean file with the first one gone.
     document = "version: 1\ntargets: {production: {host: old.example, stage: production}}\n"
     path, paths = write_in(tmp_path, document)
@@ -289,7 +289,7 @@ def test_a_self_referencing_alias_elsewhere_in_the_file_is_survived(tmp_path: Pa
 
 
 def test_a_file_that_already_holds_a_key_twice_is_not_written_to(tmp_path: Path) -> None:
-    # Since `config/yamlfile.py` refuses such a file, the read *before* the
+    # Since `yamlfile.py` refuses such a file, the read *before* the
     # write fails and nothing is attempted. That is the right order: the
     # engine would misread that configuration, so adding a target to it would
     # be building on a file whose contents it cannot agree on.
@@ -314,25 +314,32 @@ def test_a_block_that_repeats_a_key_is_refused_with_its_name(tmp_path: Path) -> 
 
 
 def test_a_neighbouring_target_that_changed_is_refused(tmp_path: Path) -> None:
-    # Driven through `_verify` rather than a document, because no document
-    # reaches this any more: since the loader refuses a file naming a key
-    # twice, every placement that damages a neighbour is caught before here.
-    # The check is defence in depth and this pins its contract.
-    block = render_target("production", MANUAL)
-    # The file already holds the block, so the first two checks pass and the
-    # neighbour comparison is the one left to fail.
-    document = f"version: 1\ntargets:\n{block}  staging:\n    host: web02\n    stage: staging\n"
+    # A quoted target key the scan cannot match, plus a multi-line quoted
+    # scalar for the block to land in: the file loads, no key appears twice,
+    # the written target matches its block and nothing outside `targets`
+    # moved - so this check is the only one that notices `staging` losing its
+    # path. Compared within the file, so a stronger layer cannot hide it.
+    document = (
+        "version: 1\n"
+        "targets:\n"
+        '  "production":\n'
+        "    host: web01.example\n"
+        "    user: deploy\n"
+        "    port: 22\n"
+        "    path: /srv/app/\n"
+        "    stage: production\n"
+        "  staging:\n"
+        "    host: s.example\n"
+        "    stage: staging\n"
+        '    path: "abc\n'
+        'def"\n'
+    )
     path, paths = write_in(tmp_path, document)
-    stale = {"staging": "whatever `staging` used to be"}
     with pytest.raises(WriteRefused, match="staging"):
-        writer._verify(
-            path=path,
-            paths=paths,
-            name="production",
-            block=block,
-            before=stale,
-            document=document,
+        write_target(
+            path=path, paths=paths, name="production", block=render_target("production", MANUAL)
         )
+    assert path.read_text(encoding="utf-8") == document
 
 
 def test_crlf_line_endings_survive_a_write(tmp_path: Path) -> None:

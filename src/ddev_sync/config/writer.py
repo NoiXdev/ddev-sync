@@ -8,14 +8,16 @@ one of them. PyYAML still renders the *new* block - quoting is a solved
 problem and not worth re-solving - but it never parses the user's file in
 order to write it.
 
-What makes text surgery acceptable is `write_target`'s check, run on the file
-as it is on disk after the write: it must still load, the `name` target in it
-must be exactly the block that was rendered, nothing else in the file may
-differ from before, no other target may change, and no key may newly appear
-twice. If any of that fails, or anything at all goes wrong after the first
-byte is written, the original bytes are put back. So the scan below may fail
-on flow-style mappings, anchors, quoted scalars or tabs without having to
-recognise them.
+What makes text surgery acceptable is `write_target`'s checking. Before the
+write the whole configuration must load at all - `yamlfile.py` refuses one
+that names a key twice, and adding a target to a file the engine would misread
+is building on a document it cannot agree on. Afterwards, read from disk: it
+must still load, the `name` target in it must be exactly the block that was
+rendered, nothing outside `targets` may differ from before, and no other
+target **in this file** may change. If any of that fails, or anything at all
+goes wrong after the first byte is written, the original bytes are put back. So
+the scan below may fail on flow-style mappings, anchors, quoted scalars or tabs
+without having to recognise them.
 """
 
 import os
@@ -90,13 +92,17 @@ def write_target(*, path: Path, paths: ConfigPaths, name: str, block: str) -> No
     children resolve to, which is the point of rewriting it, and comparing
     resolved targets would refuse every edit of a base target.
     """
-    before = _targets(paths)
+    # Read before anything is touched, for its error alone: a file the loader
+    # refuses - one that already names a key twice, say - is one the engine
+    # would misread, so adding a target to it would build on a document it
+    # cannot agree on. Refusing here leaves the file alone entirely.
+    _targets(paths)
     original = path.read_bytes() if path.exists() else None
     document = original.decode("utf-8") if original else "version: 1\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         _write(path, place_target(document, name, block).encode("utf-8"))
-        _verify(path=path, paths=paths, name=name, block=block, before=before, document=document)
+        _verify(path=path, paths=paths, name=name, block=block, document=document)
     except BaseException:
         _restore(path, original)
         raise
@@ -108,12 +114,14 @@ def _verify(
     paths: ConfigPaths,
     name: str,
     block: str,
-    before: Mapping[str, Any],
     document: str,
 ) -> None:
     written = path.read_bytes().decode("utf-8")
     try:
-        after = _targets(paths)
+        # Read for its error path alone: this is what proves the whole merged
+        # configuration still loads, including the strict loader's refusal of
+        # a file that now names a key twice.
+        _targets(paths)
     except DdevSyncError as error:
         raise WriteRefused(
             f"writing the target {name!r} to {path} produced a file the loader "
@@ -136,15 +144,15 @@ def _verify(
             f"writing the target {name!r} to {path} would also have changed "
             f"{', '.join(map(repr, keys))} outside `targets`, so nothing was changed"
         )
-    # Defence in depth, and reached only by calling this function directly:
-    # since `config/yamlfile.py` began refusing a file that names a key twice,
-    # every document found that damages a *neighbouring* target is caught
-    # earlier - by that refusal, by the check above, or by the written target
-    # no longer matching its block. The check stays because none of those
-    # three is about this, and a placement that quietly rewrote someone
-    # else's target is the worst thing this module could do.
+    # Compared within this file, not across the merged layers: a stronger
+    # layer defining the same target would otherwise hide a neighbour this
+    # file quietly lost. Reachable, and not only in theory - a quoted target
+    # key the scan misses, plus a multi-line quoted scalar for the block to
+    # land in, corrupts a neighbour while leaving every check above happy.
     changed = [
-        other for other, spec in before.items() if other != name and after.get(other) != spec
+        other
+        for other in set(_file_targets(document)) | set(_file_targets(written))
+        if other != name and _file_targets(document).get(other) != _file_targets(written).get(other)
     ]
     if changed:
         raise WriteRefused(
@@ -171,6 +179,14 @@ def _outside_targets(document: str) -> dict[str, str]:
     """Every top-level key except `targets`, as text, for comparing two files."""
     loaded = yaml.safe_load(document) or {}
     return {str(key): _fingerprint(value) for key, value in loaded.items() if key != TARGETS_KEY}
+
+
+def _file_targets(document: str) -> dict[str, str]:
+    """Every target this one document defines, as text, keyed by name."""
+    targets = (yaml.safe_load(document) or {}).get(TARGETS_KEY)
+    if not isinstance(targets, dict):
+        return {}
+    return {str(name): _fingerprint(value) for name, value in targets.items()}
 
 
 def _targets(paths: ConfigPaths) -> dict[str, Any]:

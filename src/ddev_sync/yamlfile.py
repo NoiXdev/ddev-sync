@@ -30,6 +30,14 @@ class _NoDuplicateKeys(yaml.SafeLoader):
         """Refuse a mapping that names a key twice, then build it as usual."""
         seen: set[Any] = set()
         for key_node, _ in node.value:
+            # A merge key is not a key: `SafeLoader` registers no constructor
+            # for its tag, because `flatten_mapping` expands it afterwards, so
+            # constructing it raises "could not determine a constructor". And
+            # several `<<` in one mapping are legal, so it must not be counted
+            # as a repeat either. Skipping it leaves a duplicate *beside* a
+            # merge still detected, which a test pins.
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
             key = self.construct_object(key_node, deep=True)
             if not isinstance(key, Hashable):
                 break

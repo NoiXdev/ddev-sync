@@ -185,16 +185,18 @@ user to place it by hand.
 2. **Nothing outside `targets` differs** from the same key parsed before the
    write — so `database:`, `sanitize:`, a stray `note:` and anything else are
    untouched.
-3. **Every other target's definition is unchanged**, compared through the real
-   loader as `CollectedTarget.spec`. Definitions, not resolutions: comparing
-   resolved targets would refuse every legitimate edit of a base target, since
-   a child that `extends` it resolves differently by design. That is stated in
-   `write_target`'s own docstring.
-4. **No key appears twice** anywhere in the file, found by walking the composed
-   node tree. PyYAML keeps the last of two equal keys and says nothing, so
-   without this a second `targets:` appended beside one the scan did not
-   recognise reads back as a clean file with the first silently gone — a
-   corrupted file reported as a success.
+3. **Every other target *in this file* is unchanged**, compared as text rather
+   than through the merged layers. Within the file, because a stronger layer
+   defining the same target would otherwise hide a neighbour this file quietly
+   lost. And definitions rather than resolutions, because comparing resolved
+   targets would refuse every legitimate edit of a base target: a child that
+   `extends` it resolves differently by design.
+4. **The configuration loads at all, before and after.** A file that names a
+   key twice is refused by `yamlfile.py` — PyYAML keeps the last of two equal
+   keys and says nothing, so a second `targets:` appended beside one the scan
+   did not recognise would otherwise read back as a clean file with the first
+   silently gone. Checked before the write too: adding a target to a file the
+   engine would misread means building on a document it cannot agree on.
 
 That is what makes the surgery safe without reimplementing YAML. The
 indentation scan matches only a line that is exactly `targets:`, so it misses
