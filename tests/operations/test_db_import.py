@@ -9,6 +9,7 @@ from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.errors import InterruptedAtPrompt
+from ddev_sync.operations import database
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import (
     DUMP_FILENAME,
@@ -259,6 +260,59 @@ def test_no_temporary_file_is_left_behind(tmp_path: Path) -> None:
     path.write_text("SELECT 1;\n", encoding="utf-8")
     strip_definers(path)
     assert list(tmp_path.iterdir()) == [path]
+
+
+class _FailsOnTheSecondLine:
+    """A stand-in for `_DEFINER` that runs out of disk part-way through.
+
+    The real shape of this failure: the temporary copy exists and holds some
+    of the dump when the write fails, which is what makes a leftover file
+    possible at all.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def sub(self, replacement: bytes, line: bytes) -> bytes:
+        self.calls += 1
+        if self.calls > 1:
+            raise OSError(28, "No space left on device")
+        return line
+
+
+def test_a_failed_rewrite_leaves_no_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "dump.sql"
+    path.write_text("SELECT 1;\nSELECT 2;\n", encoding="utf-8")
+    monkeypatch.setattr(database, "_DEFINER", _FailsOnTheSecondLine())
+    with pytest.raises(OSError):
+        strip_definers(path)
+    assert path.read_text(encoding="utf-8") == "SELECT 1;\nSELECT 2;\n"
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_a_failing_cleanup_does_not_hide_the_real_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cleanup must not become the error the caller sees.
+
+    Both errors are `OSError`s, so the assertion is on `errno`: 28 is the
+    disk-full error the rewrite raised, and the refused removal carries none.
+    A cleanup that is not suppressed replaces the first with the second, and
+    the user is told their directory is read-only when their disk is full.
+    """
+    path = tmp_path / "dump.sql"
+    path.write_text("SELECT 1;\nSELECT 2;\n", encoding="utf-8")
+    monkeypatch.setattr(database, "_DEFINER", _FailsOnTheSecondLine())
+
+    def refuse_to_unlink(self: Path, missing_ok: bool = False) -> None:
+        raise PermissionError("the directory is read-only")
+
+    monkeypatch.setattr(Path, "unlink", refuse_to_unlink)
+    with pytest.raises(OSError) as caught:
+        strip_definers(path)
+    assert caught.value.errno == 28
 
 
 def test_binary_content_does_not_break_the_rewrite(tmp_path: Path) -> None:

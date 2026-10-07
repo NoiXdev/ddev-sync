@@ -8,6 +8,7 @@ traceback or a debug log cannot leak a production secret.
 import re
 import shlex
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -390,7 +391,8 @@ class DbImportOperation:
                 "import, so fix the cause and run the sync again rather than "
                 "importing the file directly. A full disk is the likeliest cause - "
                 "the rewrite writes a second copy beside the dump before replacing "
-                "it."
+                "it - and that half-written copy has been removed, so there is "
+                "nothing to clean up by hand."
             ) from error
         self._import(context, database, dump)
         if not context.keep_dump:
@@ -446,12 +448,25 @@ def strip_definers(path: Path) -> None:
     Rewritten in chunks rather than read whole: a 400 MB dump through a single
     `read_bytes` is an avoidable memory spike, and DEFINER clauses never span
     a line boundary.
+
+    Anything that goes wrong takes the half-written copy with it. The dump
+    itself is never at risk - it is only ever read, and replaced in one atomic
+    step at the end - but the copy is as large as the dump, and the likeliest
+    reason to get here is a disk with no room left on it. Leaving a second
+    copy of a 400 MB dump behind, in that situation, would be the worst
+    moment to do it. The removal is suppressed rather than guarded: it must
+    not become the error the caller sees in place of the real one.
     """
     temporary = path.with_suffix(path.suffix + ".tmp")
-    with path.open("rb") as source, temporary.open("wb") as sink:
-        for line in source:
-            sink.write(_DEFINER.sub(b"", line))
-    temporary.replace(path)
+    try:
+        with path.open("rb") as source, temporary.open("wb") as sink:
+            for line in source:
+                sink.write(_DEFINER.sub(b"", line))
+        temporary.replace(path)
+    except BaseException:
+        with suppress(OSError):
+            temporary.unlink()
+        raise
 
 
 def confirm_destructive(question: str) -> bool:
