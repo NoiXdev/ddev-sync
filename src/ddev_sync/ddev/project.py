@@ -69,17 +69,52 @@ def read_ddev_project(project_root: Path) -> DdevProject:
             "Run ddev-sync from inside one."
         )
     document = _read_mapping(config_path)
-    missing = [key for key in ("name", "type") if key not in document]
+    # `document.get(key) is None` rather than `key not in document`: a key
+    # written with no value (`name:`) parses to None, and `str(None)` is the
+    # five-character string "None" - which would have become a project named
+    # None, and a database container called `ddev-None-db`.
+    missing = [key for key in ("name", "type") if document.get(key) is None]
     if missing:
         raise ConfigError(
             f".ddev/config.yaml is missing {', '.join(missing)}; the file looks incomplete"
         )
+    raw_docroot = document.get("docroot")
     return DdevProject(
         name=str(document["name"]),
         type=str(document["type"]),
-        docroot=str(document.get("docroot", "")),
+        # A docroot that is absent, or written with no value, is the project
+        # root itself - the same thing DDEV means by `docroot: ""`.
+        docroot=_validated_docroot("" if raw_docroot is None else str(raw_docroot)),
         root=canonical_root,
     )
+
+
+def _validated_docroot(docroot: str) -> str:
+    """Refuse a docroot that is not a relative path inside the project.
+
+    `docroot` is joined onto `root` by `DdevProject.docroot_path`, and the
+    result is handed to `transport/container.py`, which maps a workdir onto
+    the web container's `/var/www/html` with `Path.relative_to`. An absolute
+    docroot makes that join discard the root entirely (`Path("/a") / "/etc"`
+    is `/etc`), and a `..` segment climbs out of it; either way the path has
+    no place in the container, and the failure used to surface there, as a
+    `ValueError` about a workdir, rather than here, about the line that
+    caused it.
+
+    `..` is refused even where it lands back inside the project, so that the
+    rule is one a reader can hold and matches the one
+    `operations/placeholders.py` already enforces on `${DDEV_DOCROOT}`. That
+    second check stays where it is: it guards shell splicing, which is a
+    different question from containment, and a `DdevProject` built in code
+    does not come through here.
+    """
+    if docroot.startswith("/") or ".." in Path(docroot).parts:
+        raise ConfigError(
+            f"docroot {docroot!r} in .ddev/config.yaml must be a relative path inside the "
+            "project, with no '..' segment - as it is, the web root lands outside the "
+            "project and has no place in the web container"
+        )
+    return docroot
 
 
 def _read_mapping(config_path: Path) -> dict[str, Any]:

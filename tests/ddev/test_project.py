@@ -64,6 +64,58 @@ def test_unparseable_ddev_config_is_reported(tmp_path: Path) -> None:
     assert ".ddev/config.yaml" in str(caught.value)
 
 
+# `docroot:` with nothing after it parses to None, and `str(None)` is the
+# string "None": the project would have looked for its web root in a
+# directory called None. The same shape in `name:` was worse - the database
+# container is named after it, so every local database call would have gone
+# to `ddev-None-db`.
+@pytest.mark.parametrize("key", ["name", "type"])
+def test_a_key_written_with_no_value_counts_as_missing(tmp_path: Path, key: str) -> None:
+    fields = {"name": "acme", "type": "php"}
+    fields[key] = ""
+    write_ddev_config(tmp_path, "".join(f"{k}: {v}\n" for k, v in fields.items()))
+    with pytest.raises(ConfigError) as caught:
+        read_ddev_project(tmp_path)
+    assert key in str(caught.value)
+
+
+def test_a_docroot_written_with_no_value_is_the_project_root(tmp_path: Path) -> None:
+    write_ddev_config(tmp_path, "name: acme\ntype: php\ndocroot:\n")
+    project = read_ddev_project(tmp_path)
+    assert project.docroot == ""
+    assert project.docroot_path == tmp_path.resolve()
+
+
+# An absolute docroot and one that climbs out with `..` are the two ways
+# `root / docroot` stops being inside `root`. Both reach further than the web
+# root itself: `transport/container.py` maps a workdir onto /var/www/html with
+# `relative_to`, and a docroot outside the project has no place there at all.
+@pytest.mark.parametrize("docroot", ["/etc", "../sibling", "public/../../etc"])
+def test_a_docroot_that_leaves_the_project_is_rejected(tmp_path: Path, docroot: str) -> None:
+    write_ddev_config(tmp_path, f"name: acme\ntype: php\ndocroot: {docroot}\n")
+    with pytest.raises(ConfigError) as caught:
+        read_ddev_project(tmp_path)
+    message = str(caught.value)
+    assert docroot in message
+    assert ".ddev/config.yaml" in message
+
+
+# `..` inside a docroot that still lands in the project is not the dangerous
+# shape, but it is refused too: the rule a reader can hold is "a relative path
+# with no `..`", and a containment check alone would accept
+# `public/../public` while `placeholders.py` still refused it.
+def test_a_docroot_that_climbs_and_comes_back_is_also_rejected(tmp_path: Path) -> None:
+    write_ddev_config(tmp_path, "name: acme\ntype: php\ndocroot: public/../public\n")
+    with pytest.raises(ConfigError):
+        read_ddev_project(tmp_path)
+
+
+@pytest.mark.parametrize("docroot", ["", "public", "web/html", "./public"])
+def test_a_docroot_inside_the_project_is_kept_verbatim(tmp_path: Path, docroot: str) -> None:
+    write_ddev_config(tmp_path, f"name: acme\ntype: php\ndocroot: {docroot}\n")
+    assert read_ddev_project(tmp_path).docroot == docroot
+
+
 def test_a_non_mapping_ddev_config_is_rejected(tmp_path: Path) -> None:
     write_ddev_config(tmp_path, "- one\n")
     with pytest.raises(ConfigError) as caught:
