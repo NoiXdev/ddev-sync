@@ -62,6 +62,19 @@ def parse_dep_config(payload: str, alias: str | None) -> DeployerConnection:
     )
 
 
+def list_dep_hosts(payload: str) -> list[str]:
+    """Every host alias Deployer declared, in the order it printed them.
+
+    Separate from `parse_dep_config` because that one answers for a single
+    alias and needs the caller to have chosen it already; a wizard has to
+    offer all of them first. Nothing about the hosts is read, so a host whose
+    values are broken is still listed: the one picked is parsed afterwards,
+    which is where its values are held to account. The list may be empty -
+    what that means is for the caller to say.
+    """
+    return list(_hosts(payload))
+
+
 def _hosts(payload: str) -> dict[str, Any]:
     try:
         data = json.loads(payload)

@@ -144,3 +144,42 @@ def test_a_second_alias_is_served_from_the_same_single_invocation() -> None:
     assert resolve("web-1").host == "web-1.example"
     assert resolve("staging").host == "staging.example"
     assert len(runner.calls) == 1
+
+
+def test_the_hosts_are_listed_from_the_same_single_invocation_that_resolves() -> None:
+    # `init` lists the hosts to pick from, and the check that follows resolves
+    # the one picked. Two evaluations of the project's recipe would be slow and
+    # a second chance for the two to disagree.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout=PAYLOAD)
+    resolve = make_deployer_resolver(project(), runner)
+
+    assert resolve.hosts() == ["web-1", "staging"]
+    assert resolve("staging").host == "staging.example"
+    assert resolve.hosts() == ["web-1", "staging"]
+    assert len(runner.calls) == 1
+
+
+def test_listing_the_hosts_fails_like_resolving_when_dep_fails() -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], returncode=1, stderr="PHP Fatal error in deploy.php")
+    resolve = make_deployer_resolver(project(), runner)
+
+    with pytest.raises(DeployerError) as error:
+        resolve.hosts()
+
+    assert "deploy.php" in str(error.value)
+
+
+def test_an_empty_output_is_remembered_rather_than_asked_for_again() -> None:
+    # `dep` printing nothing is an answer - a malformed one, which the parser
+    # reports - and asking again would not change it.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout="")
+    resolve = make_deployer_resolver(project(), runner)
+
+    for _ in range(2):
+        with pytest.raises(DeployerError):
+            resolve.hosts()
+
+    assert len(runner.calls) == 1

@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from ddev_sync.config.loader import GLOBAL_LABEL, PROJECT_LABEL
 from ddev_sync.config.writer import WriteRefused
 from ddev_sync.operations.base import OperationError
 from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
+from ddev_sync.transport.fake import FakeCommandRunner
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
 
@@ -101,6 +103,7 @@ def script(
     source: Iterable[str | None] = (MANUAL_SOURCE,),
     connection: Iterable[dict[str, object] | None] = (CONNECTION,),
     stage: Iterable[str | None] = ("production",),
+    deployer_host: Iterable[str | None] = (),
 ) -> dict[str, list[tuple[Any, ...]]]:
     """Replace every question `init` asks with scripted answers.
 
@@ -114,10 +117,33 @@ def script(
         ("choose_connection_source", source),
         ("ask_connection", connection),
         ("ask_stage", stage),
+        ("choose_deployer_host", deployer_host),
     ):
         asked[attribute] = []
         monkeypatch.setattr(init, attribute, _queue(answers, attribute, asked[attribute]))
     return asked
+
+
+DEP_CONFIG = json.dumps(
+    {
+        name: {
+            "hostname": f"{name}.example",
+            "remote_user": "deploy",
+            "port": None,
+            "deploy_path": f"/srv/{name}",
+            "current_path": f"/srv/{name}/current",
+        }
+        for name in ("web-1", "staging")
+    }
+)
+
+
+def with_runner(monkeypatch: pytest.MonkeyPatch, **scripted: Any) -> FakeCommandRunner:
+    """Make `main` hand `init` a fake runner whose `docker exec` answers as scripted."""
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], **scripted)
+    monkeypatch.setattr("ddev_sync.cli.main.SubprocessRunner", lambda: runner)
+    return runner
 
 
 def report_green(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -613,18 +639,172 @@ def test_deployer_is_offered_only_when_the_project_has_a_recipe(
     assert seen == [offered]
 
 
-def test_choosing_deployer_says_it_is_not_available_yet_and_writes_nothing(
+def test_a_picked_deployer_host_is_written_as_a_block_naming_the_alias(
     project: Path,
     project_file: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Task 4 replaces this branch, and this test goes with it.
-    script(monkeypatch, source=(DEPLOYER_SOURCE,), connection=(), stage=())
+    (project / "deploy.php").write_text("", encoding="utf-8")
+    runner = with_runner(monkeypatch, stdout=DEP_CONFIG)
+    asked = script(
+        monkeypatch,
+        source=(DEPLOYER_SOURCE,),
+        connection=(),
+        deployer_host=("staging",),
+        # The alias says "staging" and the answer says otherwise: the stage is
+        # asked, not read off the alias.
+        stage=("production",),
+    )
+    hosts = report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    written = project_file.read_text(encoding="utf-8")
+    assert "deployer:\n      host: staging\n" in written
+    assert "stage: production" in written
+    # The engine rejects a connection written beside the block, and resolving
+    # at run time is the point of the block, so nothing was copied in.
+    for copied in ("staging.example", "user:", "port:", "path:", "layout:"):
+        assert copied not in written
+    assert [line for line in written.splitlines() if line.strip().startswith("host:")] == [
+        "      host: staging"
+    ]
+    # Every host Deployer declared was offered, in the order it printed them.
+    assert asked["choose_deployer_host"] == [(["web-1", "staging"],)]
+    assert len(asked["ask_stage"]) == 1
+    # The check resolved the alias that was written, and `dep` ran only once
+    # for the listing, the check and the comparison with what was written.
+    assert hosts == ["staging.example"]
+    assert len(runner.calls) == 1
+    assert f"Wrote the target 'production' to {PROJECT_LABEL}." in capsys.readouterr().out
+
+
+def test_deployer_hosts_are_not_asked_about_when_the_connection_is_entered_by_hand(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (project / "deploy.php").write_text("", encoding="utf-8")
+    runner = with_runner(monkeypatch, stdout=DEP_CONFIG)
+    script(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    ("scripted", "said"),
+    [
+        ({"returncode": 1, "stderr": "PHP Fatal error in deploy.php"}, "deploy.php"),
+        ({"returncode": 127, "stderr": "not found"}, "require-dev"),
+        ({"stdout": "usage: dep [options]"}, "did not print JSON"),
+    ],
+)
+def test_a_failing_dep_config_stops_init_with_nothing_written(
+    scripted: dict[str, Any],
+    said: str,
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Falling back to manual entry would write a target that is not the one
+    # asked for, and the failure - a stopped web container, a recipe that
+    # errors - is one every later run of that target would meet as well.
+    (project / "deploy.php").write_text("", encoding="utf-8")
+    with_runner(monkeypatch, **scripted)
+    asked = script(monkeypatch, source=(DEPLOYER_SOURCE,), connection=(), stage=())
     assert invoke(project, tmp_path) == 1
-    assert "not available yet" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "nothing was written" in error
+    assert said in error
+    assert "by hand" in error
+    assert asked["choose_deployer_host"] == []
     assert not project_file.exists()
+
+
+def test_a_deployer_that_declares_no_hosts_is_an_error_not_an_empty_question(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (project / "deploy.php").write_text("", encoding="utf-8")
+    with_runner(monkeypatch, stdout="{}")
+    asked = script(monkeypatch, source=(DEPLOYER_SOURCE,), connection=(), stage=())
+    assert invoke(project, tmp_path) == 1
+    error = capsys.readouterr().err
+    assert "no hosts" in error
+    assert "nothing was written" in error
+    assert asked["choose_deployer_host"] == []
+    assert not project_file.exists()
+
+
+def test_no_terminal_at_the_host_question_is_the_no_terminal_error(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (project / "deploy.php").write_text("", encoding="utf-8")
+    with_runner(monkeypatch, stdout=DEP_CONFIG)
+    asked = script(
+        monkeypatch, source=(DEPLOYER_SOURCE,), connection=(), stage=(), deployer_host=(None,)
+    )
+    assert invoke(project, tmp_path) == 1
+    assert "none is attached" in capsys.readouterr().err
+    assert asked["ask_stage"] == []
+    assert not project_file.exists()
+
+
+def test_no_terminal_at_the_stage_question_after_a_deployer_host_writes_nothing(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (project / "deploy.php").write_text("", encoding="utf-8")
+    with_runner(monkeypatch, stdout=DEP_CONFIG)
+    script(
+        monkeypatch,
+        source=(DEPLOYER_SOURCE,),
+        connection=(),
+        stage=(None,),
+        deployer_host=("web-1",),
+    )
+    assert invoke(project, tmp_path) == 1
+    assert "none is attached" in capsys.readouterr().err
+    assert not project_file.exists()
+
+
+def test_a_deployer_target_that_already_exists_is_described_as_the_block_it_is(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (project / "deploy.php").write_text("", encoding="utf-8")
+    project_file.write_text(
+        "version: 1\ntargets:\n  production:\n    deployer: {host: old}\n    stage: production\n",
+        encoding="utf-8",
+    )
+    with_runner(monkeypatch, stdout=DEP_CONFIG)
+    script(
+        monkeypatch,
+        source=(DEPLOYER_SOURCE,),
+        connection=(),
+        replacements=(True,),
+        deployer_host=("web-1",),
+    )
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    written = project_file.read_text(encoding="utf-8")
+    assert "host: web-1" in written
+    assert "host: old" not in written
 
 
 def test_outside_a_ddev_project_init_names_the_missing_file(

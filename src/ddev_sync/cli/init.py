@@ -29,6 +29,7 @@ from ddev_sync.cli.prompts import (
     ask_stage,
     ask_target_name,
     choose_connection_source,
+    choose_deployer_host,
     confirm_detection,
     confirm_replacement,
 )
@@ -45,7 +46,8 @@ from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import CollectedTarget, collect_targets, resolve_target
 from ddev_sync.config.writer import WriteRefused, render_target, write_target
 from ddev_sync.ddev.project import DdevProject, read_ddev_project
-from ddev_sync.errors import DdevSyncError
+from ddev_sync.errors import DdevSyncError, DeployerError
+from ddev_sync.transport.deployer import ProjectDeployer, make_deployer_resolver
 from ddev_sync.transport.runner import CommandRunner
 
 DEFAULT_NAME = "production"
@@ -88,22 +90,23 @@ def init_command(
     _confirm_detection(project, paths, type_flag, framework_version_flag)
     name = _ask_name(paths, echo)
 
+    # One resolver for the whole command: it is lazy, so a manual entry never
+    # runs `dep`, and when it does run it is once - for the host list, for the
+    # check, and for reading back what was written.
+    deployer = make_deployer_resolver(project, runner)
     source = choose_connection_source(deployer_available=_has_deployer_recipe(project.root))
     if source is None:
         raise _no_terminal()
-    if source == DEPLOYER_SOURCE:
-        raise DdevSyncError(
-            "importing a target from Deployer is not available yet; "
-            "run 'ddev sync init' again and enter the connection by hand"
-        )
-
-    connection = ask_connection()
-    if connection is None:
-        raise _no_terminal()
+    connection = (
+        _deployer_connection(deployer) if source == DEPLOYER_SOURCE else _manual_connection()
+    )
     stage = ask_stage()
     if stage is None:
         raise _no_terminal()
 
+    # Stage is asked whichever way the connection was given. A Deployer alias
+    # is not a stage - hosts are named `production` by some projects and after
+    # a machine by others - and a target without one does not resolve.
     block = render_target(name, {**connection, "stage": stage})
     try:
         write_target(path=paths.project_config, paths=paths, name=name, block=block)
@@ -126,9 +129,10 @@ def init_command(
             profile_root=profile_root,
             feature_root=feature_root,
             runner=runner,
+            deployer=deployer,
         )
         code = doctor_command(context, echo, runner=runner, colour=colour)
-        written = _written_target(paths, name)
+        written = _written_target(paths, name, deployer)
         others = _other_layers_defining(paths, name)
     except DdevSyncError as error:
         raise DdevSyncError(
@@ -239,10 +243,14 @@ def _targets_in_project_file(paths: ConfigPaths) -> dict[str, CollectedTarget]:
     return collect_targets(own)
 
 
-def _written_target(paths: ConfigPaths, name: str) -> ResolvedTarget:
-    """`name` as the project file alone defines it: what was just written."""
+def _written_target(paths: ConfigPaths, name: str, deployer: ProjectDeployer) -> ResolvedTarget:
+    """`name` as the project file alone defines it: what was just written.
+
+    The resolver is needed for a `deployer:` block, which is what an import
+    writes; without it the block cannot be resolved and the read-back fails.
+    """
     own = [layer for layer in load_user_layers(paths) if layer.label == PROJECT_LABEL]
-    return resolve_target(name, collect_targets(own))
+    return resolve_target(name, collect_targets(own), resolve_deployer=deployer)
 
 
 def _other_layers_defining(paths: ConfigPaths, name: str) -> list[str]:
@@ -260,6 +268,48 @@ def _free_name(name: str, taken: dict[str, CollectedTarget]) -> str:
     while f"{name}-{number}" in taken:
         number += 1
     return f"{name}-{number}"
+
+
+def _manual_connection() -> dict[str, object]:
+    connection = ask_connection()
+    if connection is None:
+        raise _no_terminal()
+    return connection
+
+
+def _deployer_connection(deployer: ProjectDeployer) -> dict[str, object]:
+    """The `deployer:` block for the host the user picks from Deployer's own list.
+
+    The block names the alias and nothing else. The engine rejects a host,
+    user, port or path beside it, and resolving them when a run needs them is
+    what keeps a project that redeploys elsewhere working without anyone
+    editing this file.
+
+    When `dep config` cannot be read this stops rather than falling back to
+    manual entry. The user asked for the connection to come from Deployer; a
+    target typed in instead would not be that, and whatever broke - a stopped
+    web container, a recipe that errors, no `dep` - breaks every later run of a
+    `deployer:` target the same way, so it is better met here, before a write.
+    Nothing has been written at this point, which the message says, so there is
+    no target to believe in.
+    """
+    try:
+        hosts = deployer.hosts()
+    except DeployerError as error:
+        raise DeployerError(
+            f"nothing was written: the hosts could not be read from Deployer: {error}. "
+            "Fix that and run 'ddev sync init' again, or choose to enter the connection by hand."
+        ) from error
+    if not hosts:
+        raise DeployerError(
+            "nothing was written: 'dep config' ran, but Deployer declares no hosts. Declare one "
+            "in deploy.php or deploy.yaml and run 'ddev sync init' again, or choose to enter "
+            "the connection by hand."
+        )
+    alias = choose_deployer_host(hosts)
+    if alias is None:
+        raise _no_terminal()
+    return {"deployer": {"host": alias}}
 
 
 def _has_deployer_recipe(root: Path) -> bool:

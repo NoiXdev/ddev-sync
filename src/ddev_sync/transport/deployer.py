@@ -13,9 +13,7 @@ recipe, so repeating it would be both slow and a second chance to get a
 different answer inside one sync.
 """
 
-from collections.abc import Callable
-
-from ddev_sync.config.deployer import DeployerConnection, parse_dep_config
+from ddev_sync.config.deployer import DeployerConnection, list_dep_hosts, parse_dep_config
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.errors import DeployerError
 from ddev_sync.transport.container import web_command
@@ -38,18 +36,38 @@ _SUBCOMMAND = ("config", "--format=json")
 _NOT_FOUND = 127
 
 
-def make_deployer_resolver(
-    project: DdevProject, runner: CommandRunner
-) -> Callable[[str | None], DeployerConnection]:
+class ProjectDeployer:
+    """Resolves `deployer: {host: <alias>}`, and lists the hosts Deployer declares.
+
+    Both read the same `dep config` output, which is fetched on first use and
+    kept. `init` lists the hosts to choose from and the check that follows
+    resolves the one chosen; with two fetches the project's recipe would be
+    evaluated twice, once more than anything needs.
+    """
+
+    def __init__(self, project: DdevProject, runner: CommandRunner) -> None:
+        self._project = project
+        self._runner = runner
+        # `None` means "not asked yet", so an empty output is kept as the
+        # answer it is instead of being asked for again.
+        self._text: str | None = None
+
+    def __call__(self, alias: str | None) -> DeployerConnection:
+        return parse_dep_config(self._config(), alias)
+
+    def hosts(self) -> list[str]:
+        """The host aliases Deployer declares, in the order it printed them."""
+        return list_dep_hosts(self._config())
+
+    def _config(self) -> str:
+        if self._text is None:
+            self._text = _dep_config(self._project, self._runner)
+        return self._text
+
+
+def make_deployer_resolver(project: DdevProject, runner: CommandRunner) -> ProjectDeployer:
     """Build a resolver for `deployer: {host: <alias>}`, running `dep` at most once."""
-    cache: list[str] = []
-
-    def resolve(alias: str | None) -> DeployerConnection:
-        if not cache:
-            cache.append(_dep_config(project, runner))
-        return parse_dep_config(cache[0], alias)
-
-    return resolve
+    return ProjectDeployer(project, runner)
 
 
 def _dep_config(project: DdevProject, runner: CommandRunner) -> str:

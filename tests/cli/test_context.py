@@ -4,7 +4,9 @@ from pathlib import Path
 import pytest
 
 from ddev_sync.cli.context import build_context
+from ddev_sync.ddev.project import read_ddev_project
 from ddev_sync.errors import ConfigError, TargetError
+from ddev_sync.transport.deployer import make_deployer_resolver
 from ddev_sync.transport.fake import FakeCommandRunner
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
@@ -527,3 +529,26 @@ def test_a_deployer_target_without_a_runner_says_so(project: Path, tmp_path: Pat
         )
 
     assert "'deployer:' block" in str(caught.value)
+
+
+def test_a_resolver_that_was_already_used_is_not_asked_again(project: Path, tmp_path: Path) -> None:
+    # `init` lists the hosts through one resolver and then checks the target it
+    # wrote; handing the same resolver over is what keeps that to one `dep`.
+    _write_deployer_target(project)
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout=DEP_CONFIG)
+    resolver = make_deployer_resolver(read_ddev_project(project), runner)
+    assert resolver.hosts() == ["web-1"]
+
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag=None,
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        deployer=resolver,
+    )
+
+    assert context.target.host == "web-1.example"
+    assert len(runner.calls) == 1

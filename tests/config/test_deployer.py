@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ddev_sync.config.deployer import _QUOTED_OUTPUT_LIMIT, parse_dep_config
+from ddev_sync.config.deployer import _QUOTED_OUTPUT_LIMIT, list_dep_hosts, parse_dep_config
 from ddev_sync.errors import DeployerError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dep-config-t3-13-ssg.json"
@@ -213,3 +213,39 @@ def test_output_that_is_empty_says_it_printed_nothing(output: str) -> None:
 @pytest.mark.parametrize("key", ["deploy_path", "remote_user"])
 def test_a_whitespace_only_required_value_counts_as_missing(key: str) -> None:
     assert key in _failure(_payload(**{key: "   "}))
+
+
+def test_every_host_can_be_listed_for_a_picker() -> None:
+    # `parse_dep_config` answers for one alias; the wizard has to offer all of
+    # them, and §9 of the matrix findings says never to assume there is only
+    # one - a Deployer config routinely lists build hosts beside environments.
+    payload = (
+        '{"prod": {"hostname": "a", "remote_user": "u", "deploy_path": "/srv/a"},'
+        ' "build": {"hostname": "b", "remote_user": "u", "deploy_path": "/srv/b"}}'
+    )
+    assert list_dep_hosts(payload) == ["prod", "build"]
+
+
+def test_the_order_of_the_listing_is_the_order_deployer_printed() -> None:
+    # Not sorted: the recipe's own order is the one its author chose to read.
+    assert list_dep_hosts('{"zeta": {}, "alpha": {}}') == ["zeta", "alpha"]
+
+
+def test_listing_hosts_does_not_read_their_connection_values() -> None:
+    # A host whose `deploy_path` is an error object still gets offered: the
+    # listing says what Deployer declares, and resolving the one that is
+    # picked is where its values are held to account.
+    assert list_dep_hosts('{"broken": {"deploy_path": {"error": "boom"}}}') == ["broken"]
+
+
+def test_a_payload_with_no_hosts_lists_none() -> None:
+    # Whether that is an error is the caller's to say: the message it needs
+    # depends on what the caller was about to do with the list.
+    assert list_dep_hosts("{}") == []
+
+
+def test_listing_hosts_reports_the_same_error_as_parsing_one() -> None:
+    with pytest.raises(DeployerError):
+        list_dep_hosts("not json")
+    with pytest.raises(DeployerError):
+        list_dep_hosts("[]")
