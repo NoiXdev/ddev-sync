@@ -305,6 +305,22 @@ def test_the_name_question_passes_a_missing_terminal_through(
     assert prompts.ask_target_name() is None
 
 
+def test_the_name_question_refuses_an_emptied_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An empty name would be written as `targets: {"": ...}`. The refusal is
+    # questionary's to enforce in the prompt, so what is checked is that the
+    # question hands it the validator that says no to blank text.
+    seen: list[object] = []
+
+    def fake_text(_question: str, _default: str, validate: object = None) -> str:
+        seen.append(validate)
+        return "production"
+
+    monkeypatch.setattr(prompts, "_text", fake_text)
+    prompts.ask_target_name()
+    assert seen == [prompts._required]
+    assert isinstance(prompts._required(""), str)
+
+
 def test_deployer_is_offered_as_a_connection_source_only_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

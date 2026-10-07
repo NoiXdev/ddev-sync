@@ -125,7 +125,7 @@ def confirm_detection(profile: str, source: str) -> bool | None:
 
 def ask_target_name(default: str = "production") -> str | None:
     """Ask what the new target should be called."""
-    return _text("What should the target be called?", default)
+    return _text("What should the target be called?", default, _required)
 
 
 def choose_connection_source(deployer_available: bool) -> str | None:
