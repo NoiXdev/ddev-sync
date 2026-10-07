@@ -55,6 +55,7 @@ from ddev_sync.cli.commands import (
     targets_command,
 )
 from ddev_sync.cli.context import RunContext, build_context
+from ddev_sync.cli.init import init_command
 from ddev_sync.ddev.project import DEFAULT_PROJECT_ROOT
 from ddev_sync.engine.plan import available_selection_groups
 from ddev_sync.engine.steps import SELECTION_GROUPS
@@ -210,6 +211,18 @@ def cli(
     _reject_build_conflicts(
         ctx.invoked_subcommand, steps, features_flag, no_features, only_feature_setup
     )
+    _reject_init_conflicts(
+        ctx.invoked_subcommand,
+        {
+            "--target": target_name,
+            "--steps": steps,
+            "--features": features_flag,
+            "--no-features": no_features,
+            "--only-feature-setup": only_feature_setup,
+            "--dry-run": dry_run,
+            "--yes": assume_yes,
+        },
+    )
     ctx.obj = _Options(
         project_root=project_root,
         home=home if home is not None else Path.home(),
@@ -287,6 +300,26 @@ def _reject_build_conflicts(
         )
 
 
+def _reject_init_conflicts(invoked_subcommand: str | None, given: dict[str, object]) -> None:
+    """Refuse `init` combined with an option that would be accepted and ignored.
+
+    `--dry-run` is the one that matters: `init` writes a file, and a user who
+    typed it expected nothing to change. The others - `--yes` cannot answer a
+    question about a host, `--target` is the name the wizard asks for - would
+    be dropped just as silently, which is the failure `_reject_build_conflicts`
+    exists for. `--type` and `--framework-version` are not here: `init` uses
+    both, for the question about what the project is and for the check after.
+    """
+    if invoked_subcommand != "init":
+        return
+    for option, value in given.items():
+        if value is not None and value is not False:
+            raise click.UsageError(
+                f"{option} cannot be combined with 'init'; "
+                "init asks for what it needs and would ignore it"
+            )
+
+
 @cli.command("help")
 @click.argument("command", required=False)
 @click.pass_context
@@ -349,6 +382,24 @@ def doctor_cmd(options: _Options) -> int:
     # click's own default in place when colour is off.
     echo = partial(click.echo, color=True if use_colour else None)
     return doctor_command(context, echo, runner=options.runner, colour=use_colour)
+
+
+@cli.command("init")
+@click.pass_obj
+def init_cmd(options: _Options) -> int:
+    """Create a sync target, then check it."""
+    use_colour = colour_enabled(os.environ, sys.stdout)
+    return init_command(
+        project_root=options.project_root,
+        home=options.home,
+        profile_root=options.profile_root,
+        feature_root=options.feature_root,
+        runner=options.runner,
+        echo=partial(click.echo, color=True if use_colour else None),
+        colour=use_colour,
+        type_flag=options.type_flag,
+        framework_version_flag=options.framework_version_flag,
+    )
 
 
 @cli.command("build")

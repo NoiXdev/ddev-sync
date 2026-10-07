@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ddev_sync.config.detect import resolve_profile_name, resolve_version
+from ddev_sync.config.detect import Resolution, resolve_profile_name, resolve_version
 from ddev_sync.config.loader import discover_config_paths, load_user_layers
 from ddev_sync.config.merge import LayerDoc, MergeResult, merge_layers
 from ddev_sync.config.models import ResolvedTarget
@@ -31,6 +31,47 @@ class RunContext:
     features: FeatureResolution = field(default_factory=FeatureResolution)
 
 
+@dataclass(frozen=True)
+class Detection:
+    """The profile and framework major version a project resolves to, with sources."""
+
+    profile: Resolution
+    version: Resolution | None
+
+
+def detect_project(
+    project: DdevProject,
+    user_merged: MergeResult,
+    type_flag: str | None,
+    framework_version_flag: str | None,
+) -> Detection:
+    """Resolve the profile name and framework major version, flag first.
+
+    The order is the flag, then `project.type` / `project.version` in the user
+    configuration, then detection (`config/detect.py`). It is its own function
+    so that `ddev sync init` asks about exactly what a run would use.
+    """
+    configured = _as_mapping(user_merged.data.get("project"), "project")
+
+    profile_resolution = resolve_profile_name(
+        type_flag, _text(configured.get("type")), project.type
+    )
+    # `resolve_profile_name` only returns `None` when its `ddev_type` argument
+    # is `None`. `project.type` is a required field on `DdevProject`
+    # (`read_ddev_project` already raised `ConfigError` if `.ddev/config.yaml`
+    # lacked it), so it is never `None` here and neither is this result. The
+    # assert documents that invariant for the type checker instead of writing
+    # an untestable `DetectionError` branch that this call site can never
+    # reach - `DetectionError` remains reserved for detectors that genuinely
+    # can return "unknown" (see `config/detect.py`).
+    assert profile_resolution is not None
+
+    version_resolution = resolve_version(
+        framework_version_flag, _text(configured.get("version")), project, profile_resolution.value
+    )
+    return Detection(profile=profile_resolution, version=version_resolution)
+
+
 def build_context(
     *,
     project_root: Path,
@@ -53,28 +94,11 @@ def build_context(
     project = read_ddev_project(project_root)
     user_layers = load_user_layers(discover_config_paths(project_root, home))
     user_merged = merge_layers(user_layers)
-    configured = _as_mapping(user_merged.data.get("project"), "project")
-
-    profile_resolution = resolve_profile_name(
-        type_flag, _text(configured.get("type")), project.type
-    )
-    # `resolve_profile_name` only returns `None` when its `ddev_type` argument
-    # is `None`. `project.type` is a required field on `DdevProject`
-    # (`read_ddev_project` already raised `ConfigError` if `.ddev/config.yaml`
-    # lacked it), so it is never `None` here and neither is this result. The
-    # assert documents that invariant for the type checker instead of writing
-    # an untestable `DetectionError` branch that this call site can never
-    # reach - `DetectionError` remains reserved for detectors that genuinely
-    # can return "unknown" (see `config/detect.py`).
-    assert profile_resolution is not None
-
-    version_resolution = resolve_version(
-        framework_version_flag, _text(configured.get("version")), project, profile_resolution.value
-    )
-    major = None if version_resolution is None else version_resolution.value
+    detection = detect_project(project, user_merged, type_flag, framework_version_flag)
+    major = None if detection.version is None else detection.version.value
 
     registry = ProfileRegistry(profile_root)
-    profile = registry.resolve(profile_resolution.value, major)
+    profile = registry.resolve(detection.profile.value, major)
 
     # Features need the profile's name (to filter `applies_to`), so they can
     # only be resolved once the profile itself is - and must happen before
