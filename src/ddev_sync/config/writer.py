@@ -55,8 +55,27 @@ def render_target(name: str, fields: Mapping[str, Any]) -> str:
 def place_target(document: str, name: str, block: str) -> str:
     """Return `document` with `block` as the `name` target under `targets:`.
 
-    The line ending the document already uses is the one the block gets, so a
-    CRLF file does not end up with both.
+    Part A's entry point, kept because its callers and its tests name it, and
+    because "place a target" is what `init` is doing at that call site. The
+    mechanism beneath it is no longer target-specific.
+    """
+    return place_entry(document, (TARGETS_KEY, name), block)
+
+
+def place_entry(document: str, path: tuple[str, ...], block: str) -> str:
+    """Return `document` with `block` as the value at `path`.
+
+    `block` arrives already indented for its depth - `render_target` and
+    `render_setting` both do that - so this function places lines, it does not
+    reformat them.
+
+    The walk is the same one part A did by hand for `targets:` then the target
+    name, with the depth no longer fixed at two: each key is looked for within
+    the block its parent opened, and the first key that is not there ends the
+    search, because everything below a key that does not exist cannot exist
+    either. The scan stays as naive as part A's - only an exactly-spelled
+    `key:` line counts - and `write_target` and `write_settings` are what make
+    that safe.
     """
     eol = "\r\n" if "\r\n" in document else "\n"
     block = block.replace("\n", eol)
@@ -65,15 +84,42 @@ def place_target(document: str, name: str, block: str) -> str:
     if document and not document.endswith("\n"):
         document += eol
     lines = document.splitlines(keepends=True)
-    start = _targets_line(lines)
-    if start is None:
-        return f"{document}{eol}{TARGETS_KEY}:{eol}{block}"
-    existing = _target_line(lines, start, name)
-    if existing is None:
-        end = _block_end(lines, start)
-        return "".join(lines[:end]) + block + "".join(lines[end:])
-    end = _block_end(lines, existing)
-    return "".join(lines[:existing]) + block + "".join(lines[end:])
+    low, high = 0, len(lines)
+    for level, key in enumerate(path[:-1]):
+        found = _key_line(lines, low, high, key, _INDENT * level, inline=False)
+        if found is None:
+            return _append(lines, high, path[level:-1], block, eol, level)
+        low, high = found + 1, _block_end(lines, found)
+    depth = len(path) - 1
+    found = _key_line(lines, low, high, path[-1], _INDENT * depth, inline=True)
+    if found is None:
+        return _append(lines, high, (), block, eol, depth)
+    return "".join(lines[:found]) + block + "".join(lines[_block_end(lines, found) :])
+
+
+def _append(
+    lines: list[str],
+    at: int,
+    parents: tuple[str, ...],
+    block: str,
+    eol: str,
+    level: int,
+) -> str:
+    """Insert `parents` (as empty mappings) and then `block` at line `at`.
+
+    A new **top-level** key is preceded by a blank line, which is what part A
+    did for a newly created `targets:` and what keeps the shipped template -
+    which is almost entirely comments - readable after `init` has written to
+    it. A nested key gets no such separator: a blank line inside a mapping
+    reads as the end of it.
+    """
+    head = "".join(lines[:at])
+    if level == 0 and head:
+        head += eol
+    opening = "".join(
+        f"{_INDENT * depth}{name}:{eol}" for depth, name in enumerate(parents, start=level)
+    )
+    return head + opening + block + "".join(lines[at:])
 
 
 def write_target(*, path: Path, paths: ConfigPaths, name: str, block: str) -> None:
@@ -229,22 +275,31 @@ def _restore(path: Path, original: bytes | None) -> None:
     _write(path, original)
 
 
-def _targets_line(lines: list[str]) -> int | None:
-    """The index of the first line that is exactly `targets:`, if any.
+def _key_line(
+    lines: list[str], low: int, high: int, key: str, indent: str, *, inline: bool
+) -> int | None:
+    """The index in `lines[low:high]` of the line opening `key`, if any.
 
-    Only that spelling is found: `targets: {...}`, `targets:  # note` and a
-    quoted key are not, and the same text inside a multi-line quoted scalar is
-    taken for the real thing. `write_target`'s check exists to catch both.
+    `inline` is the difference between a key on the way down and the key being
+    written. A **parent** must be a bare `key:` - the walk descends into the
+    block it opens, and `targets: {a: 1}` opens no block, so matching it would
+    mean descending into nothing. A **leaf** may carry its value on the same
+    line, because that is what every scalar looks like (`production_url:
+    https://...`) and what this module writes for a list (`features: [a, b]`).
+    Without that, nothing `write_settings` wrote could ever be rewritten: the
+    second run would not find its own key, would append a duplicate, and the
+    strict loader would refuse the result - `init` would work exactly once per
+    project.
+
+    Still not found, by design: a quoted key, `key:  # note`, and the same text
+    inside a multi-line quoted scalar, which is taken for the real thing. The
+    checks in `write_target` and `write_settings` exist to catch all three.
     """
-    for index, line in enumerate(lines):
-        if line.rstrip("\r\n") == f"{TARGETS_KEY}:":
+    for index in range(low, high):
+        text = lines[index].rstrip("\r\n")
+        if text == f"{indent}{key}:":
             return index
-    return None
-
-
-def _target_line(lines: list[str], start: int, name: str) -> int | None:
-    for index in range(start + 1, _block_end(lines, start)):
-        if lines[index].rstrip("\r\n") == f"{_INDENT}{name}:":
+        if inline and text.startswith(f"{indent}{key}: "):
             return index
     return None
 
@@ -257,6 +312,13 @@ def _block_end(lines: list[str], start: int) -> int:
     a trailing note at the end of the file, and a replacement that took them
     along would delete someone's comment. A comment between two content
     lines is inside the block and goes with it.
+
+    A **sequence item at the key's own indent** is part of that key's value,
+    not the start of the next one. `file:` followed by `- .env` at the same
+    column is how PyYAML itself writes a list and how most people write one by
+    hand; treating those items as outside the block would make a replacement
+    leave them behind, stranded under a mapping line, which is not even valid
+    YAML. Reachable through `env.file`, which is exactly that shape.
     """
     opening = len(lines[start]) - len(lines[start].lstrip())
     end = start + 1
@@ -264,7 +326,10 @@ def _block_end(lines: list[str], start: int) -> int:
         stripped = lines[index].strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if len(lines[index]) - len(lines[index].lstrip()) <= opening:
+        here = len(lines[index]) - len(lines[index].lstrip())
+        if here < opening:
+            break
+        if here == opening and not (stripped == "-" or stripped.startswith("- ")):
             break
         end = index + 1
     return end

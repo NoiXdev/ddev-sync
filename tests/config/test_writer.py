@@ -3,11 +3,13 @@ import stat
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ddev_sync.config import writer
 from ddev_sync.config.loader import ConfigPaths, discover_config_paths
 from ddev_sync.config.writer import (
     WriteRefused,
+    place_entry,
     place_target,
     render_target,
     write_target,
@@ -458,3 +460,108 @@ def test_a_symlinked_file_stays_a_symlink(tmp_path: Path) -> None:
     )
     assert path.is_symlink()
     assert "web01.example" in real.read_text(encoding="utf-8")
+
+
+def test_place_entry_writes_a_nested_key_into_an_existing_parent() -> None:
+    document = "version: 1\nenv:\n  strategy: patch_keys\n"
+    result = place_entry(document, ("env", "file"), "  file: [.env.ddev]\n")
+    assert result == "version: 1\nenv:\n  strategy: patch_keys\n  file: [.env.ddev]\n"
+
+
+def test_place_entry_replaces_the_nested_key_it_finds() -> None:
+    document = "version: 1\nenv:\n  file: [.env]\n  strategy: patch_keys\n"
+    result = place_entry(document, ("env", "file"), "  file: [.env.ddev]\n")
+    assert result == "version: 1\nenv:\n  file: [.env.ddev]\n  strategy: patch_keys\n"
+
+
+def test_place_entry_creates_the_missing_parent() -> None:
+    document = "version: 1\n"
+    result = place_entry(
+        document, ("sanitize", "production_url"), "  production_url: https://a.example\n"
+    )
+    assert result == "version: 1\n\nsanitize:\n  production_url: https://a.example\n"
+
+
+def test_place_entry_writes_a_whole_top_level_key() -> None:
+    document = "version: 1\n"
+    result = place_entry(document, ("features",), "features:\n- horizon\n")
+    assert result == "version: 1\n\nfeatures:\n- horizon\n"
+
+
+def test_place_entry_replaces_a_whole_top_level_key() -> None:
+    document = "version: 1\nfeatures:\n- horizon\n- livewire\nother: 1\n"
+    result = place_entry(document, ("features",), "features:\n- horizon\n")
+    assert result == "version: 1\nfeatures:\n- horizon\nother: 1\n"
+
+
+def test_place_entry_keeps_a_comment_above_the_next_key() -> None:
+    # `_block_end`'s rule: the comment belongs to `other`, not to `features`.
+    document = "version: 1\nfeatures:\n- horizon\n\n# What follows is unrelated.\nother: 1\n"
+    result = place_entry(document, ("features",), "features:\n- livewire\n")
+    assert "# What follows is unrelated.\n" in result
+    assert "- horizon" not in result
+
+
+def test_place_entry_uses_the_documents_own_line_ending_for_parents() -> None:
+    # Review Focus 2: a CRLF file must not end up with both endings, and the
+    # parent line `place_entry` invents is as much at risk as the block.
+    document = "version: 1\r\n"
+    result = place_entry(
+        document, ("sanitize", "production_url"), "  production_url: https://a.example\n"
+    )
+    assert "\n" not in result.replace("\r\n", "")
+
+
+def test_place_entry_takes_a_sequence_written_at_the_keys_own_indent() -> None:
+    # PyYAML writes a block list's items at the *same* indent as the key, so
+    # `_block_end`'s "children are more indented" rule would end the block
+    # above them and a replacement would leave the old items behind - as a
+    # mapping line followed by stray sequence items, which is not valid YAML.
+    document = "version: 1\nenv:\n  file:\n  - .env\n  - .env.local\n  strategy: patch_keys\n"
+    result = place_entry(document, ("env", "file"), "  file: [.env.ddev]\n")
+    assert result == "version: 1\nenv:\n  file: [.env.ddev]\n  strategy: patch_keys\n"
+
+
+def test_place_entry_stops_a_sequence_at_a_shallower_sibling() -> None:
+    # Unlike the test above, nothing shares `file`'s own indent afterwards -
+    # the next key is a sibling of `env` itself, two levels shallower than the
+    # sequence items. `_block_end` must still stop there rather than reading
+    # `here <= opening` as "equal counts", which is what the single combined
+    # condition before this task used.
+    document = "version: 1\nenv:\n  file:\n  - .env\n  - .env.local\nfeatures:\n- horizon\n"
+    result = place_entry(document, ("env", "file"), "  file: [.env.ddev]\n")
+    assert result == "version: 1\nenv:\n  file: [.env.ddev]\nfeatures:\n- horizon\n"
+
+
+def test_place_entry_rewrites_a_key_it_wrote_itself() -> None:
+    # The one that matters most: `write_settings` writes a leaf with its value
+    # on the same line, so a second run must find that line. Without the
+    # `inline` match it appends a duplicate key instead and `init` works
+    # exactly once per project.
+    document = "version: 1\n"
+    for url in ("https://one.example", "https://two.example", "https://three.example"):
+        document = place_entry(
+            document, ("sanitize", "production_url"), f"  production_url: {url}\n"
+        )
+    assert document.count("sanitize:") == 1
+    assert yaml.safe_load(document)["sanitize"]["production_url"] == "https://three.example"
+
+
+def test_place_target_still_appends_targets_exactly_as_before() -> None:
+    # Part A's behaviour, pinned here as well as in its own tests: the wrapper
+    # must not change the blank line before a newly created `targets:`.
+    document = "version: 1\n"
+    assert place_target(document, "production", "  production:\n    stage: production\n") == (
+        "version: 1\n\ntargets:\n  production:\n    stage: production\n"
+    )
+
+
+def test_place_entry_does_not_descend_into_an_inline_parent() -> None:
+    # Part A's flow-mapping cases, as a property of `place_entry` itself: a
+    # parent carrying its value inline opens no block, so it is not matched
+    # and the result names the key twice - which the strict loader refuses and
+    # `write_target`/`write_settings` then undo.
+    document = "version: 1\ntargets: {production: {host: old.example}}\n"
+    result = place_target(document, "production", "  production:\n    host: new.example\n")
+    assert result.count("targets:") == 2
+    assert "old.example" in result
