@@ -46,7 +46,8 @@ def collect_targets(layers: Sequence[LayerDoc]) -> dict[str, CollectedTarget]:
     )
     raw_targets = _as_mapping(merged.data.get("targets"), "targets")
     collected: dict[str, CollectedTarget] = {}
-    for name, raw in raw_targets.items():
+    for raw_name, raw in raw_targets.items():
+        name = _validated_name(raw_name)
         collected[name] = CollectedTarget(
             spec=_parse_spec(name, raw),
             source=_strongest_source(name, raw, merged.scalar_sources, layers),
@@ -57,6 +58,54 @@ def collect_targets(layers: Sequence[LayerDoc]) -> dict[str, CollectedTarget]:
 def list_target_names(collected: Mapping[str, CollectedTarget]) -> list[str]:
     """Target names in a stable order, for menus and `ddev sync targets`."""
     return sorted(collected)
+
+
+# What YAML 1.1 - which PyYAML implements - reads an unquoted key as, in the
+# words the message uses. `bool` before `int` matters only to a reader: the
+# lookup is by exact type, so `True` cannot fall through to the `int` entry
+# the way `isinstance` would let it.
+_NAME_KINDS: dict[type, str] = {
+    bool: "a boolean: unquoted yes, no, on, off, true and false are booleans to YAML",
+    int: "a number",
+    float: "a number",
+}
+
+
+def _validated_name(name: Any) -> str:
+    """Refuse a target name YAML did not read as text.
+
+    `targets:` keys come straight from the user's file, and YAML 1.1 reads
+    `yes:` as the boolean true, `2026:` as a number and `2026-10-07:` as a
+    date. Such a key is never the text that was written, so `--target yes`
+    cannot match it and `ddev sync targets` lists `True`; with one ordinary
+    target beside it, sorting the names raised a bare `TypeError` comparing a
+    bool with a str, part-way through a command. Refusing the key here, where
+    every layer's targets have just been merged, is ahead of all of that -
+    including `config/writer.py`, whose pre-write load goes through this
+    function and so now refuses such a file by name instead of reporting that
+    writing one target "would also have changed True".
+    """
+    if isinstance(name, str):
+        return name
+    # An empty key is its own thing: there is no name to quote, so the fix is
+    # not the one every other case gets.
+    if name is None:
+        raise ConfigError(
+            "a target under `targets:` has no name at all - an empty key, or `~`, is null "
+            "to YAML, not a name. Give the target a name."
+        )
+    kind = _NAME_KINDS.get(type(name), "not text")
+    # The spelling is recoverable for everything except a boolean, where
+    # `True` says nothing about which of six words was written.
+    quoted = "`'yes':` rather than `yes:`" if isinstance(name, bool) else f"`'{name}':`"
+    # `str`, not `repr`: for a number or a date it gives back the spelling the
+    # user wrote, and `datetime.date(2026, 10, 7)` is not a thing to show
+    # somebody looking for the line to fix. For a boolean it gives `True`,
+    # which is what the listing showed before this refusal existed.
+    raise ConfigError(
+        f"the target name {name} is {kind}. Quote it in the configuration - "
+        f"{quoted} - so that the name is the text you wrote."
+    )
 
 
 def _as_mapping(raw: Any, label: str) -> dict[str, Any]:

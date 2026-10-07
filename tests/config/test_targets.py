@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+from datetime import date
 from typing import Any
 
 import pytest
@@ -63,6 +64,50 @@ def test_a_non_mapping_targets_block_is_rejected() -> None:
     with pytest.raises(ConfigError) as caught:
         collect_targets([LayerDoc("project", {"targets": ["oops"]})])
     assert "targets" in str(caught.value)
+
+
+# YAML 1.1, which PyYAML implements, reads an unquoted `yes:` as the boolean
+# true and `2026:` as a number. The key then is not the text the user wrote,
+# so `--target yes` can never match it, `ddev sync targets` prints `True`,
+# and - with one ordinary target beside it - `sorted()` raises a bare
+# `TypeError` comparing a bool with a str, mid-command.
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (True, "boolean"),
+        (2026, "number"),
+        (1.5, "number"),
+        (date(2026, 10, 7), "not text"),
+    ],
+)
+def test_a_target_name_that_is_not_text_is_refused(name: Any, expected: str) -> None:
+    with pytest.raises(ConfigError) as caught:
+        collect_targets([layer("project", {name: {"host": "web01.example"}})])
+    message = str(caught.value)
+    assert expected in message
+    assert "Quote it" in message
+
+
+# A key with nothing before the colon has no spelling to quote, so telling
+# the user to quote it would be advice they cannot follow.
+def test_a_target_with_no_name_at_all_is_told_to_get_one() -> None:
+    with pytest.raises(ConfigError) as caught:
+        collect_targets([layer("project", {None: {"host": "web01.example"}})])
+    message = str(caught.value)
+    assert "Give the target a name" in message
+    assert "Quote it" not in message
+
+
+def test_the_refusal_shows_the_quoted_name_it_can_recover() -> None:
+    with pytest.raises(ConfigError) as caught:
+        collect_targets([layer("project", {2026: {"host": "web01.example"}})])
+    assert "'2026'" in str(caught.value)
+
+
+def test_a_boolean_name_beside_an_ordinary_one_no_longer_crashes() -> None:
+    """The symptom that made this worth fixing: a `TypeError` from `sorted`."""
+    with pytest.raises(ConfigError):
+        collect_targets([layer("project", {"production": {"host": "a"}, True: {"host": "b"}})])
 
 
 def test_target_names_are_listed_sorted() -> None:
