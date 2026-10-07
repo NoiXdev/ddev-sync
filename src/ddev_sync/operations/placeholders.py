@@ -185,6 +185,18 @@ def _resolve_production_url(context: ExecutionContext) -> str:
     this is a config key or an error, with no middle branch.
     """
     configured = context.config(PRODUCTION_URL_CONFIG_KEY, default="")
+    if not configured:
+        # Worth a lead sentence of its own: `validate_production_url`'s
+        # "cannot be empty" is right while a user is still typing (it is the
+        # prompt's rule too), but reads oddly here as the *first* thing said
+        # about a key that was simply never set - the ordinary case for a
+        # project that has not run `ddev sync init` yet.
+        raise OperationError(
+            f"could not resolve {PRODUCTION_URL_PLACEHOLDER}: {PRODUCTION_URL_CONFIG_KEY!r} is "
+            "not set. It is the URL this site serves in production - the one a sanitize rule "
+            "rewrites to the local DDEV address after the import. Set it in "
+            ".ddev/ddev-sync.yaml, or run 'ddev sync init', which asks for it."
+        )
     problem = validate_production_url(configured)
     if problem is None:
         return configured
