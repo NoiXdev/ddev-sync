@@ -75,6 +75,18 @@ Each was taken by the owner during the design conversation.
 4. **A name collision is resolved by replacing after confirmation**, not by
    refusing. This is what makes text surgery necessary, and the safety net
    below is the price of it.
+5. **A failing `dep config` stops `init`; it does not fall back to manual
+   entry.** The user chose Deployer, and the same failure — a stopped web
+   container, a recipe that errors, no `dep` binary — would hit every later
+   run of a `deployer:` target, so quietly writing a hand-entered target
+   instead would hide a problem rather than solve it. The error leads with
+   "nothing was written" and carries Deployer's own text.
+6. **"Deployer declares no hosts" is an error**, not an empty question. There
+   is nothing to pick from, and `choose_deployer_host` is never called with an
+   empty list.
+7. **`init` refuses `--dry-run`, `--yes`, `--target`, `--steps` and the
+   feature options**, with exit 2. Without the first of those, `--dry-run`
+   would have written a file — the one thing that flag promises not to do.
 
 ## Design
 
@@ -94,18 +106,24 @@ through rather than restating it.
    `cli/context.py:56-72`, which reads them as `configured.get("type")` and
    `configured.get("version")`, not under the longer names the CLI flags use.
 2. **Ask for the target name**, offering `production`.
-3. **Offer the connection source.** The Deployer import is offered **only**
+3. **Resolve a collision straight away.** If `.ddev/ddev-sync.yaml` already
+   defines a target of that name, `init` prints what *that file* defines — the
+   endpoint as that layer alone states it, not the merged one, since that is
+   what the write replaces — and asks whether to replace it. A "no" returns to
+   the name question, with the next free name offered as the default, at most
+   three rounds in total; after that `init` ends with nothing written. The name
+   and the collision come before the connection on purpose: someone who
+   declines to replace a target should lose one answer, not five.
+4. **Offer the connection source.** The Deployer import is offered **only**
    when `deploy.php` or `deploy.yaml` exists at the project root — the two
    names Deployer itself looks for, as `transport/deployer.py` records.
    Otherwise `init` goes straight to manual entry.
-   - **Deployer:** run `dep config --format=json` once, list the hosts found,
-     and let the user pick one. The layout follows from the Deployer shape.
-     The **stage is always asked**, never inferred: §9 states that some
-     projects name hosts `production`/`staging` and others name them after
-     machines, so an alias is not a stage. The written target is a
-     `deployer:` block, not a copied host — the connection stays resolved at
-     run time, which is what that feature was built for.
-   - **Manual:** host, user, port (default 22), path, stage. **Not layout:**
+   - **Deployer:** run `dep config --format=json` **once** and list the hosts
+     it declares. The written target is a `deployer:` block naming the chosen
+     alias, not a copied host: the connection stays resolved at run time,
+     which is what that feature exists for, and the engine rejects the
+     connection fields beside the block.
+   - **Manual:** host, user, port (default 22), path. **Not layout:**
      `TargetSpec.layout` is `None`-defaulted and resolves to `Layout.PLAIN`,
      whose own docstring says plain is the default because the tool is
      generic — so omitting it writes exactly the right value, and asking
@@ -114,24 +132,23 @@ through rather than restating it.
      configured without the `deployer:` block is the one case that needs
      `layout: deployer`, and that user adds the line to the block `init`
      wrote.
-4. **Resolve a collision.** If `.ddev/ddev-sync.yaml` already defines a target
-   of that name, `init` prints what that file defines — the endpoint as that
-   layer alone states it, not the merged one, since that is what the write
-   replaces — and asks whether to replace it. A "no" returns to step 3 for a
-   different name, with the next free name offered as the default, at most
-   three rounds.
-5. **Write.** A missing file is created carrying `version: 1`.
-6. **Say where it went, and what that means.** The project file is committed
-   with the repository, and `init` cannot write the global layer (Decision 1),
-   so the success message names the file and says that moving the target to
-   `~/.ddev/ddev-sync/config.yaml` keeps hosts and users out of the
-   repository. That is the template's own advice, which `init` is otherwise in
-   a position to quietly undo.
-7. **Warn when a stronger layer wins.** `.ddev/ddev-sync.local.yaml` outranks
-   the file `init` writes. If the resolved target differs from what was
-   written, `init` names the layer that wins rather than reporting a clean
-   success — otherwise the checks run against a definition the user did not
-   just give.
+5. **Ask the stage**, on both branches and never inferred. §9 of the matrix
+   findings is explicit: some projects name hosts `production`/`staging` and
+   others name them after machines, so an alias is not a stage. A target
+   without `stage` does not resolve at all, so it is always written.
+6. **Write.** A missing file is created carrying `version: 1`.
+7. **Check, then say where it went.** The preflight checks run, and only a
+   passing run prints the success line — which names the file, says it is
+   committed with the repository, and says that moving the target to
+   `~/.ddev/ddev-sync/config.yaml` keeps hosts and users out of it. That is
+   the template's own advice, which `init` is otherwise in a position to
+   quietly undo.
+8. **Refuse to report success when another layer defines the name.** Any other
+   layer defining it — the local file, which outranks the one `init` writes,
+   or the global one, which does not — makes the checks run against a
+   definition the user did not just give. When the two differ, `init` names
+   both files, prints no success line and exits non-zero. An identical
+   definition elsewhere is not flagged.
 
 Nothing in part A writes a secret, so the local layer is untouched: secrets
 arise only from the `explicit` credentials source, which is part B. Exactly
@@ -154,23 +171,57 @@ the picture entirely:
 Text surgery on someone's configuration is only acceptable with a check that
 cannot be fooled by its own cleverness, so:
 
-**The whole configuration is parsed before the write and again after it,
-through the real loader — `config/loader.py` and `config/targets.py`, not a
-reimplementation.** The written target must resolve to exactly what the user
-answered, and **every other target must resolve identically to before**. If
-either does not hold, the original file is restored from the copy held in
-memory and `init` says what it attempted, prints the YAML block it wanted to
-write, and asks the user to place it by hand.
+After the write, `write_target` runs **four** checks, and any one of them
+failing restores the original bytes from the copy held in memory. `init` then
+says what it attempted, prints the YAML block it wanted to write, and asks the
+user to place it by hand.
 
-That is what makes the surgery safe without reimplementing YAML. A file using
-flow-style mappings, anchors, aliases or tabs may defeat the indentation
-scan — and when it does, the mismatch is caught, the file is restored, and the
-user is handed the block. `init` never has to recognise those constructs.
+1. **The written target is the block that was rendered.** The written file is
+   parsed **on its own** and `targets[name]` is compared with the rendered
+   block. Deliberately *not* through resolution: `write_target` holds no
+   Deployer resolver, so resolving the `deployer:` block the import writes
+   would raise `config/targets.py`'s "nothing here can do that" error on every
+   successful Deployer import.
+2. **Nothing outside `targets` differs** from the same key parsed before the
+   write — so `database:`, `sanitize:`, a stray `note:` and anything else are
+   untouched.
+3. **Every other target's definition is unchanged**, compared through the real
+   loader as `CollectedTarget.spec`. Definitions, not resolutions: comparing
+   resolved targets would refuse every legitimate edit of a base target, since
+   a child that `extends` it resolves differently by design. That is stated in
+   `write_target`'s own docstring.
+4. **No key appears twice** anywhere in the file, found by walking the composed
+   node tree. PyYAML keeps the last of two equal keys and says nothing, so
+   without this a second `targets:` appended beside one the scan did not
+   recognise reads back as a clean file with the first silently gone — a
+   corrupted file reported as a success.
 
-`config/deployer.py` gains one public function for step 3,
-`list_dep_hosts(payload) -> list[str]`, beside `parse_dep_config`. It stays
-pure, like the rest of that module; `_hosts` is private today and listing is
-the one thing the wizard needs that parsing one host does not give it.
+That is what makes the surgery safe without reimplementing YAML. The
+indentation scan matches only a line that is exactly `targets:`, so it misses
+a flow-style mapping, a quoted key, a trailing comment (`targets:  # ...`), a
+`targets:` line inside a quoted scalar, anchors, aliases and tabs. Every one
+of those is caught by the four checks, the file is restored, and the user is
+handed the block. `init` never has to recognise any of them.
+
+### One Deployer evaluation, shared
+
+`config/deployer.py` gains one pure public function, `list_dep_hosts(payload)
+-> list[str]`, beside `parse_dep_config`: `_hosts` is private, and listing is
+the one thing the wizard needs that parsing a single host does not give it.
+
+That alone is not enough. Running `dep config` evaluates the project's own
+`deploy.php` **inside the web container**, which is slow and is a second
+chance to get a different answer within one command — and `init` needs that
+output three times: for the host list, for the preflight check, and for
+reading the written target back. So the resolver `transport/deployer.py`
+provides becomes a small class, `ProjectDeployer`, exposing `.hosts()` and
+`__call__`, which memoises the output behind a `None` sentinel rather than an
+emptiness test — an empty output must not cause a second evaluation.
+`build_context` gains an optional `deployer=` that takes precedence over
+`runner`, so `init` builds one resolver and hands it on. A test pins that
+`dep` runs exactly once across all three uses. For every run without a
+Deployer target the behaviour is unchanged: `build_context` still builds a
+lazy resolver from `runner`, and `dep` never runs.
 
 ### Verification at the end
 
