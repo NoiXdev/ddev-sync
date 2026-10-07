@@ -9,6 +9,7 @@ from ddev_sync.cli.main import main
 from ddev_sync.cli.prompts import DEPLOYER_SOURCE, MANUAL_SOURCE
 from ddev_sync.config.loader import GLOBAL_LABEL, PROJECT_LABEL
 from ddev_sync.config.writer import WriteRefused
+from ddev_sync.operations.base import OperationError
 from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
@@ -148,6 +149,8 @@ def test_every_question_answered_writes_the_target_and_runs_doctor(
     output = capsys.readouterr().out
     assert f"Wrote the target 'production' to {PROJECT_LABEL}." in output
     assert "ssh" in output
+    # Said once the outcome is known, so after the checklist.
+    assert output.index("ssh connection") < output.index("Wrote the target")
 
 
 def test_the_global_layer_is_written_when_it_is_chosen(
@@ -464,6 +467,45 @@ def test_a_failing_check_leaves_the_file_and_exits_non_zero(
     assert "FAIL" in output
     assert f"The target stays in {PROJECT_LABEL}" in output
     assert "ddev sync --target production doctor" in output
+
+
+def test_an_unresolvable_profile_prints_no_success_line_and_names_the_file(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script(monkeypatch)
+    report_green(monkeypatch)
+    # `confirm_detection` is scripted, so the made-up type is only found out
+    # when the context is built, after the file is written.
+    assert invoke(project, tmp_path, "--type", "nonesuch") == 1
+    captured = capsys.readouterr()
+    assert "Wrote" not in captured.out
+    assert f"is in {PROJECT_LABEL}, but it could not be checked" in captured.err
+    assert "nonesuch" in captured.err
+    assert "ddev sync --target production doctor" in captured.err
+    # The target is kept: the user edits a file, they do not start over.
+    assert "web09.example" in project_file.read_text(encoding="utf-8")
+
+
+def test_a_check_that_raises_is_reported_like_one_that_could_not_start(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def explode(_self: object, _context: object) -> PreflightReport:
+        raise OperationError("unexpected output from the remote probe")
+
+    script(monkeypatch)
+    monkeypatch.setattr(PreflightOperation, "check", explode)
+    assert invoke(project, tmp_path) == 1
+    captured = capsys.readouterr()
+    assert "Wrote" not in captured.out
+    assert f"is in {PROJECT_LABEL}" in captured.err
+    assert "unexpected output" in captured.err
 
 
 def test_a_passing_check_does_not_say_the_target_stays(

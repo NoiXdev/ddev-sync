@@ -107,21 +107,30 @@ def init_command(
         echo(f"Add the target to {label} yourself, under `targets:`:\n\n{block}")
         return 1
 
-    # Before the context is built: if that raises, the user has already been
-    # told the file changed.
-    echo(f"Wrote the target {name!r} to {label}.")
-    context = build_context(
-        project_root=project_root,
-        home=home,
-        target_name=name,
-        type_flag=type_flag,
-        framework_version_flag=framework_version_flag,
-        profile_root=profile_root,
-        feature_root=feature_root,
-        runner=runner,
-    )
-    code = doctor_command(context, echo, runner=runner, colour=colour)
-    if code != 0:
+    # The file is on disk by now, but "wrote" is only said once the outcome is
+    # known: a success line followed by an error would call a target that does
+    # not resolve a success. Whichever way it goes, the user is told which
+    # file holds the target.
+    try:
+        context = build_context(
+            project_root=project_root,
+            home=home,
+            target_name=name,
+            type_flag=type_flag,
+            framework_version_flag=framework_version_flag,
+            profile_root=profile_root,
+            feature_root=feature_root,
+            runner=runner,
+        )
+        code = doctor_command(context, echo, runner=runner, colour=colour)
+    except DdevSyncError as error:
+        raise DdevSyncError(
+            f"the target {name!r} is in {label}, but it could not be checked: {error}. "
+            f"Edit it there, then check it with 'ddev sync --target {name} doctor'."
+        ) from error
+    if code == 0:
+        echo(f"Wrote the target {name!r} to {label}.")
+    else:
         echo(
             f"The target stays in {label}. Edit it there, then check it again with "
             f"'ddev sync --target {name} doctor'."
