@@ -56,8 +56,17 @@ Established by reading the code, not assumed:
 
 Each was taken by the owner during the design conversation.
 
-1. **The user chooses the layer per run** — the global config or the project
-   file — rather than one being forced.
+1. **`init` writes `.ddev/ddev-sync.yaml`, the project file, and only that.**
+   The first version of this spec had the user choose between that and the
+   global config. That was wrong, and measurably so: the add-on mounts
+   `~/.ddev/ddev-sync` into the sidecar **read-only**
+   (`docker-compose.ddev-sync.yaml:88`), deliberately — "a sync that could
+   rewrite the developer's global configuration is a larger thing than this
+   needs to be". Offering the layer this spec recommended would have ended in
+   a `PermissionError` in the only place the command normally runs. Since
+   `init` cannot keep hosts out of the repository for the user, its success
+   message says so and names the global config as the place to move the target
+   to.
 2. **All seven checks are wanted**, split across two specs so that neither
    plan grows past the size at which its own prose stops being reliable.
 3. **On a failed verification the file stays**, with the failed check named,
@@ -105,15 +114,24 @@ through rather than restating it.
      configured without the `deployer:` block is the one case that needs
      `layout: deployer`, and that user adds the line to the block `init`
      wrote.
-4. **Ask which layer to write.** The global config
-   (`~/.ddev/ddev-sync/config.yaml`) keeps hosts and users out of the
-   repository; the project file shares the target with the team. `init` says
-   that much when asking, because the template already gives that advice and
-   a user running `init` has not necessarily read it.
-5. **Resolve a collision.** If the chosen layer already defines a target of
-   that name, `init` prints what is there and asks whether to replace it. A
-   "no" returns to step 2 for a different name.
-6. **Write.** A missing file is created carrying `version: 1`.
+4. **Resolve a collision.** If `.ddev/ddev-sync.yaml` already defines a target
+   of that name, `init` prints what that file defines — the endpoint as that
+   layer alone states it, not the merged one, since that is what the write
+   replaces — and asks whether to replace it. A "no" returns to step 3 for a
+   different name, with the next free name offered as the default, at most
+   three rounds.
+5. **Write.** A missing file is created carrying `version: 1`.
+6. **Say where it went, and what that means.** The project file is committed
+   with the repository, and `init` cannot write the global layer (Decision 1),
+   so the success message names the file and says that moving the target to
+   `~/.ddev/ddev-sync/config.yaml` keeps hosts and users out of the
+   repository. That is the template's own advice, which `init` is otherwise in
+   a position to quietly undo.
+7. **Warn when a stronger layer wins.** `.ddev/ddev-sync.local.yaml` outranks
+   the file `init` writes. If the resolved target differs from what was
+   written, `init` names the layer that wins rather than reporting a clean
+   success — otherwise the checks run against a definition the user did not
+   just give.
 
 Nothing in part A writes a secret, so the local layer is untouched: secrets
 arise only from the `explicit` credentials source, which is part B. Exactly
