@@ -26,12 +26,14 @@ from ddev_sync.cli.commands import doctor_command
 from ddev_sync.cli.context import Detection, ProjectResolution, build_context, resolve_project
 from ddev_sync.cli.prompts import (
     DEPLOYER_SOURCE,
+    ENV_FILE_NONE,
     ask_connection,
     ask_production_url,
     ask_stage,
     ask_target_name,
     choose_connection_source,
     choose_deployer_host,
+    choose_env_file,
     confirm_detection,
     confirm_replacement,
 )
@@ -231,10 +233,8 @@ def _ask_project_settings(
 
     Each question is skipped when there is nothing to decide, so a project
     that needs none of them sees no extra question at all. The keys are dotted
-    paths, which is what `write_settings` takes. `echo` is a parameter from
-    this task on: the two questions this collector gains next each print a
-    line beside the answer they take - one when no env file is named, one
-    when detection is being switched off - and this one does not need it yet.
+    paths, which is what `write_settings` takes. `echo` prints a line beside
+    an answer that is not itself a value to write: naming no env file is one.
     """
     settings: dict[str, Any] = {}
     if _wants_production_url(resolution):
@@ -242,7 +242,52 @@ def _ask_project_settings(
         if url is None:
             raise _no_terminal()
         settings[PRODUCTION_URL_CONFIG_KEY] = url.strip()
+    candidates = _missing_env_file(resolution)
+    if candidates is not None:
+        present = sorted(
+            entry.name
+            for entry in resolution.project.root.iterdir()
+            if entry.is_file() and entry.name.startswith(".env")
+        )
+        answer = choose_env_file(candidates, present)
+        if answer is None:
+            raise _no_terminal()
+        if answer == ENV_FILE_NONE:
+            echo(
+                f"No environment file was named. The sync will stop at the env step, "
+                f"after the database has been imported - create one of "
+                f"{', '.join(candidates)} in the project root before running it."
+            )
+        else:
+            settings["env.file"] = [answer]
     return settings
+
+
+def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:
+    """The configured candidates when none exists; `None` when there is no question.
+
+    The two conditions for "there is no env step" are `engine/plan.py::_env`'s
+    own, read from the same merged configuration, so this question appears
+    exactly when that step would - and the file is matched the way
+    `operations/env.py::_find_env_file` matches it, against real directory
+    entries rather than a constructed path, because `is_file()` folds case on
+    a case-insensitive filesystem.
+    """
+    node = resolution.merged.data.get("env", {})
+    settings = node if isinstance(node, dict) else {}
+    if str(settings.get("strategy", "patch_keys")) == "none":
+        return None
+    raw_values = settings.get("set", {})
+    if not isinstance(raw_values, dict) or not raw_values:
+        return None
+    configured = settings.get("file", [".env.local", ".env"])
+    candidates = (
+        [configured] if isinstance(configured, str) else [str(entry) for entry in configured]
+    )
+    existing = {entry.name for entry in resolution.project.root.iterdir() if entry.is_file()}
+    if any(name in existing for name in candidates):
+        return None
+    return candidates
 
 
 def _wants_production_url(resolution: ProjectResolution) -> bool:

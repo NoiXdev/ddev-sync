@@ -29,6 +29,7 @@ from ddev_sync.operations.placeholders import validate_production_url
 DEFAULT_STEPS = ("db", "files", "sanitize")
 MANUAL_SOURCE = "Enter the connection by hand"
 DEPLOYER_SOURCE = "Read it from Deployer"
+ENV_FILE_NONE = "None of these - I will create the file myself"
 
 # What questionary accepts: True to take the answer, or the sentence to show
 # before asking again.
@@ -139,6 +140,22 @@ def choose_connection_source(deployer_available: bool) -> str | None:
     if deployer_available:
         choices.append(DEPLOYER_SOURCE)
     return _select("Where do the connection details come from?", choices)
+
+
+def choose_env_file(looked_for: list[str], present: list[str]) -> str | None:
+    """Ask which file holds this project's environment, or `ENV_FILE_NONE`.
+
+    `present` is every `.env*` file really in the project root, offered
+    because the usual cause of this question is a file under another name.
+    `.env.example` is among them when it is there - hiding a file that exists
+    is its own kind of lie - but nothing is preselected: patching the example
+    is almost never wanted, and the fix for the state that produces it is to
+    copy it, not to configure it.
+    """
+    return _select(
+        f"No environment file found (looked for {', '.join(looked_for)}). Which file is it?",
+        [*present, ENV_FILE_NONE],
+    )
 
 
 def choose_deployer_host(hosts: list[str]) -> str | None:

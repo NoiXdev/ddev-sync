@@ -359,6 +359,27 @@ def test_the_deployer_host_question_offers_the_hosts_it_was_given(
     assert offered == [["a", "b"]]
 
 
+def test_the_env_file_question_offers_what_is_present_plus_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    offered: list[list[str]] = []
+
+    def fake_select(_question: str, choices: list[str]) -> str:
+        offered.append(choices)
+        return choices[0]
+
+    monkeypatch.setattr(prompts, "_select", fake_select)
+    assert prompts.choose_env_file([".env"], [".env.example"]) == ".env.example"
+    assert offered == [[".env.example", prompts.ENV_FILE_NONE]]
+
+
+def test_the_env_file_question_passes_a_missing_terminal_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompts, "_select", lambda _q, _c: None)
+    assert prompts.choose_env_file([".env"], []) is None
+
+
 def test_the_deployer_host_question_passes_a_missing_terminal_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

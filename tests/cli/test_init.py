@@ -9,7 +9,7 @@ import yaml
 from ddev_sync.cli import init
 from ddev_sync.cli.context import build_context
 from ddev_sync.cli.main import main
-from ddev_sync.cli.prompts import DEPLOYER_SOURCE, MANUAL_SOURCE
+from ddev_sync.cli.prompts import DEPLOYER_SOURCE, ENV_FILE_NONE, MANUAL_SOURCE
 from ddev_sync.config.loader import GLOBAL_LABEL, PROJECT_LABEL
 from ddev_sync.config.writer import WriteRefused
 from ddev_sync.operations.base import OperationError
@@ -157,11 +157,18 @@ def _laravel(project: Path) -> None:
 
     The Laravel profile's rules never mention the placeholder
     (profiles/laravel.yaml), so a project that detects this way is one
-    `_wants_production_url` says no to.
+    `_wants_production_url` says no to. It is also the profile these tests use
+    to reach the env question: `env.strategy: patch_keys` with `env.set`
+    non-empty (profiles/laravel.yaml), unlike `php` (generic) or `wordpress`,
+    both `strategy: none`.
     """
     (project / ".ddev" / "config.yaml").write_text(
         "name: acme\ntype: laravel\ndocroot: public\n", encoding="utf-8"
     )
+
+
+def _never_called(*_args: object, **_kwargs: object) -> Any:
+    raise AssertionError("should not have been asked")
 
 
 DEP_CONFIG = json.dumps(
@@ -298,6 +305,11 @@ def test_the_type_and_version_flags_reach_the_question_and_the_check(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # `--type laravel` resolves to a profile whose `env.set` is non-empty
+    # (profiles/laravel.yaml), unlike the `php` the fixture's `.ddev/config.yaml`
+    # declares; an `.env` file keeps this test about flag plumbing, not a
+    # second question it does not script.
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
     asked = script(monkeypatch)
     report_green(monkeypatch)
     built: list[dict[str, object]] = []
@@ -925,8 +937,11 @@ def test_init_does_not_ask_when_the_profile_uses_no_placeholder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # `_laravel`'s profile never mentions the placeholder, so `production_url`
-    # is left at `script`'s empty default: a call would fail the test.
+    # is left at `script`'s empty default: a call would fail the test. The
+    # `.env` file keeps the unrelated env question - which this profile's
+    # `env.set` would otherwise raise - from firing too.
     _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
     _answer_the_target_questions(monkeypatch)
     report_green(monkeypatch)
     assert invoke(project, tmp_path) == 0
@@ -991,8 +1006,11 @@ def test_init_finds_the_placeholder_in_a_rules_sql(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Review Focus 5: the placeholder may sit in `sql:` rather than in a
-    # parameter, and the detection must not care which.
+    # parameter, and the detection must not care which. The `.env` file keeps
+    # the unrelated env question - which this profile's `env.set` would
+    # otherwise raise - from firing too.
     _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
     (project / ".ddev" / "ddev-sync.yaml").write_text(
         "version: 1\n"
         "sanitize:\n"
@@ -1068,3 +1086,140 @@ def test_a_refusal_from_write_settings_names_the_rest_to_add_by_hand(
     assert "Wrote" not in output
     # The target itself made it to disk; only the settings write was refused.
     assert "web09.example" in project_file.read_text(encoding="utf-8")
+
+
+def test_init_writes_the_env_file_the_user_names(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel(project)
+    (project / ".env.ddev").write_text("APP_ENV=local\n", encoding="utf-8")
+    monkeypatch.setattr(init, "choose_env_file", lambda looked_for, present: ".env.ddev")
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    assert yaml.safe_load(project_file.read_text(encoding="utf-8"))["env"]["file"] == [".env.ddev"]
+
+
+def test_init_does_not_ask_when_the_env_file_exists(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    monkeypatch.setattr(init, "choose_env_file", _never_called)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+
+
+def test_init_does_not_ask_when_the_strategy_is_none(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _wordpress(project)  # `env.strategy: none`, so there is no step to fail
+    monkeypatch.setattr(init, "choose_env_file", _never_called)
+    # Passed through `_answer_the_target_questions` rather than a direct
+    # `monkeypatch.setattr` beside it: `script` re-patches `ask_production_url`
+    # with its own (empty-by-default) queue, so a patch applied before that
+    # call is clobbered the moment it runs.
+    _answer_the_target_questions(monkeypatch, production_url=("https://a.example",))
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+
+
+def test_init_offers_the_env_files_that_are_there(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel(project)
+    (project / ".env.example").write_text("APP_ENV=\n", encoding="utf-8")
+    seen: dict[str, list[str]] = {}
+
+    def answer(looked_for: list[str], present: list[str]) -> str:
+        seen.update(looked_for=looked_for, present=present)
+        return ENV_FILE_NONE
+
+    monkeypatch.setattr(init, "choose_env_file", answer)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    invoke(project, tmp_path)
+    assert seen["looked_for"] == [".env"]
+    assert seen["present"] == [".env.example"]
+
+
+def test_init_writes_nothing_when_no_env_file_is_chosen(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _laravel(project)
+    monkeypatch.setattr(init, "choose_env_file", lambda looked_for, present: ENV_FILE_NONE)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    invoke(project, tmp_path)
+    assert "env" not in yaml.safe_load(project_file.read_text(encoding="utf-8"))
+    assert "after the database has been imported" in capsys.readouterr().out
+
+
+def test_a_directory_named_env_is_not_a_file(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Review Focus 4: `_find_env_file` filters `iterdir()` by `is_file()`, so a
+    # directory named `.env` is not the env file and the question must still
+    # be asked - otherwise `init` reports a file the sync then cannot find.
+    _laravel(project)
+    (project / ".env").mkdir()
+    asked: list[bool] = []
+
+    def answer(looked_for: list[str], present: list[str]) -> str:
+        asked.append(True)
+        return ENV_FILE_NONE
+
+    monkeypatch.setattr(init, "choose_env_file", answer)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    invoke(project, tmp_path)
+    assert asked == [True]
+
+
+def test_no_terminal_at_the_env_file_question_stops_init_with_nothing_written(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel(project)
+    monkeypatch.setattr(init, "choose_env_file", lambda looked_for, present: None)
+    _answer_the_target_questions(monkeypatch)
+    assert invoke(project, tmp_path) == 1
+    error = capsys.readouterr().err
+    assert "terminal" in error
+    assert not project_file.exists()
+
+
+def test_init_does_not_ask_when_env_set_is_configured_empty(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The second of `_env`'s own two conditions: a strategy other than `none`
+    # with nothing configured to write is also no step to fail, independent
+    # of whether any env file exists.
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\nenv:\n  strategy: patch_keys\n  set: {}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(init, "choose_env_file", _never_called)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
