@@ -5,6 +5,7 @@ import questionary
 
 from ddev_sync.cli import prompts
 from ddev_sync.config.models import Stage
+from ddev_sync.operations.placeholders import validate_production_url
 
 
 def test_a_single_target_is_returned_without_asking(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -477,4 +478,38 @@ def test_a_required_answer_may_not_be_blank() -> None:
     assert prompts._required("example.com") is True
     refusal = prompts._required("   ")
     assert isinstance(refusal, str)
+
+
+def test_ask_production_url_rejects_a_value_with_no_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The prompt and the resolver share one rule; this pins that they do.
+    assert validate_production_url("acme.example") is not None
+
+
+def test_production_url_question_hands_its_validator_to_the_text_question(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_text(question: str, default: str, validate: object = None) -> str:
+        seen.update(question=question, default=default, validate=validate)
+        return "https://acme.example"
+
+    monkeypatch.setattr(prompts, "_text", fake_text)
+    assert prompts.ask_production_url() == "https://acme.example"
+    assert seen == {
+        "question": "What URL does this site serve in production?",
+        "default": "",
+        "validate": prompts._valid_production_url,
+    }
+
+
+def test_valid_production_url_accepts_a_usable_value() -> None:
+    assert prompts._valid_production_url("https://acme.example") is True
+
+
+def test_valid_production_url_capitalises_and_punctuates_the_rejection() -> None:
+    # Also pins that the answer is stripped before it is validated, same as
+    # `ask_target_name` and `ask_connection` strip theirs.
+    refusal = prompts._valid_production_url(" acme.example ")
+    assert refusal == "The production URL must start with 'http://' or 'https://'."
     assert refusal

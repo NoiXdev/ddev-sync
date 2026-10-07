@@ -20,12 +20,14 @@ twice, so the error names the file to edit.
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from ddev_sync.cli.commands import doctor_command
-from ddev_sync.cli.context import build_context, detect_project
+from ddev_sync.cli.context import Detection, ProjectResolution, build_context, resolve_project
 from ddev_sync.cli.prompts import (
     DEPLOYER_SOURCE,
     ask_connection,
+    ask_production_url,
     ask_stage,
     ask_target_name,
     choose_connection_source,
@@ -41,12 +43,15 @@ from ddev_sync.config.loader import (
     discover_config_paths,
     load_user_layers,
 )
-from ddev_sync.config.merge import merge_layers
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import CollectedTarget, collect_targets, resolve_target
-from ddev_sync.config.writer import WriteRefused, render_target, write_target
-from ddev_sync.ddev.project import DdevProject, read_ddev_project
+from ddev_sync.config.writer import WriteRefused, render_target, write_settings, write_target
 from ddev_sync.errors import DdevSyncError, DeployerError
+from ddev_sync.operations.placeholders import (
+    PRODUCTION_URL_CONFIG_KEY,
+    PRODUCTION_URL_PLACEHOLDER,
+    validate_production_url,
+)
 from ddev_sync.transport.deployer import ProjectDeployer, make_deployer_resolver
 from ddev_sync.transport.runner import CommandRunner
 
@@ -84,10 +89,21 @@ def init_command(
     A target that was written stays written when `doctor` fails: the user
     corrects a file, they do not answer every question again.
     """
-    project = read_ddev_project(project_root)
     paths = discover_config_paths(project_root, home)
-
-    _confirm_detection(project, paths, type_flag, framework_version_flag)
+    resolution = resolve_project(
+        project_root=project_root,
+        home=home,
+        type_flag=type_flag,
+        framework_version_flag=framework_version_flag,
+        profile_root=profile_root,
+        feature_root=feature_root,
+    )
+    project = resolution.project
+    _confirm_detection(resolution.detection)
+    # Asked before the target and written after it: an `init` that ends at the
+    # name question must leave the file exactly as it found it, which is part
+    # A's promise and the reason these answers are not written as they arrive.
+    settings = _ask_project_settings(resolution, echo)
     name = _ask_name(paths, echo)
 
     # One resolver for the whole command: it is lazy, so a manual entry never
@@ -114,6 +130,17 @@ def init_command(
         echo(str(refusal))
         echo(f"Add the target to {PROJECT_LABEL} yourself, under `targets:`:\n\n{block}")
         return 1
+
+    if settings:
+        try:
+            write_settings(path=paths.project_config, paths=paths, settings=settings)
+        except WriteRefused as refusal:
+            echo(str(refusal))
+            echo(
+                f"The target {name!r} was written. Add the rest to {PROJECT_LABEL} "
+                f"yourself: {', '.join(f'{key}: {value!r}' for key, value in settings.items())}"
+            )
+            return 1
 
     # The file is on disk by now, but "wrote" is only said once the outcome is
     # known: a success line followed by an error would call a target that does
@@ -172,19 +199,14 @@ def init_command(
     return code
 
 
-def _confirm_detection(
-    project: DdevProject,
-    paths: ConfigPaths,
-    type_flag: str | None,
-    framework_version_flag: str | None,
-) -> None:
+def _confirm_detection(detection: Detection) -> None:
     """Ask whether the detected profile is right; refuse to go on if it is not.
 
     It comes first because everything written afterwards is checked against
-    the profile this resolves to.
+    the profile this resolves to. The detection is handed in rather than
+    computed here: `resolve_project` already did it, with the same inputs a
+    real run uses.
     """
-    merged = merge_layers(load_user_layers(paths))
-    detection = detect_project(project, merged, type_flag, framework_version_flag)
     profile = detection.profile
     version = detection.version
     if version is None:
@@ -200,6 +222,62 @@ def _confirm_detection(
             "nothing was written. Set `project.type` and `project.version` in "
             f"{PROJECT_LABEL} to what this project is, then run 'ddev sync init' again."
         )
+
+
+def _ask_project_settings(
+    resolution: ProjectResolution, echo: Callable[[str], None]
+) -> dict[str, Any]:
+    """The configuration keys `init` asks about, beyond the target itself.
+
+    Each question is skipped when there is nothing to decide, so a project
+    that needs none of them sees no extra question at all. The keys are dotted
+    paths, which is what `write_settings` takes. `echo` is a parameter from
+    this task on: the two questions this collector gains next each print a
+    line beside the answer they take - one when no env file is named, one
+    when detection is being switched off - and this one does not need it yet.
+    """
+    settings: dict[str, Any] = {}
+    if _wants_production_url(resolution):
+        url = ask_production_url()
+        if url is None:
+            raise _no_terminal()
+        settings[PRODUCTION_URL_CONFIG_KEY] = url.strip()
+    return settings
+
+
+def _wants_production_url(resolution: ProjectResolution) -> bool:
+    """Whether a rule needs the URL and the configuration does not supply it.
+
+    The search is for the literal placeholder anywhere under `sanitize`, in
+    the *unexpanded* merged configuration - not for the profile being
+    `wordpress`. A rule may carry it in `sql:` or in any parameter, and a
+    project or a future profile that adopts the placeholder is asked the same
+    question without anything here learning its name.
+    """
+    configured = _setting(resolution.merged.data, PRODUCTION_URL_CONFIG_KEY)
+    if isinstance(configured, str) and validate_production_url(configured) is None:
+        return False
+    return _mentions(resolution.merged.data.get("sanitize"), PRODUCTION_URL_PLACEHOLDER)
+
+
+def _setting(data: dict[str, Any], dotted: str) -> Any:
+    node: Any = data
+    for part in dotted.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
+
+
+def _mentions(value: Any, needle: str) -> bool:
+    """Whether `needle` occurs in any string anywhere inside `value`."""
+    if isinstance(value, str):
+        return needle in value
+    if isinstance(value, list):
+        return any(_mentions(item, needle) for item in value)
+    if isinstance(value, dict):
+        return any(_mentions(item, needle) for item in value.values())
+    return False
 
 
 def _ask_name(paths: ConfigPaths, echo: Callable[[str], None]) -> str:

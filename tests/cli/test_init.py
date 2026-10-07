@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from ddev_sync.cli import init
 from ddev_sync.cli.context import build_context
@@ -98,6 +99,7 @@ def script(
     monkeypatch: pytest.MonkeyPatch,
     *,
     detection: Iterable[bool | None] = (True,),
+    production_url: Iterable[str | None] = (),
     names: Iterable[str | None] = ("production",),
     replacements: Iterable[bool | None] = (),
     source: Iterable[str | None] = (MANUAL_SOURCE,),
@@ -107,11 +109,15 @@ def script(
 ) -> dict[str, list[tuple[Any, ...]]]:
     """Replace every question `init` asks with scripted answers.
 
-    Returns, per question, the arguments it was asked with.
+    Returns, per question, the arguments it was asked with. `production_url`
+    defaults to an empty script: most fixtures here build a `php`-typed
+    project, which resolves to the generic profile and never asks it, so a
+    test that does not expect the question fails loudly if it fires anyway.
     """
     asked: dict[str, list[tuple[Any, ...]]] = {}
     for attribute, answers in (
         ("confirm_detection", detection),
+        ("ask_production_url", production_url),
         ("ask_target_name", names),
         ("confirm_replacement", replacements),
         ("choose_connection_source", source),
@@ -122,6 +128,40 @@ def script(
         asked[attribute] = []
         monkeypatch.setattr(init, attribute, _queue(answers, attribute, asked[attribute]))
     return asked
+
+
+def _answer_the_target_questions(
+    monkeypatch: pytest.MonkeyPatch, *, production_url: Iterable[str | None] = ()
+) -> dict[str, list[tuple[Any, ...]]]:
+    """Script ordinary answers for the target itself, for a test that is
+    really about `_ask_project_settings` and does not want to repeat
+    `script`'s defaults to get there.
+    """
+    return script(monkeypatch, production_url=production_url)
+
+
+def _wordpress(project: Path) -> None:
+    """Overwrite the project fixture's `.ddev/config.yaml` to detect as WordPress.
+
+    The WordPress profile's `rewrite-site-url` rule carries the production URL
+    placeholder in its `from:` (profiles/wordpress.yaml), so a project that
+    detects this way is one `_wants_production_url` says yes to.
+    """
+    (project / ".ddev" / "config.yaml").write_text(
+        "name: acme\ntype: wordpress\ndocroot: public\n", encoding="utf-8"
+    )
+
+
+def _laravel(project: Path) -> None:
+    """Overwrite the project fixture's `.ddev/config.yaml` to detect as Laravel.
+
+    The Laravel profile's rules never mention the placeholder
+    (profiles/laravel.yaml), so a project that detects this way is one
+    `_wants_production_url` says no to.
+    """
+    (project / ".ddev" / "config.yaml").write_text(
+        "name: acme\ntype: laravel\ndocroot: public\n", encoding="utf-8"
+    )
 
 
 DEP_CONFIG = json.dumps(
@@ -479,25 +519,25 @@ def test_a_failing_check_leaves_the_file_and_exits_non_zero(
     assert "ddev sync --target production doctor" in output
 
 
-def test_an_unresolvable_profile_prints_no_success_line_and_names_the_file(
+def test_an_unresolvable_profile_stops_init_before_any_question_or_write(
     project: Path,
     project_file: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    script(monkeypatch)
-    report_green(monkeypatch)
-    # `confirm_detection` is scripted, so the made-up type is only found out
-    # when the context is built, after the file is written.
+    # Before this task, `confirm_detection` ran its own, separate detection,
+    # so a made-up type was only found out when the context was built for
+    # `doctor`, after the target was written. `init` now resolves the project
+    # once, with `resolve_project`, before asking anything - so an unresolvable
+    # profile is caught there instead, before the detection question and
+    # before any write. No question is scripted: one asked would fail the test.
+    script(monkeypatch, detection=(), names=(), source=(), connection=())
     assert invoke(project, tmp_path, "--type", "nonesuch") == 1
     captured = capsys.readouterr()
     assert "Wrote" not in captured.out
-    assert f"is in {PROJECT_LABEL}, but it could not be checked" in captured.err
-    assert "nonesuch" in captured.err
-    assert "ddev sync --target production doctor" in captured.err
-    # The target is kept: the user edits a file, they do not start over.
-    assert "web09.example" in project_file.read_text(encoding="utf-8")
+    assert "unknown profile 'nonesuch'" in captured.err
+    assert not project_file.exists()
 
 
 def test_a_check_that_raises_is_reported_like_one_that_could_not_start(
@@ -862,3 +902,169 @@ def test_the_option_check_leaves_other_subcommands_alone(
         )
         == 0
     )
+
+
+def test_init_asks_for_the_production_url_and_writes_it(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _wordpress(project)
+    _answer_the_target_questions(monkeypatch, production_url=("https://acme.example",))
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    loaded = yaml.safe_load(project_file.read_text(encoding="utf-8"))
+    assert loaded["sanitize"]["production_url"] == "https://acme.example"
+    assert loaded["targets"]["production"]["host"] == "web09.example"
+
+
+def test_init_does_not_ask_when_the_profile_uses_no_placeholder(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `_laravel`'s profile never mentions the placeholder, so `production_url`
+    # is left at `script`'s empty default: a call would fail the test.
+    _laravel(project)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+
+
+def test_init_does_not_ask_when_the_url_is_already_set(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _wordpress(project)
+    project_file.write_text(
+        "version: 1\nsanitize:\n  production_url: https://set.example\n", encoding="utf-8"
+    )
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+
+
+def test_init_still_asks_when_the_configured_url_is_invalid(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Distinct from "already set": a configured value that `validate_production_url`
+    # itself rejects does not count as supplied, so the question still fires.
+    _wordpress(project)
+    project_file.write_text(
+        "version: 1\nsanitize:\n  production_url: not-a-url\n", encoding="utf-8"
+    )
+    asked = _answer_the_target_questions(monkeypatch, production_url=("https://acme.example",))
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    assert len(asked["ask_production_url"]) == 1
+
+
+def test_init_treats_a_blanked_out_sanitize_block_as_nothing_configured(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A project may blank `sanitize:` out entirely to turn every rule off -
+    # `config/merge.py`'s `_merge_value` treats a scalar (here `None`, from an
+    # empty `sanitize:`) as replacing the profile's `sanitize:` dict wholesale,
+    # not merging into it. `_setting`'s walk must not crash on the non-dict
+    # node that produces partway through the path; it reads as "nothing
+    # configured", the same as the key being absent, and the placeholder is
+    # gone along with the rules that carried it, so the question is not asked.
+    _wordpress(project)
+    project_file.write_text("version: 1\nsanitize:\n", encoding="utf-8")
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+
+
+def test_init_finds_the_placeholder_in_a_rules_sql(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Review Focus 5: the placeholder may sit in `sql:` rather than in a
+    # parameter, and the detection must not care which.
+    _laravel(project)
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\n"
+        "sanitize:\n"
+        "  rules:\n"
+        "  - name: x\n"
+        "    sql: \"UPDATE t SET url = '${PRODUCTION_URL}'\"\n",
+        encoding="utf-8",
+    )
+    asked = _answer_the_target_questions(monkeypatch, production_url=("https://a.example",))
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    assert len(asked["ask_production_url"]) == 1
+
+
+def test_init_writes_nothing_when_the_name_question_runs_out(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Part A's promise, which the second write must not break: the URL answer
+    # is collected before the target and written after it, so an `init` that
+    # never reaches the write leaves the file alone.
+    _wordpress(project)
+    project_file.write_text(EXISTING, encoding="utf-8")
+    script(
+        monkeypatch,
+        production_url=("https://acme.example",),
+        names=("production",) * 3,
+        replacements=(False,) * 3,
+        source=(),
+        connection=(),
+    )
+    assert invoke(project, tmp_path) == 1
+    assert project_file.read_text(encoding="utf-8") == EXISTING
+
+
+def test_no_terminal_at_the_production_url_question_stops_init_with_nothing_written(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _wordpress(project)
+    script(monkeypatch, production_url=(None,), names=(), source=(), connection=())
+    assert invoke(project, tmp_path) == 1
+    error = capsys.readouterr().err
+    assert "terminal" in error
+    assert not project_file.exists()
+
+
+def test_a_refusal_from_write_settings_names_the_rest_to_add_by_hand(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _wordpress(project)
+    _answer_the_target_questions(monkeypatch, production_url=("https://acme.example",))
+
+    def refuse(**_kwargs: object) -> None:
+        raise WriteRefused("it would have changed something else")
+
+    monkeypatch.setattr(init, "write_settings", refuse)
+    assert invoke(project, tmp_path) == 1
+    output = capsys.readouterr().out
+    assert "it would have changed something else" in output
+    assert "The target 'production' was written." in output
+    assert f"Add the rest to {PROJECT_LABEL} yourself" in output
+    assert "sanitize.production_url: 'https://acme.example'" in output
+    assert "Wrote" not in output
+    # The target itself made it to disk; only the settings write was refused.
+    assert "web09.example" in project_file.read_text(encoding="utf-8")

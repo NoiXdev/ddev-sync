@@ -24,6 +24,7 @@ from collections.abc import Callable
 import questionary
 
 from ddev_sync.config.models import Stage
+from ddev_sync.operations.placeholders import validate_production_url
 
 DEFAULT_STEPS = ("db", "files", "sanitize")
 MANUAL_SOURCE = "Enter the connection by hand"
@@ -163,6 +164,21 @@ def confirm_replacement(name: str, label: str, existing: str) -> bool | None:
     return _confirm(
         f"{name} is already defined in {label} ({existing}). Replace it?", default=False
     )
+
+
+def ask_production_url() -> str | None:
+    """Ask what URL the site serves in production.
+
+    Validated through the same function the placeholder resolver uses, so a
+    value this question accepts is one a sync can use, and the wording of a
+    rejection is written once.
+    """
+    return _text("What URL does this site serve in production?", "", _valid_production_url)
+
+
+def _valid_production_url(answer: str) -> bool | str:
+    problem = validate_production_url(answer.strip())
+    return True if problem is None else f"{problem[0].upper()}{problem[1:]}."
 
 
 def _required(answer: str) -> bool | str:
