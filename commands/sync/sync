@@ -2,9 +2,16 @@
 
 #ddev-generated
 ## Description: Pull remote database, files and setup into this project
-## Usage: sync [flags] [command]
-## Example: "ddev sync --dry-run"\n"ddev sync doctor"\n"ddev sync --target=production --steps=db"
+## Usage: sync [flags] [command] - run "ddev sync help" for every flag
+## Example: "ddev sync --dry-run"\n"ddev sync doctor"\n"ddev sync --target=production --steps=db"\n"ddev sync -vv"
 
+# `## Usage` points at `ddev sync help` because DDEV's own overview for a
+# custom command shows only these annotations and DDEV's global flags - never
+# the wrapped program's. DDEV does offer a `## Flags` annotation, but
+# declaring the engine's fifteen options there would restate them in a second
+# place that drifts the first time one changes, and DDEV would then parse
+# them instead of this script passing them through untouched.
+#
 # This file lives in commands/sync/, so DDEV runs it inside the `sync`
 # service rather than on the host or in the web container - which is where
 # the engine, its profiles and its binaries are.
