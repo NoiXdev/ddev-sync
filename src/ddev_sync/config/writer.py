@@ -1,4 +1,4 @@
-"""Place one target into one configuration layer, leaving the rest alone.
+"""Place one target, or several settings, into one configuration layer, leaving the rest alone.
 
 Nothing else in this engine writes configuration, so the mechanism is a
 choice rather than a pattern to follow. It is text, not YAML: the add-on
@@ -6,18 +6,25 @@ installs `.ddev/ddev-sync.yaml` from a template full of explanatory comments
 (`install.yaml`), and a `safe_load`/`safe_dump` round trip would delete every
 one of them. PyYAML still renders the *new* block - quoting is a solved
 problem and not worth re-solving - but it never parses the user's file in
-order to write it.
+order to write it. One placement mechanism, `place_entry`, serves both
+writers below it: `place_target` is the `targets`-shaped special case
+`render_target`'s block goes through, `write_settings` walks it once per
+dotted key with `render_setting`'s block.
 
-What makes text surgery acceptable is `write_target`'s checking. Before the
-write the whole configuration must load at all - `yamlfile.py` refuses one
-that names a key twice, and adding a target to a file the engine would misread
-is building on a document it cannot agree on. Afterwards, read from disk: it
-must still load, the `name` target in it must be exactly the block that was
-rendered, nothing outside `targets` may differ from before, and no other
-target **in this file** may change. If any of that fails, or anything at all
-goes wrong after the first byte is written, the original bytes are put back. So
-the scan below may fail on flow-style mappings, anchors, quoted scalars or tabs
-without having to recognise them.
+What makes text surgery acceptable is the pair of proofs that follow each
+write, not the write itself - the scan above may fail on flow-style mappings,
+anchors, quoted scalars or tabs without having to recognise any of them,
+because nothing downstream trusts it blindly. `write_target` proves it
+changed one target and nothing else: before the write the whole configuration
+must load at all - `yamlfile.py` refuses one that names a key twice - and
+afterwards, read back from disk, the `name` target must be exactly the block
+that was rendered, nothing outside `targets` may differ from before, and no
+other target **in this file** may change. `write_settings` proves the
+complementary half: it changed exactly the named dotted keys, and no target
+at all - the check `write_target` was deliberately not widened to perform,
+because admitting a list of exceptions is a weaker promise than admitting
+none. Either writer puts the original bytes back if its proof fails, or if
+anything at all goes wrong after the first byte is written.
 """
 
 import os
@@ -135,11 +142,16 @@ def render_setting(route: tuple[str, ...], value: Any) -> str:
     The second is that `default_flow_style=None`, which would also flow the
     list, flows the *mapping* too and would write
     `{production_url: 'https://...'}` for the scalar case - a key the next
-    run's scan could not find.
+    run's scan could not find. `width=` is passed explicitly and large: PyYAML
+    wraps a flow sequence onto a continuation line past its default width
+    (80), which a long enough list of names reaches easily, and a wrapped
+    value is two physical lines pretending to be the one line this function
+    promises.
     """
     key = route[-1]
     if isinstance(value, list):
-        body = f"{key}: {yaml.safe_dump(value, default_flow_style=True).strip()}\n"
+        rendered = yaml.safe_dump(value, default_flow_style=True, width=1_000_000).strip()
+        body = f"{key}: {rendered}\n"
     else:
         body = yaml.safe_dump({key: value}, default_flow_style=False, sort_keys=False)
     return indent(body, _INDENT * (len(route) - 1))

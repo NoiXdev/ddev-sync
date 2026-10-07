@@ -590,6 +590,18 @@ def test_render_setting_writes_a_list_on_one_line() -> None:
     assert render_setting(("env", "file"), [".env.ddev"]) == "  file: [.env.ddev]\n"
 
 
+def test_render_setting_keeps_a_long_list_on_one_line() -> None:
+    # PyYAML's `safe_dump` wraps flow sequences at its default `width=80`:
+    # five 31-character names comfortably exceed that and, without an
+    # explicit `width=`, would render as two physical lines - which is
+    # exactly the "half-replaced" failure mode this function's docstring
+    # says a one-line value cannot have.
+    labels = [f"feature-{index:02d}-{'x' * 20}" for index in range(5)]
+    rendered = render_setting(("features",), labels)
+    assert rendered.count("\n") == 1
+    assert yaml.safe_load(rendered) == {"features": labels}
+
+
 def test_render_setting_quotes_a_list_item_that_needs_it() -> None:
     # Flow style is still PyYAML's job, not ours - which is the point of
     # rendering through it rather than formatting the line by hand.
