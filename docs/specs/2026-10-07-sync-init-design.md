@@ -96,7 +96,15 @@ through rather than restating it.
      machines, so an alias is not a stage. The written target is a
      `deployer:` block, not a copied host — the connection stays resolved at
      run time, which is what that feature was built for.
-   - **Manual:** host, user, port (default 22), path, stage, layout.
+   - **Manual:** host, user, port (default 22), path, stage. **Not layout:**
+     `TargetSpec.layout` is `None`-defaulted and resolves to `Layout.PLAIN`,
+     whose own docstring says plain is the default because the tool is
+     generic — so omitting it writes exactly the right value, and asking
+     someone who has just typed a host whether their remote is "plain or
+     deployer" is a question most cannot answer. A Deployer-shaped remote
+     configured without the `deployer:` block is the one case that needs
+     `layout: deployer`, and that user adds the line to the block `init`
+     wrote.
 4. **Ask which layer to write.** The global config
    (`~/.ddev/ddev-sync/config.yaml`) keeps hosts and users out of the
    repository; the project file shares the target with the team. `init` says
@@ -200,3 +208,29 @@ probes `doctor` already has:
 Also out of scope: a non-interactive `init` driven by flags. A wizard whose
 answers are all supplied on the command line is a configuration file written
 twice.
+
+## Corrections after the first implementation
+
+Three claims in this spec did not survive contact with the code, and the
+implementer caught all three. They are corrected above and recorded here,
+because each is easy to make again.
+
+- **A missing terminal cannot be answered with flags.** The flow said an
+  unanswerable question should tell the user to pass flags instead, and this
+  spec itself puts a flag-driven `init` out of scope — so there is no flag to
+  pass. The error says there is no terminal, that nothing was written, and
+  that the installed template carries a commented example to fill in by hand.
+- **The flow left out `stage`.** A target without it does not resolve at all,
+  so it is asked after the connection.
+- **`layout` was listed and should not be asked.** See the manual branch
+  above.
+
+Two things the implementation added that this spec had not thought of, both
+kept:
+
+- **`init` refuses `--dry-run`, `--yes`, `--target`, `--steps` and the
+  feature options**, with exit 2. Without that, `--dry-run` would have written
+  a file, which is the one thing that flag promises not to do.
+- **Detection is extracted from `build_context` as `detect_project`**, so the
+  confirmation question asks about exactly what a real run resolves, rather
+  than a second implementation of the same logic.
