@@ -200,7 +200,7 @@ def test_a_file_that_did_not_exist_is_gone_again_after_a_refused_write(tmp_path:
     assert not path.exists()
 
 
-def test_another_target_changing_is_refused(tmp_path: Path) -> None:
+def test_a_flow_style_mapping_of_several_targets_is_refused(tmp_path: Path) -> None:
     # A flow-style mapping holding two targets is missed by the scan and the
     # block is appended beside it, so the file ends up with `targets:` twice -
     # which the strict loader refuses before the comparison that would have
@@ -313,33 +313,54 @@ def test_a_block_that_repeats_a_key_is_refused_with_its_name(tmp_path: Path) -> 
     assert path.read_text(encoding="utf-8") == document
 
 
+# A quoted target key the indentation scan cannot match, plus a multi-line
+# quoted scalar for the block to land in. The file loads, no key appears twice,
+# the written target matches its block and nothing outside `targets` moved - so
+# the neighbour comparison is the only check that notices `staging` losing its
+# path.
+CORRUPTING_DOCUMENT = (
+    "version: 1\n"
+    "targets:\n"
+    '  "production":\n'
+    "    host: web01.example\n"
+    "    user: deploy\n"
+    "    port: 22\n"
+    "    path: /srv/app/\n"
+    "    stage: production\n"
+    "  staging:\n"
+    "    host: s.example\n"
+    "    stage: staging\n"
+    '    path: "abc\n'
+    'def"\n'
+)
+
+
 def test_a_neighbouring_target_that_changed_is_refused(tmp_path: Path) -> None:
-    # A quoted target key the scan cannot match, plus a multi-line quoted
-    # scalar for the block to land in: the file loads, no key appears twice,
-    # the written target matches its block and nothing outside `targets`
-    # moved - so this check is the only one that notices `staging` losing its
-    # path. Compared within the file, so a stronger layer cannot hide it.
-    document = (
-        "version: 1\n"
-        "targets:\n"
-        '  "production":\n'
-        "    host: web01.example\n"
-        "    user: deploy\n"
-        "    port: 22\n"
-        "    path: /srv/app/\n"
-        "    stage: production\n"
-        "  staging:\n"
-        "    host: s.example\n"
-        "    stage: staging\n"
-        '    path: "abc\n'
-        'def"\n'
-    )
-    path, paths = write_in(tmp_path, document)
+    path, paths = write_in(tmp_path, CORRUPTING_DOCUMENT)
     with pytest.raises(WriteRefused, match="staging"):
         write_target(
             path=path, paths=paths, name="production", block=render_target("production", MANUAL)
         )
-    assert path.read_text(encoding="utf-8") == document
+    assert path.read_text(encoding="utf-8") == CORRUPTING_DOCUMENT
+
+
+def test_a_stronger_layer_cannot_hide_a_damaged_neighbour(tmp_path: Path) -> None:
+    # The case a merged comparison missed: the local layer outranks this file,
+    # so `staging` resolves the same either way and the corruption of *this*
+    # file went unnoticed, with the write reported as a success. Comparing
+    # within the file is what catches it, and this test is the only thing that
+    # tells the two comparisons apart.
+    path, paths = write_in(tmp_path, CORRUPTING_DOCUMENT)
+    paths.local_config.write_text(
+        "version: 1\ntargets:\n  staging:\n    host: s.example\n"
+        "    stage: staging\n    path: /srv/s/\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(WriteRefused, match="staging"):
+        write_target(
+            path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+        )
+    assert path.read_text(encoding="utf-8") == CORRUPTING_DOCUMENT
 
 
 def test_crlf_line_endings_survive_a_write(tmp_path: Path) -> None:

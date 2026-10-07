@@ -87,10 +87,12 @@ def write_target(*, path: Path, paths: ConfigPaths, name: str, block: str) -> No
     loader rejects the layer. The parent directory is created before the
     write and is not removed again.
 
-    Other targets are compared by their merged definition, not by what they
-    resolve to. That is deliberate: rewriting a base target changes what its
-    children resolve to, which is the point of rewriting it, and comparing
-    resolved targets would refuse every edit of a base target.
+    Other targets are compared as **this file** defines them - parsed from it
+    and dumped back to text - rather than merged across layers or resolved.
+    Not merged, because a stronger layer defining the same target would hide a
+    neighbour this file quietly lost. Not resolved, because rewriting a base
+    target changes what its children resolve to, which is the point of
+    rewriting it, so comparing resolutions would refuse every such edit.
     """
     # Read before anything is touched, for its error alone: a file the loader
     # refuses - one that already names a key twice, say - is one the engine
@@ -149,10 +151,13 @@ def _verify(
     # file quietly lost. Reachable, and not only in theory - a quoted target
     # key the scan misses, plus a multi-line quoted scalar for the block to
     # land in, corrupts a neighbour while leaving every check above happy.
+    # Both sides parsed once, not once per candidate name: re-parsing the
+    # document inside the comprehension made writing one target into a file
+    # that already held 300 of them take half a minute.
+    was = _file_targets(document)
+    now = _file_targets(written)
     changed = [
-        other
-        for other in set(_file_targets(document)) | set(_file_targets(written))
-        if other != name and _file_targets(document).get(other) != _file_targets(written).get(other)
+        other for other in set(was) | set(now) if other != name and was.get(other) != now.get(other)
     ]
     if changed:
         raise WriteRefused(

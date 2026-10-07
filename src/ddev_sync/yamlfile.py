@@ -11,7 +11,16 @@ Measured before this existed: a file with a flow-style `targets: {...}` and a
 block `targets:` below it loaded as one target, the first silently gone.
 
 The keys are compared in one pass before the base constructor runs, so the
-first repeat can be named with the line it recurs on. A key that is not
+first repeat can be named with the line it recurs on.
+
+Two limits follow from running before `flatten_mapping`, which expands merge
+keys by editing nodes in place. A duplicate **inside an inline merge source**
+(`b: {<<: {x: 1, x: 2}}`) is not seen, because merge sources are flattened
+rather than constructed; and an anchor defined inside a merge value that
+overrides its own merged key and is aliased later is refused although it is
+valid. Both shapes are exotic, and the case this exists for - a configuration
+naming a section twice - is covered. Detecting them would mean walking the
+composed node tree instead, with its own guard against recursive anchors. A key that is not
 hashable - `? [a, b]` - cannot be compared and is left to the base, which
 rejects it with its own error; checking it here would raise `TypeError` from
 the set lookup instead.
