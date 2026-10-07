@@ -97,3 +97,82 @@ jobs:
           test "$(docker run --rm --network none --entrypoint sh ddev-sync:ci -c \
             'python -c "from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT; print(DEFAULT_PROFILE_ROOT)"')" \
             = "/opt/ddev-sync/profiles"
+
+  integration:
+    # The suite `gates` cannot see. `pyproject.toml`'s addopts deselect
+    # `integration`, so the unit gate above is blind to every test that drives
+    # a real container - which is how a branch that broke this whole suite
+    # went green, shipping a database client that could not connect to any
+    # local DDEV database. The suite brings its own stack up through
+    # `docker compose` (tests/integration/conftest.py), so all this job
+    # provides is the three tools that stack is driven with.
+    name: Integration suite
+    runs-on: ubuntu-latest
+    # A compose stack that never becomes healthy would otherwise hold the
+    # runner for the default six hours; the stack's own healthchecks allow up
+    # to three minutes for the sshd container's package mod.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Sync the environment
+        run: uv sync --frozen
+
+      # The suite needs docker to start its stack, an ssh client to reach the
+      # sshd container, and GNU rsync for `--info=progress2` (stock macOS
+      # ships openrsync, which rejects it, and the conftest works around that
+      # locally). The runner image carries all three; printing them here is
+      # what turns that from an assumption into a line in the log, and gives
+      # a failure below the versions it happened on.
+      - name: Show the tool versions
+        run: |
+          docker --version
+          docker compose version
+          ssh -V
+          rsync --version | head -1
+
+      # `--no-cov` because the coverage gate in addopts belongs to the unit
+      # suite, as in matrix.yaml: these tests drive the engine against
+      # containers, and a 100 % threshold measured here would fail after every
+      # test had passed. `-rs` so a skip states its reason in the log, which
+      # the next step then refuses to accept.
+      - name: Run the integration suite
+        run: >-
+          uv run pytest -m integration --no-cov -v -rs
+          --junit-xml=integration-report.xml
+
+      # The point of this job is that it verifies something, and a skip
+      # verifies nothing while exiting 0. `conftest.py` skips the whole suite
+      # when `docker info` fails - the right behaviour on a developer's
+      # machine, and indistinguishable from success here. So a green run must
+      # also have run its tests: any skip, and an empty report, fail the job.
+      # (pytest exits 5 on a selection that collects nothing, so that case is
+      # already red before this step.)
+      - name: It actually ran
+        if: always()
+        run: |
+          uv run python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          report = Path("integration-report.xml")
+          if not report.exists():
+              sys.exit("no test report was written, so nothing can be said to have run")
+          # `iter`, not `getroot()` itself: pytest writes a `<testsuites>` root
+          # around one `<testsuite>`, and older versions wrote the single
+          # element as the root. Iterating covers both spellings.
+          suites = list(ET.parse(report).getroot().iter("testsuite"))
+          total = sum(int(suite.get("tests", 0)) for suite in suites)
+          skipped = sum(int(suite.get("skipped", 0)) for suite in suites)
+          if total == 0:
+              sys.exit("the report holds no tests at all")
+          if skipped:
+              sys.exit(f"{skipped} of {total} integration tests were skipped, not run")
+          print(f"{total} integration test{'s' if total != 1 else ''} ran, none skipped")
+          PY
