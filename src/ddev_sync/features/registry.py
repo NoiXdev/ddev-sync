@@ -14,6 +14,7 @@ import yaml
 from ddev_sync.errors import FeatureError
 from ddev_sync.features.schema import CONTRIBUTION_KEYS, validate_feature
 from ddev_sync.paths import existing_or_fallback
+from ddev_sync.yamlfile import load_yaml
 
 INSTALLED_FEATURE_ROOT = Path("/opt/ddev-sync/features")
 # See `profiles/registry.py`'s identical pair of constants for the full
@@ -92,7 +93,7 @@ class FeatureRegistry:
 
     def _read(self, path: Path) -> dict[str, Any]:
         try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            raw = load_yaml(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as error:
             raise FeatureError(f"{path.name}: could not be parsed as YAML: {error}") from error
         if raw is None:

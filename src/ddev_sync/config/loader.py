@@ -8,6 +8,7 @@ import yaml
 
 from ddev_sync.config.merge import LayerDoc
 from ddev_sync.errors import ConfigError
+from ddev_sync.yamlfile import load_yaml
 
 SUPPORTED_CONFIG_VERSION = 1
 
@@ -50,7 +51,7 @@ def load_user_layers(paths: ConfigPaths) -> list[LayerDoc]:
 
 def _read_config_file(path: Path, label: str) -> dict[str, Any]:
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = load_yaml(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
         raise ConfigError(f"{label}: could not be parsed as YAML: {error}") from error
 

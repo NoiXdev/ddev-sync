@@ -16,6 +16,7 @@ from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.errors import ProfileError
 from ddev_sync.paths import existing_or_fallback
 from ddev_sync.profiles.schema import validate_profile
+from ddev_sync.yamlfile import load_yaml
 
 INSTALLED_PROFILE_ROOT = Path("/opt/ddev-sync/profiles")
 # `parents[3]` from this file (src/ddev_sync/profiles/registry.py) is the
@@ -125,7 +126,7 @@ class ProfileRegistry:
 
     def _read(self, path: Path) -> dict[str, Any]:
         try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            raw = load_yaml(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as error:
             raise ProfileError(f"{path.name}: could not be parsed as YAML: {error}") from error
         if raw is None:

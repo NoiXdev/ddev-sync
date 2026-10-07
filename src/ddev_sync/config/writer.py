@@ -21,7 +21,6 @@ recognise them.
 import os
 import stat
 import tempfile
-from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from textwrap import indent
@@ -137,6 +136,13 @@ def _verify(
             f"writing the target {name!r} to {path} would also have changed "
             f"{', '.join(map(repr, keys))} outside `targets`, so nothing was changed"
         )
+    # Defence in depth, and reached only by calling this function directly:
+    # since `config/yamlfile.py` began refusing a file that names a key twice,
+    # every document found that damages a *neighbouring* target is caught
+    # earlier - by that refusal, by the check above, or by the written target
+    # no longer matching its block. The check stays because none of those
+    # three is about this, and a placement that quietly rewrote someone
+    # else's target is the worst thing this module could do.
     changed = [
         other for other, spec in before.items() if other != name and after.get(other) != spec
     ]
@@ -144,16 +150,6 @@ def _verify(
         raise WriteRefused(
             f"writing the target {name!r} to {path} would also have changed "
             f"{', '.join(sorted(changed))}, so nothing was changed"
-        )
-    # The loader cannot see this: PyYAML keeps the last of two equal keys and
-    # says nothing, so a second `targets:` appended beside a flow-style one
-    # reads back as a clean file in which the first has quietly vanished. A
-    # duplicate the file already had is not the writer's doing and is left.
-    repeated = sorted(_repeated_keys(written) - _repeated_keys(document))
-    if repeated:
-        raise WriteRefused(
-            f"writing the target {name!r} to {path} left the key "
-            f"{'.'.join(repeated[0])!r} in the file twice, so nothing was changed"
         )
 
 
@@ -210,38 +206,6 @@ def _restore(path: Path, original: bytes | None) -> None:
         path.resolve().unlink(missing_ok=True)
         return
     _write(path, original)
-
-
-def _repeated_keys(document: str) -> set[tuple[str, ...]]:
-    """The path of every mapping key that appears twice in the same mapping."""
-    found: set[tuple[str, ...]] = set()
-    _collect_repeats(yaml.compose(document, Loader=yaml.SafeLoader), (), set(), found)
-    return found
-
-
-def _collect_repeats(
-    node: yaml.Node | None,
-    path: tuple[str, ...],
-    visited: set[int],
-    found: set[tuple[str, ...]],
-) -> None:
-    # An alias hands back the node it points at, so `x: &x [*x]` leads here
-    # forever unless a node already walked is skipped.
-    if node is None or id(node) in visited:
-        return
-    visited.add(id(node))
-    if isinstance(node, yaml.SequenceNode):
-        for position, child in enumerate(node.value):
-            _collect_repeats(child, (*path, str(position)), visited, found)
-    elif isinstance(node, yaml.MappingNode):
-        # Scalar keys only, compared by tag and text so that `1` and `'1'`
-        # stay apart. A non-scalar key cannot repeat as text.
-        keys = Counter(
-            (key.tag, key.value) for key, _ in node.value if isinstance(key, yaml.ScalarNode)
-        )
-        found.update((*path, text) for (_, text), count in keys.items() if count > 1)
-        for key, value in node.value:
-            _collect_repeats(value, (*path, str(key.value)), visited, found)
 
 
 def _targets_line(lines: list[str]) -> int | None:

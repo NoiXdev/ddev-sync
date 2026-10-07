@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 
 from ddev_sync.errors import ConfigError
+from ddev_sync.yamlfile import load_yaml
 
 DEFAULT_PROJECT_ROOT = Path("/var/www/html")
 
@@ -83,7 +84,7 @@ def read_ddev_project(project_root: Path) -> DdevProject:
 
 def _read_mapping(config_path: Path) -> dict[str, Any]:
     try:
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        raw = load_yaml(config_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
         raise ConfigError(f".ddev/config.yaml could not be parsed: {error}") from error
     if not isinstance(raw, dict):

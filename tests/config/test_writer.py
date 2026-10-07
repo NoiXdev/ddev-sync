@@ -12,6 +12,7 @@ from ddev_sync.config.writer import (
     render_target,
     write_target,
 )
+from ddev_sync.errors import ConfigError
 
 MANUAL = {
     "host": "web01.example",
@@ -123,12 +124,13 @@ def test_a_missing_file_is_created_with_a_version(tmp_path: Path) -> None:
 
 
 def test_a_second_targets_key_beside_a_flow_mapping_is_undone(tmp_path: Path) -> None:
-    # The loader reads the result without complaint - PyYAML keeps the last of
-    # two `targets:` keys - so only the duplicate-key check stands between this
-    # and a file that quietly holds the key twice.
+    # The scan matches only a line that is exactly `targets:`, so a flow-style
+    # mapping is missed and the block is appended as a second `targets:` key.
+    # `config/yamlfile.py` is what refuses that: plain `safe_load` would keep
+    # the last of the two and report a clean file with the first one gone.
     document = "version: 1\ntargets: {production: {host: old.example, stage: production}}\n"
     path, paths = write_in(tmp_path, document)
-    with pytest.raises(WriteRefused, match="twice"):
+    with pytest.raises(WriteRefused, match="more than once"):
         write_target(
             path=path, paths=paths, name="production", block=render_target("production", MANUAL)
         )
@@ -199,15 +201,16 @@ def test_a_file_that_did_not_exist_is_gone_again_after_a_refused_write(tmp_path:
 
 
 def test_another_target_changing_is_refused(tmp_path: Path) -> None:
-    # Nothing but the named target may differ afterwards. A flow-style
-    # mapping holding two targets is placed beside as a second `targets:`
-    # key, which PyYAML reads as the only one: `staging` silently vanishes.
+    # A flow-style mapping holding two targets is missed by the scan and the
+    # block is appended beside it, so the file ends up with `targets:` twice -
+    # which the strict loader refuses before the comparison that would have
+    # noticed `staging` vanishing. Either way nothing is written.
     document = (
         "version: 1\n"
         "targets: {production: {host: old, stage: production}, staging: {host: web02}}\n"
     )
     path, paths = write_in(tmp_path, document)
-    with pytest.raises(WriteRefused, match="staging"):
+    with pytest.raises(WriteRefused, match="more than once"):
         write_target(
             path=path, paths=paths, name="production", block=render_target("production", MANUAL)
         )
@@ -285,24 +288,51 @@ def test_a_self_referencing_alias_elsewhere_in_the_file_is_survived(tmp_path: Pa
     assert "web01.example" in text
 
 
-def test_a_duplicate_the_file_already_had_is_not_blamed_on_the_write(tmp_path: Path) -> None:
-    document = "version: 1\nfoo: 1\nfoo: 2\nlist:\n  - a: 1\n    a: 2\n"
+def test_a_file_that_already_holds_a_key_twice_is_not_written_to(tmp_path: Path) -> None:
+    # Since `config/yamlfile.py` refuses such a file, the read *before* the
+    # write fails and nothing is attempted. That is the right order: the
+    # engine would misread that configuration, so adding a target to it would
+    # be building on a file whose contents it cannot agree on.
+    document = "version: 1\nfoo: 1\nfoo: 2\n"
     path, paths = write_in(tmp_path, document)
-    write_target(
-        path=path, paths=paths, name="production", block=render_target("production", MANUAL)
-    )
-    assert path.read_text(encoding="utf-8").startswith(document)
+    with pytest.raises(ConfigError, match="more than once"):
+        write_target(
+            path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+        )
+    assert path.read_text(encoding="utf-8") == document
 
 
-def test_a_new_duplicate_is_named_by_its_path(tmp_path: Path) -> None:
+def test_a_block_that_repeats_a_key_is_refused_with_its_name(tmp_path: Path) -> None:
     # A target whose own block repeats a key: the placement is right, the file
-    # is not, and the path says where.
+    # is not, and the loader names the key and the line it recurs on.
     document = "version: 1\ntargets:\n  staging:\n    host: web02\n"
     path, paths = write_in(tmp_path, document)
     block = "  production:\n    host: a\n    host: b\n"
-    with pytest.raises(WriteRefused, match=r"targets\.production\.host"):
+    with pytest.raises(WriteRefused, match="'host' more than once"):
         write_target(path=path, paths=paths, name="production", block=block)
     assert path.read_text(encoding="utf-8") == document
+
+
+def test_a_neighbouring_target_that_changed_is_refused(tmp_path: Path) -> None:
+    # Driven through `_verify` rather than a document, because no document
+    # reaches this any more: since the loader refuses a file naming a key
+    # twice, every placement that damages a neighbour is caught before here.
+    # The check is defence in depth and this pins its contract.
+    block = render_target("production", MANUAL)
+    # The file already holds the block, so the first two checks pass and the
+    # neighbour comparison is the one left to fail.
+    document = f"version: 1\ntargets:\n{block}  staging:\n    host: web02\n    stage: staging\n"
+    path, paths = write_in(tmp_path, document)
+    stale = {"staging": "whatever `staging` used to be"}
+    with pytest.raises(WriteRefused, match="staging"):
+        writer._verify(
+            path=path,
+            paths=paths,
+            name="production",
+            block=block,
+            before=stale,
+            document=document,
+        )
 
 
 def test_crlf_line_endings_survive_a_write(tmp_path: Path) -> None:
@@ -371,7 +401,7 @@ def test_an_unforeseen_error_after_the_write_restores_the_file(
     def explode(_document: str) -> object:
         raise RuntimeError("not a DdevSyncError")
 
-    monkeypatch.setattr(writer, "_repeated_keys", explode)
+    monkeypatch.setattr(writer, "_outside_targets", explode)
     with pytest.raises(RuntimeError):
         write_target(
             path=path, paths=paths, name="production", block=render_target("production", MANUAL)
