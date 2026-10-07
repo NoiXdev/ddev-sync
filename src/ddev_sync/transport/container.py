@@ -73,11 +73,13 @@ def web_command(project: DdevProject, argv: Sequence[str], *, workdir: Path) -> 
 def _container_workdir(project: DdevProject, workdir: Path) -> Path:
     """Map `workdir` from this side of the mount onto the container's.
 
-    Reached only by a `DdevProject` built in code: `ddev/project.py` refuses
-    an absolute `docroot:` when it reads `.ddev/config.yaml`, which used to be
-    the way a user could get here. The check stays because the mapping is
-    lexical, and guessing one would run a command in whatever the container
-    happens to have at that path.
+    The `ValueError` below is no longer reachable from a configuration file:
+    `ddev/project.py` refuses an absolute or `..`-bearing `docroot:` where it
+    reads `.ddev/config.yaml`, and every other workdir a call site passes is
+    the project root or something already confined to it. It stays for a
+    `DdevProject` built in code, because the mapping is lexical and guessing
+    one would run a command in whatever the container happens to have at that
+    path.
     """
     try:
         offset = workdir.relative_to(project.root)

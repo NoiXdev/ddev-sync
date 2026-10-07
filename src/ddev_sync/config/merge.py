@@ -95,8 +95,17 @@ def _merge_value(
 
 
 def _display(path: tuple[str, ...]) -> str:
-    """Render a path tuple for human-readable error text only."""
-    return ".".join(path)
+    """Render a path tuple for human-readable error text only.
+
+    `map(str, ...)` although the tuple is typed as strings: the parts come
+    from a user's YAML, where a key is whatever YAML read it as, and a bare
+    `join` raises `TypeError: sequence item 0: expected str instance, bool
+    found` - a traceback instead of the configuration error this is in the
+    middle of building. `config/targets.py` refuses a non-string *target*
+    name before the merge for the same reason, but a key anywhere else in
+    the document reaches here, so the rendering itself has to hold.
+    """
+    return ".".join(map(str, path))
 
 
 def _is_list_directive(value: dict[str, Any], path: tuple[str, ...]) -> bool:

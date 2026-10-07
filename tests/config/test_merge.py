@@ -179,3 +179,30 @@ def test_a_bare_commands_key_without_mode_is_not_a_directive() -> None:
     """
     result = merge_layers([layer("project", setup={"commands": ["run-this"]})])
     assert result.data == {"setup": {"commands": ["run-this"]}}
+
+
+# A key is whatever YAML read it as, and the path a message is built from
+# carries it verbatim. `".".join` on a bool raised `TypeError: sequence item
+# 0: expected str instance, bool found` - a traceback in place of the
+# configuration error it was in the middle of writing. `config/targets.py`
+# refuses a non-string *target* name before the merge; a key anywhere else
+# reaches here, so the rendering has to hold on its own.
+@pytest.mark.parametrize("key", [True, 2026, None])
+def test_an_error_about_a_non_text_key_is_still_a_configuration_error(key: Any) -> None:
+    layers = [LayerDoc(label="project", data={key: {"values": "notalist"}})]
+    with pytest.raises(ConfigError) as caught:
+        merge_layers(layers)
+    assert str(key) in str(caught.value)
+
+
+def test_a_non_text_key_deep_inside_a_target_is_named_in_the_error() -> None:
+    """The case the target-name refusal does not cover, and never could."""
+    layers = [
+        LayerDoc(
+            label="project",
+            data={"targets": {"production": {"setup": {True: {"values": "notalist"}}}}},
+        )
+    ]
+    with pytest.raises(ConfigError) as caught:
+        merge_layers(layers)
+    assert "targets.production.setup.True" in str(caught.value)

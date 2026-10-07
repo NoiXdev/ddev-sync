@@ -102,8 +102,9 @@ def _validated_docroot(docroot: str) -> str:
       (`Path("/a") / "/etc"` is `/etc`), which `relative_to` catches:
       `ValueError: /etc is not inside the project`.
     * a `..` segment raised nothing at all, because `relative_to` is lexical.
-      `docroot: ../sibling` produced `docker exec -w /var/www/html/../sibling`
-      and `public/../../etc` produced a `-w` the container resolves to `/etc`.
+      `docroot: ../sibling` produced `docker exec -w /var/www/html/../sibling`,
+      which the container resolves to `/var/www/sibling`, and
+      `public/../../etc` produced a `-w` resolving to `/var/www/etc`.
       Framework commands ran outside the mount, silently.
 
     So this refuses `..` even where it lands back inside the project: the rule
@@ -118,8 +119,8 @@ def _validated_docroot(docroot: str) -> str:
         raise ConfigError(
             f"docroot {docroot!r} in .ddev/config.yaml must be a relative path inside the "
             "project, with no '..' segment: an absolute path replaces the project root "
-            "instead of being joined to it, and a `..` segment can climb out of the only "
-            "directory the web container has mounted"
+            "instead of being joined to it, and a `..` segment can climb out of the "
+            "project directory the web container has it mounted in"
         )
     return docroot
 

@@ -48,10 +48,14 @@ def collect_targets(layers: Sequence[LayerDoc]) -> dict[str, CollectedTarget]:
     # target named `yes:` with a malformed `values:` under it gave
     # "sequence item 1: expected str instance, bool found".
     #
-    # Only the keys of a mapping are checked. A layer whose `targets:` is not
-    # a mapping at all is left exactly as it was, reported from the merged
-    # document below, so that a weak layer's broken block can still be
-    # overridden by a stronger layer rather than failing the run here.
+    # Only the keys of a `targets:` mapping, and only the top level of it. A
+    # layer whose `targets:` is not a mapping at all is left exactly as it
+    # was, reported from the merged document below, so that a weak layer's
+    # broken block can still be overridden by a stronger layer rather than
+    # failing the run here. A non-string key deeper in the document - under a
+    # target's `setup:`, or anywhere outside `targets:` - is not this loop's
+    # business and never was: `config/merge.py::_display` renders whatever it
+    # is given, which is what keeps that case an error message too.
     for entry in layers:
         own = entry.data.get("targets")
         if isinstance(own, dict):
@@ -97,11 +101,18 @@ def _validated_name(name: Any) -> str:
     date. Such a key is never the text that was written, so `--target yes`
     cannot match it and `ddev sync targets` lists `True`; with one ordinary
     target beside it, sorting the names raised a bare `TypeError` comparing a
-    bool with a str, part-way through a command. Refusing the key here, where
-    every layer's targets have just been merged, is ahead of all of that -
-    including `config/writer.py`, whose pre-write load goes through this
-    function and so now refuses such a file by name instead of reporting that
-    writing one target "would also have changed True".
+    bool with a str, part-way through a command. `config/writer.py` gets the
+    same guard for free, because its pre-write load goes through here: such a
+    file is now refused by name instead of reporting that writing one target
+    "would also have changed True".
+
+    Called twice, and only the first call can raise. `collect_targets` checks
+    each layer's own keys before merging them, which is what makes the refusal
+    earlier than every consumer; the call after the merge sees keys that were
+    all validated on the way in. It stays because it is what narrows the
+    merged mapping's `Any` key to a `str` for the rest of the function, and
+    because a future caller that merges by some other route would otherwise
+    have no check at all.
     """
     if isinstance(name, str):
         return name

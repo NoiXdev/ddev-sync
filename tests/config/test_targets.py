@@ -135,10 +135,15 @@ def test_a_non_text_name_is_refused_before_the_merge_can_trip_over_it() -> None:
 # Only the keys of a mapping are checked early. A layer whose whole `targets:`
 # block is a scalar is still reported from the merged document, so a stronger
 # layer can override a weaker one's broken block instead of the run failing.
-def test_a_weak_layer_with_a_broken_targets_block_is_still_overridable() -> None:
+# `[True]` rather than only `"oops"`: a guard written as `own or {}` instead
+# of `isinstance(own, dict)` would iterate the string harmlessly, one
+# character at a time, and pass this test - but iterating the list yields the
+# bool and refuses a configuration that merges to something valid.
+@pytest.mark.parametrize("broken", ["oops", [True], {"mode": "replace", "values": []}])
+def test_a_weak_layer_with_a_broken_targets_block_is_still_overridable(broken: Any) -> None:
     collected = collect_targets(
         [
-            LayerDoc(label="global", data={"targets": "oops"}),
+            LayerDoc(label="global", data={"targets": broken}),
             layer("project", {"production": {"host": "web01.example"}}),
         ]
     )
