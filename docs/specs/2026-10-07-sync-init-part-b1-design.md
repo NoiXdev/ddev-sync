@@ -428,9 +428,10 @@ Also out of scope, as in part A: a non-interactive `init` driven by flags.
 
 ## Corrections after the first implementation
 
-Four claims in this spec did not survive contact with the code. Three were
-already known when implementation began and are corrected in place as well as
-recorded here; the fourth was found by reading the finished code against this
+Four things in this spec did not survive contact with the code: three false
+claims and one omission. The three false claims were already known when
+implementation began and are corrected in place as well as recorded here; the
+omission was found afterwards, by reading the finished code against this
 document.
 
 - **"The confirmation question is still asked first" was too strong, and has
@@ -448,29 +449,54 @@ document.
   new ordering is strictly better than the old one; the sentence describing it
   was simply wrong.
 
-- **The `${PRODUCTION_URL}` change touched six files, not the three this spec
-  named.** "Item 4: `${PRODUCTION_URL}`" lists `operations/placeholders.py`,
-  `profiles/wordpress.yaml` and `init` as "three changes". Registering the
-  placeholder makes `parse_rules` raise for any WordPress configuration that
-  lacks `sanitize.production_url`, and that reached three more places that had
-  to change alongside it:
-  - `tests/profiles/test_wordpress.py`: three existing tests reach
+- **The `${PRODUCTION_URL}` change touched ten files across two commits, not
+  the three this spec named.** "Item 4: `${PRODUCTION_URL}`" lists
+  `operations/placeholders.py`, `profiles/wordpress.yaml` and `init` as
+  "three changes". Registering the placeholder makes `parse_rules` raise for
+  any WordPress configuration that lacks `sanitize.production_url`, and the
+  real blast radius was far wider. Measured with `git show <sha> --stat`
+  against both commits that did this work, not recalled:
+
+  `86da624` ("resolve the production URL instead of shipping a placeholder" -
+  the placeholder and the profile, the first two of the spec's three named
+  changes) touched six files:
+  - `src/ddev_sync/operations/placeholders.py` - registers `${PRODUCTION_URL}`
+    and `validate_production_url`, as the spec says.
+  - `profiles/wordpress.yaml` - `rewrite-site-url`'s `from` becomes
+    `${PRODUCTION_URL}`, as the spec says.
+  - `tests/operations/test_placeholders.py` - new unit tests for
+    `validate_production_url` and for `expand_value` resolving and failing on
+    `${PRODUCTION_URL}`. Not named by the spec at all.
+  - `tests/profiles/test_wordpress.py` - three existing tests reach
     `parse_rules` through the module's shared `context_for` helper, and all
     three needed `sanitize.production_url` added to the layer it builds, or
     they would now fail on the very configuration they exist to exercise. A
     fourth test asserted on the old `REPLACE-ME` literal in `rule["from"]` and
     had to be rewritten to assert `${PRODUCTION_URL}` instead.
-  - `tests/matrix/cells/mxwordpress/ddev-sync.yaml`: its per-project
-    `sanitize.rules` override — written to supply the real production URL —
+  - `tests/matrix/cells/mxwordpress/ddev-sync.yaml` - its per-project
+    `sanitize.rules` override, written to supply the real production URL,
     became a second, duplicate `rewrite-site-url` rule sitting beside the
     shipped one now that the shipped rule resolves the value itself. It was
     replaced with a `sanitize.production_url` key.
-  - `profiles/VERIFIED.md`'s wordpress row asserted that the shipped
+  - `profiles/VERIFIED.md` - the wordpress row asserted that the shipped
     `rewrite-site-url` rule "runs as a no-op by design" and that the profile
     "needs a per-project `sanitize.rules` override" for the production URL.
     Both became false the moment the rule started resolving a real value, and
     the row was corrected to describe the placeholder path instead, noting
     that the matrix run it cites predates the change.
+
+  `867064e` ("ask `init` for the production URL a sanitize rule needs" - the
+  spec's third named change, `init` itself) landed later and touched four
+  more:
+  - `src/ddev_sync/cli/init.py` - asks the question and writes the answer.
+    This is the spec's third named file, but it changed in this commit, not
+    in `86da624`.
+  - `src/ddev_sync/cli/prompts.py` - `ask_production_url`. Not named by the
+    spec.
+  - `tests/cli/test_init.py` and `tests/cli/test_prompts.py` - the tests for
+    both. Not named by the spec.
+
+  Ten files in total, across the two commits, against three named in one.
 
 - **The plan's draft commit message overstated what `mode: replace` is for.**
   It said overriding `sanitize.rules` instead of registering the placeholder
@@ -486,8 +512,8 @@ document.
   running. The commit message that shipped (`86da624`) already uses this
   corrected wording; this entry exists because the plan's draft did not.
 
-- **A fourth check, with nothing to correct.** The brief asked specifically
-  whether two implementation details were missing from this spec:
+- **The fourth: an omission, not a false claim.** The brief asked specifically
+  whether two implementation details were missing from this spec. Both are:
 
   - `_key_line`'s parent/leaf distinction. The code's docstring for
     `_key_line` (`config/writer.py`) explains that a **parent** key must be a
@@ -500,8 +526,7 @@ document.
     that distinction — it only restates part A's "deliberately naive" rule for
     `_targets_line` (an exact bare spelling) and says `_targets_line` and
     `_target_line` "become one `_key_line`", without saying that the merge
-    also had to add the inline-leaf case part A never needed. This is missing
-    from the spec and is recorded here as the fourth correction.
+    also had to add the inline-leaf case part A never needed.
   - Flow-style list rendering. `render_setting` writes every list value in
     flow style (`features: [a, b]`), and its docstring gives the reason: a
     block-style list's items sit at the key's own indent (see
@@ -510,8 +535,10 @@ document.
     This spec does show `env.file: [<name>]` as a flow-style example in
     "Item 5: the env file", so the *shape* is not undocumented — but the
     general rule ("every list this module writes is flow-style, and why") is
-    not stated, only the one instance. Folded into the point above rather than
-    counted as a separate, fifth correction, since both are the same gap:
-    this spec describes `place_entry`'s walk and part A's naive scan in
-    detail, but not the two properties `_key_line` and `render_setting` needed
-    to add to make settings — as opposed to targets — reliably rewritable.
+    not stated, only the one instance.
+
+  Neither is a claim the spec gets wrong; both are something the spec never
+  says. Recorded as one omission rather than two, since they are the same
+  gap: this spec describes `place_entry`'s walk and part A's naive scan in
+  detail, but not the two properties `_key_line` and `render_setting` needed
+  to add to make settings — as opposed to targets — reliably rewritable.
