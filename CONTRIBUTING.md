@@ -15,6 +15,25 @@ uv run ddev-sync --help
 Docker is needed only for the three container-backed suites described below, and
 the add-on suite needs DDEV as well.
 
+### What a checkout cannot do
+
+`uv run ddev-sync` runs the engine as a process on your machine. Commands that
+reach into the project's web container work from there, because the workdir is
+translated onto `/var/www/html` and `docker exec` is reachable from the host -
+but **a whole sync is not**: the local database steps connect to
+`--host=ddev-<project>-db`, which is a Docker network alias. It resolves from a
+container attached to that network, and the sidecar is one; a host process is
+not, and gets `nodename nor servname provided, or not known` even while the
+container is up and running beside it.
+
+So a real end-to-end sync is exercised through `ddev sync` (the sidecar, which
+is how it ships) or through the suites below. The integration suite runs on the
+host and works around exactly this, by generating `mysql` and `mysqladmin`
+wrappers that run the real client inside a throwaway container on the stack's
+network - see `tests/integration/conftest.py`. That workaround is the test
+harness's, not the engine's, so a green integration run says nothing about
+whether a bare host process could have done it.
+
 ## Before a pull request
 
 All four checks must pass:
