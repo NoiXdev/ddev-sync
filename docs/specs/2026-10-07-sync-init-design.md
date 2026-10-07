@@ -276,6 +276,16 @@ probes `doctor` already has:
    in a project that has none aborts the sync after the import.
 6. Show the detected features and allow switching them off.
 
+> **Superseded in part.** Item 4 above is delivered:
+> `docs/specs/2026-10-07-sync-init-part-b1-design.md` adds the production-URL
+> question and the `${PRODUCTION_URL}` resolver (`operations/placeholders.py`)
+> that the WordPress `rewrite-site-url` rule's `from:` now reads, in place of
+> the literal placeholder this item describes. The remedy it names,
+> `mode: replace`, was not the one shipped — see that spec's "What is already
+> true" section for why registering the resolver was chosen instead. This note
+> speaks only to item 4; the list above is left unedited as the
+> pre-implementation record.
+
 Also out of scope: a non-interactive `init` driven by flags. A wizard whose
 answers are all supplied on the command line is a configuration file written
 twice.

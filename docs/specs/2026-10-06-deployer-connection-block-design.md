@@ -54,8 +54,9 @@ one machine and wrong on another: `${DDEV_SYNC_DOCKER_GID:-0}`, which is the
 correct group under Docker Desktop and the wrong one on Linux, and WordPress's
 `rewrite-site-url` rule whose shipped placeholder keeps running as a no-op so a
 forgotten override produces a green sync whose local site still points at
-production. A stale literal standing in for a failed resolution would be the
-same defect a third time, in a tool that drops databases.
+production (see Amendment 4). A stale literal standing in for a failed
+resolution would be the same defect a third time, in a tool that drops
+databases.
 
 **Resolution always runs in the web container.** Not on the host, and not in
 the sync sidecar — the sidecar has no PHP by design, so `vendor/bin/dep` is
@@ -259,9 +260,10 @@ fully green.
 
 ## Amendments
 
-Writing the plan and then the code disproved three statements above. They are
-left in place so the reasoning stays readable, and corrected here, because a
-spec that silently disagrees with the code is worse than no spec.
+Writing the plan and then the code disproved three statements above; a later
+branch overtook a fourth. They are left in place so the reasoning stays
+readable, and corrected here, because a spec that silently disagrees with the
+code is worse than no spec.
 
 ### 1. `ddev sync targets` shows the declaration, not the resolution
 
@@ -326,3 +328,18 @@ applies **within one spec**, and across layers that define the same target name
 - A literal `user`, `port`, `path` or `layout` set by a link **stronger** than
   the `deployer:` block contradicts it exactly as one beside it would, and is
   rejected.
+
+### 4. The `rewrite-site-url` placeholder no longer runs as a no-op
+
+*Amends the "decision the rest of the design hangs on" paragraph, above.*
+
+That paragraph's example is now out of date: `rewrite-site-url`'s shipped
+placeholder stopped being a silent no-op when
+`docs/specs/2026-10-07-sync-init-part-b1-design.md` gave `init` a
+production-URL question and `operations/placeholders.py` a `${PRODUCTION_URL}`
+resolver that the rule's `from:` now reads. A project that has never answered
+the question fails the sync loudly - the resolver raises - instead of
+succeeding silently with the local site still pointed at production. The
+example is left as written above because it is still the reason the strict,
+no-fallback decision this design makes is the right one; it is no longer a
+description of what the shipped rule does today.
