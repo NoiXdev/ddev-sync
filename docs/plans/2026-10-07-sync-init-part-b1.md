@@ -688,7 +688,7 @@ def test_resolve_project_needs_no_target(project: Path, tmp_path: Path) -> None:
     )
     assert resolved.profile.name
     assert resolved.detection.profile.value
-    with pytest.raises(ConfigError):
+    with pytest.raises(TargetError):
         build_context(
             project_root=project,
             home=tmp_path / "home",
@@ -713,7 +713,7 @@ def test_resolve_project_carries_the_user_layers(project: Path, tmp_path: Path) 
     assert [layer.label for layer in resolved.user_layers] == [PROJECT_LABEL]
 ```
 
-`test_no_targets_at_all_points_at_the_wizard` already in this file confirms the `ConfigError` the second test relies on; check its exact exception type and match it rather than assuming `ConfigError`.
+`test_no_targets_at_all_points_at_the_wizard` already in this file uses `TargetError` for exactly this case (`tests/cli/test_context.py:88`), which is why the second test above does too. Import it from `ddev_sync.errors` as that test does.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
