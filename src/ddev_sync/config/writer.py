@@ -122,6 +122,29 @@ def _append(
     return head + opening + block + "".join(lines[at:])
 
 
+def render_setting(route: tuple[str, ...], value: Any) -> str:
+    """The YAML lines for one setting, indented to sit under its parents.
+
+    Rendered through PyYAML for the same reason `render_target` is: quoting is
+    a solved problem and not worth re-solving.
+
+    A list is written in **flow** style - `file: [.env]`, not `file:` over a
+    block of items - so the whole setting is one line. Two reasons, and the
+    first is enough on its own: a one-line value cannot be half-replaced, so a
+    rewrite of this key can never strand part of the old value in the file.
+    The second is that `default_flow_style=None`, which would also flow the
+    list, flows the *mapping* too and would write
+    `{production_url: 'https://...'}` for the scalar case - a key the next
+    run's scan could not find.
+    """
+    key = route[-1]
+    if isinstance(value, list):
+        body = f"{key}: {yaml.safe_dump(value, default_flow_style=True).strip()}\n"
+    else:
+        body = yaml.safe_dump({key: value}, default_flow_style=False, sort_keys=False)
+    return indent(body, _INDENT * (len(route) - 1))
+
+
 def write_target(*, path: Path, paths: ConfigPaths, name: str, block: str) -> None:
     """Place `block` in `path`, then prove it on disk.
 
@@ -210,6 +233,102 @@ def _verify(
             f"writing the target {name!r} to {path} would also have changed "
             f"{', '.join(sorted(changed))}, so nothing was changed"
         )
+
+
+def write_settings(*, path: Path, paths: ConfigPaths, settings: Mapping[str, Any]) -> None:
+    """Place each dotted key of `settings` in `path`, then prove it on disk.
+
+    The mirror of `write_target`: that function proves it touched one target
+    and nothing else, this one proves it touched the named keys and no target.
+    Between them the file is covered. `write_target` was deliberately not
+    widened to do this - its check that *nothing* outside `targets` moved is
+    worth more than one that admits a list of exceptions the caller supplies.
+
+    As in `write_target`, `original` is held in memory rather than written to a
+    backup file, so a refusal leaves no stray `.bak` behind, and an empty file
+    is treated like a missing one because the loader rejects a layer with no
+    `version`.
+    """
+    # Read before anything is touched, for its error alone: a file the loader
+    # already refuses is one the engine would misread, so writing to it would
+    # build on a document it cannot agree on.
+    _targets(paths)
+    original = path.read_bytes() if path.exists() else None
+    document = original.decode("utf-8") if original else "version: 1\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    written = document
+    for dotted, value in settings.items():
+        route = tuple(dotted.split("."))
+        written = place_entry(written, route, render_setting(route, value))
+    try:
+        _write(path, written.encode("utf-8"))
+        _verify_settings(path=path, paths=paths, settings=settings, document=document)
+    except BaseException:
+        _restore(path, original)
+        raise
+
+
+def _verify_settings(
+    *,
+    path: Path,
+    paths: ConfigPaths,
+    settings: Mapping[str, Any],
+    document: str,
+) -> None:
+    written = path.read_bytes().decode("utf-8")
+    try:
+        # Read for its error path alone: this proves the whole merged
+        # configuration still loads, including the strict loader's refusal of
+        # a file that now names a key twice - which is exactly what placing a
+        # block at a key the scan could not see produces.
+        _targets(paths)
+    except DdevSyncError as error:
+        raise WriteRefused(
+            f"writing {', '.join(sorted(settings))} to {path} produced a file the "
+            f"loader rejected, so nothing was changed: {error}"
+        ) from error
+
+    loaded = yaml.safe_load(written) or {}
+    for dotted, value in settings.items():
+        if _at(loaded, tuple(dotted.split("."))) != _fingerprint(value):
+            raise WriteRefused(
+                f"the setting {dotted!r} in {path} is not the one that was written, "
+                "so nothing was changed"
+            )
+    # Only the top-level key of each route is exempt: a route's deeper keys
+    # live inside it, so comparing at the top level already covers them.
+    touched = {dotted.split(".")[0] for dotted in settings}
+    before = {key: value for key, value in _outside_targets(document).items() if key not in touched}
+    after = {key: value for key, value in _outside_targets(written).items() if key not in touched}
+    moved = sorted(before.items() ^ after.items())
+    if moved:
+        keys = sorted({key for key, _ in moved})
+        raise WriteRefused(
+            f"writing {', '.join(sorted(settings))} to {path} would also have changed "
+            f"{', '.join(map(repr, keys))}, so nothing was changed"
+        )
+    # No target may move at all - this writer never has a reason to touch one,
+    # so unlike `write_target` there is no name to exempt.
+    if _file_targets(document) != _file_targets(written):
+        raise WriteRefused(
+            f"writing {', '.join(sorted(settings))} to {path} would also have changed "
+            "a target, so nothing was changed"
+        )
+
+
+def _at(loaded: Any, route: tuple[str, ...]) -> str | None:
+    """The value at `route` in a parsed document, as text; None if absent.
+
+    Compared as text for the reason `_definition` gives: a document may hold an
+    alias that refers back to itself, which `safe_load` accepts and `==`
+    recurses through until it fails.
+    """
+    node: Any = loaded
+    for key in route:
+        if not isinstance(node, dict) or key not in node:
+            return None
+        node = node[key]
+    return _fingerprint(node)
 
 
 def _definition(targets: Any, name: str) -> str | None:

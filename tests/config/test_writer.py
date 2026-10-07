@@ -11,7 +11,9 @@ from ddev_sync.config.writer import (
     WriteRefused,
     place_entry,
     place_target,
+    render_setting,
     render_target,
+    write_settings,
     write_target,
 )
 from ddev_sync.errors import ConfigError
@@ -101,6 +103,13 @@ def test_comments_inside_the_file_survive_a_replacement() -> None:
     result = place_target(document, "production", render_target("production", MANUAL))
     assert "# why this project syncs at all" in result
     assert "# a trailing note" in result
+
+
+def _paths(tmp_path: Path, document: str) -> tuple[ConfigPaths, Path]:
+    paths = discover_config_paths(tmp_path / "project", tmp_path / "home")
+    paths.project_config.parent.mkdir(parents=True, exist_ok=True)
+    paths.project_config.write_text(document, encoding="utf-8")
+    return paths, paths.project_config
 
 
 def write_in(tmp_path: Path, document: str | None) -> tuple[Path, ConfigPaths]:
@@ -565,3 +574,148 @@ def test_place_entry_does_not_descend_into_an_inline_parent() -> None:
     result = place_target(document, "production", "  production:\n    host: new.example\n")
     assert result.count("targets:") == 2
     assert "old.example" in result
+
+
+def test_render_setting_indents_for_its_depth() -> None:
+    assert render_setting(("sanitize", "production_url"), "https://a.example") == (
+        "  production_url: https://a.example\n"
+    )
+
+
+def test_render_setting_writes_a_list_on_one_line() -> None:
+    assert render_setting(("features",), ["horizon", "livewire"]) == (
+        "features: [horizon, livewire]\n"
+    )
+    assert render_setting(("features",), []) == "features: []\n"
+    assert render_setting(("env", "file"), [".env.ddev"]) == "  file: [.env.ddev]\n"
+
+
+def test_render_setting_quotes_a_list_item_that_needs_it() -> None:
+    # Flow style is still PyYAML's job, not ours - which is the point of
+    # rendering through it rather than formatting the line by hand.
+    rendered = render_setting(("env", "file"), [".env: odd, name"])
+    assert yaml.safe_load(rendered.strip()) == {"file": [".env: odd, name"]}
+
+
+def test_write_settings_writes_several_keys(tmp_path: Path) -> None:
+    paths, path = _paths(tmp_path, "version: 1\n")
+    write_settings(
+        path=path,
+        paths=paths,
+        settings={"sanitize.production_url": "https://a.example", "features": ["horizon"]},
+    )
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert loaded["sanitize"]["production_url"] == "https://a.example"
+    assert loaded["features"] == ["horizon"]
+
+
+def test_write_settings_writes_an_empty_list_as_itself(tmp_path: Path) -> None:
+    # Review Focus 3: `features: []` means "none, deliberately" and is not the
+    # same as an absent key, so the write-back check must accept it.
+    paths, path = _paths(tmp_path, "version: 1\n")
+    write_settings(path=path, paths=paths, settings={"features": []})
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["features"] == []
+
+
+def test_write_settings_keeps_the_comments_around_it(tmp_path: Path) -> None:
+    paths, path = _paths(tmp_path, "# Keep me.\nversion: 1\n# And me.\n")
+    write_settings(path=path, paths=paths, settings={"features": ["horizon"]})
+    written = path.read_text(encoding="utf-8")
+    assert "# Keep me.\n" in written
+    assert "# And me.\n" in written
+
+
+def test_write_settings_refuses_a_key_the_scan_cannot_see(tmp_path: Path) -> None:
+    # Review Focus 1: a flow mapping is not found by `_key_line`, so the write
+    # appends a second `sanitize:` - which `yamlfile.py` refuses as a document
+    # naming one key twice. The refusal must restore the original bytes.
+    original = "version: 1\nsanitize: {}\n"
+    paths, path = _paths(tmp_path, original)
+    with pytest.raises(WriteRefused):
+        write_settings(
+            path=path, paths=paths, settings={"sanitize.production_url": "https://a.example"}
+        )
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_write_settings_refuses_when_a_target_would_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The mirrored half of `write_target`'s own neighbour check. Forced by
+    # placing a block that lands inside the targets mapping, which is what a
+    # scan miss looks like from the proof's side.
+    original = "version: 1\ntargets:\n  production:\n    stage: production\n"
+    paths, path = _paths(tmp_path, original)
+    monkeypatch.setattr(
+        writer,
+        "place_entry",
+        lambda document, path_, block: "version: 1\ntargets:\n  production:\n    stage: dev\n",
+    )
+    with pytest.raises(WriteRefused):
+        write_settings(path=path, paths=paths, settings={"features": []})
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_write_settings_refuses_when_a_target_changes_and_the_setting_still_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The test above never reaches the target comparison: its mocked output
+    # omits `features` entirely, so the earlier "not the one that was written"
+    # check fires first. Here the mock also writes the setting correctly, so
+    # the target change is the only thing left for the proof to catch.
+    original = "version: 1\ntargets:\n  production:\n    stage: production\n"
+    paths, path = _paths(tmp_path, original)
+    monkeypatch.setattr(
+        writer,
+        "place_entry",
+        lambda document, path_, block: (
+            "version: 1\ntargets:\n  production:\n    stage: dev\nfeatures: []\n"
+        ),
+    )
+    with pytest.raises(WriteRefused, match="a target"):
+        write_settings(path=path, paths=paths, settings={"features": []})
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_write_settings_refuses_when_an_untouched_key_would_move(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = "version: 1\nother: keep\n"
+    paths, path = _paths(tmp_path, original)
+    monkeypatch.setattr(
+        writer,
+        "place_entry",
+        lambda document, path_, block: "version: 1\nother: moved\nfeatures: []\n",
+    )
+    with pytest.raises(WriteRefused):
+        write_settings(path=path, paths=paths, settings={"features": []})
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_write_settings_refuses_when_the_key_is_not_what_was_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = "version: 1\n"
+    paths, path = _paths(tmp_path, original)
+    monkeypatch.setattr(
+        writer,
+        "place_entry",
+        lambda document, path_, block: "version: 1\nfeatures:\n- something-else\n",
+    )
+    with pytest.raises(WriteRefused):
+        write_settings(path=path, paths=paths, settings={"features": ["horizon"]})
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_write_settings_refuses_a_file_the_loader_already_rejects(tmp_path: Path) -> None:
+    paths, path = _paths(tmp_path, "version: 1\nversion: 2\n")
+    with pytest.raises(ConfigError):
+        write_settings(path=path, paths=paths, settings={"features": []})
+
+
+def test_write_settings_creates_a_missing_file_with_a_version(tmp_path: Path) -> None:
+    paths = discover_config_paths(tmp_path / "project", tmp_path / "home")
+    write_settings(path=paths.project_config, paths=paths, settings={"features": []})
+    loaded = yaml.safe_load(paths.project_config.read_text(encoding="utf-8"))
+    assert loaded["version"] == 1
+    assert loaded["features"] == []
