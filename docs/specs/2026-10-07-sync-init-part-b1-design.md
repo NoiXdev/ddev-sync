@@ -202,8 +202,15 @@ confirmation (which today re-merges the user layers for itself, and stops
 doing so) and B1's three. `build_context` is still called at the end, with the
 written target, to run `doctor` — unchanged.
 
-The confirmation question is still asked **first**, before anything acts on
-the profile. Order inside one resolution, not one resolution per question.
+The confirmation question is still asked before all three new questions and
+before every write — that ordering is unchanged. It is no longer asked before
+*everything*: `resolve_project` resolves the profile as part of building
+`ProjectResolution`, which `init` calls before the confirmation question runs,
+so a profile that does not resolve at all (`ddev sync init --type nonesuch`)
+now stops `init` with nothing asked and nothing written, instead of running
+the wizard to completion and only then failing at the `doctor` check with "it
+could not be checked". Order inside one resolution, not one resolution per
+question.
 
 ### The second write, and its proof
 
@@ -418,3 +425,93 @@ TDD: the failing test first.
   whether `init` should touch `.gitignore`.
 
 Also out of scope, as in part A: a non-interactive `init` driven by flags.
+
+## Corrections after the first implementation
+
+Four claims in this spec did not survive contact with the code. Three were
+already known when implementation began and are corrected in place as well as
+recorded here; the fourth was found by reading the finished code against this
+document.
+
+- **"The confirmation question is still asked first" was too strong, and has
+  been corrected above.** `init` now calls `resolve_project` — which resolves
+  the profile itself, not merely its name — before the confirmation question
+  runs. So a profile that does not exist at all (`ddev sync init --type
+  nonesuch`) now stops `init` before the confirmation question, before any of
+  the other three questions, and before any write. Before this change, the
+  same mistake ran the whole wizard to completion, wrote the target, and only
+  then failed inside `build_context`'s `doctor` check with "it could not be
+  checked" — a typo in a flag used to buy itself a target written into the
+  user's file before anything noticed. The guarantee that actually survives is
+  narrower than "first": the confirmation precedes all three of B1's new
+  questions and every write, which is all the design ever needed from it. The
+  new ordering is strictly better than the old one; the sentence describing it
+  was simply wrong.
+
+- **The `${PRODUCTION_URL}` change touched six files, not the three this spec
+  named.** "Item 4: `${PRODUCTION_URL}`" lists `operations/placeholders.py`,
+  `profiles/wordpress.yaml` and `init` as "three changes". Registering the
+  placeholder makes `parse_rules` raise for any WordPress configuration that
+  lacks `sanitize.production_url`, and that reached three more places that had
+  to change alongside it:
+  - `tests/profiles/test_wordpress.py`: three existing tests reach
+    `parse_rules` through the module's shared `context_for` helper, and all
+    three needed `sanitize.production_url` added to the layer it builds, or
+    they would now fail on the very configuration they exist to exercise. A
+    fourth test asserted on the old `REPLACE-ME` literal in `rule["from"]` and
+    had to be rewritten to assert `${PRODUCTION_URL}` instead.
+  - `tests/matrix/cells/mxwordpress/ddev-sync.yaml`: its per-project
+    `sanitize.rules` override — written to supply the real production URL —
+    became a second, duplicate `rewrite-site-url` rule sitting beside the
+    shipped one now that the shipped rule resolves the value itself. It was
+    replaced with a `sanitize.production_url` key.
+  - `profiles/VERIFIED.md`'s wordpress row asserted that the shipped
+    `rewrite-site-url` rule "runs as a no-op by design" and that the profile
+    "needs a per-project `sanitize.rules` override" for the production URL.
+    Both became false the moment the rule started resolving a real value, and
+    the row was corrected to describe the placeholder path instead, noting
+    that the matrix run it cites predates the change.
+
+- **The plan's draft commit message overstated what `mode: replace` is for.**
+  It said overriding `sanitize.rules` instead of registering the placeholder
+  was rejected because the list "can only be replaced wholesale" — read
+  plainly, that says there is no way to add to it, which is false:
+  `config/merge.py`'s `DEFAULT_LIST_MODE` is `extend`. What is true, and what
+  this spec's own "What is already true" section already said correctly, is
+  narrower: extending runs a *second*, duplicate `rewrite-site-url` rule
+  beside the placeholder one rather than fixing it — the duplicate did the
+  real work, the shipped rule still matched nothing — and only `mode: replace`
+  removes the placeholder rule, at the cost of repeating `anonymize-users`,
+  `reset-user-passwords` and `local-admin` in the override to keep them
+  running. The commit message that shipped (`86da624`) already uses this
+  corrected wording; this entry exists because the plan's draft did not.
+
+- **A fourth check, with nothing to correct.** The brief asked specifically
+  whether two implementation details were missing from this spec:
+
+  - `_key_line`'s parent/leaf distinction. The code's docstring for
+    `_key_line` (`config/writer.py`) explains that a **parent** key must be a
+    bare `key:` — the walk descends into the block it opens — while a
+    **leaf** may carry its value inline (`production_url: https://...`, or a
+    flow-style list), because every setting `init` writes is a leaf, and
+    without that distinction a second run could never find its own key again:
+    it would append a duplicate and the strict loader would then refuse the
+    file. This spec's "Generalising the placement" section does not describe
+    that distinction — it only restates part A's "deliberately naive" rule for
+    `_targets_line` (an exact bare spelling) and says `_targets_line` and
+    `_target_line` "become one `_key_line`", without saying that the merge
+    also had to add the inline-leaf case part A never needed. This is missing
+    from the spec and is recorded here as the fourth correction.
+  - Flow-style list rendering. `render_setting` writes every list value in
+    flow style (`features: [a, b]`), and its docstring gives the reason: a
+    block-style list's items sit at the key's own indent (see
+    `_block_end`'s sequence-item rule), so a one-line value is what makes a
+    rewrite of the key unable to strand part of the old value in the file.
+    This spec does show `env.file: [<name>]` as a flow-style example in
+    "Item 5: the env file", so the *shape* is not undocumented — but the
+    general rule ("every list this module writes is flow-style, and why") is
+    not stated, only the one instance. Folded into the point above rather than
+    counted as a separate, fifth correction, since both are the same gap:
+    this spec describes `place_entry`'s walk and part A's naive scan in
+    detail, but not the two properties `_key_line` and `render_setting` needed
+    to add to make settings — as opposed to targets — reliably rewritable.

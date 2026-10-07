@@ -60,3 +60,10 @@ version: 1
 #     name: app
 #     user: app
 #     password: change-me
+
+# The URL this site serves in production. WordPress rewrites it to the local
+# DDEV address after the import (`wp search-replace`), so a sync cannot do
+# that step without knowing it. `ddev sync init` asks for it; a sync whose
+# profile needs it and does not have it stops before touching the database.
+# sanitize:
+#   production_url: https://www.example.com
