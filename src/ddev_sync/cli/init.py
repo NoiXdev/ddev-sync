@@ -58,7 +58,7 @@ from ddev_sync.config.loader import (
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import CollectedTarget, collect_targets, resolve_target
 from ddev_sync.config.writer import WriteRefused, render_target, write_settings, write_target
-from ddev_sync.errors import DdevSyncError, DeployerError
+from ddev_sync.errors import ConfigError, DdevSyncError, DeployerError
 from ddev_sync.operations.placeholders import (
     PRODUCTION_URL_CONFIG_KEY,
     PRODUCTION_URL_PLACEHOLDER,
@@ -313,7 +313,11 @@ def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:
     exactly when that step would - and the file is matched the way
     `operations/env.py::_find_env_file` matches it, against real directory
     entries rather than a constructed path, because `is_file()` folds case on
-    a case-insensitive filesystem.
+    a case-insensitive filesystem. The guard between those two conditions is
+    `_env`'s too, raising the same sentence: a hand-edited `env.file` that is
+    neither a name nor a list of names would otherwise reach the
+    comprehension below as a raw `TypeError`, where `_env` raises a
+    `ConfigError` instead.
     """
     node = resolution.merged.data.get("env", {})
     settings = node if isinstance(node, dict) else {}
@@ -323,6 +327,10 @@ def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:
     if not isinstance(raw_values, dict) or not raw_values:
         return None
     configured = settings.get("file", [".env.local", ".env"])
+    if not isinstance(configured, str | list):
+        raise ConfigError(
+            f"env.file must be a file name or a list of file names, got {configured!r}"
+        )
     candidates = (
         [configured] if isinstance(configured, str) else [str(entry) for entry in configured]
     )

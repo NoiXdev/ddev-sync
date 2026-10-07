@@ -143,11 +143,14 @@ class EnvRewriteOperation:
         # integer: `engine/plan.py::_env` is the gate, and it rejects anything
         # that is neither a string nor a list with a ConfigError before a plan
         # containing this step exists at all. Named explicitly because the
-        # `[".env.local", ".env"]` default is now read in three places with
-        # three different tolerances - that gate, this method, and
+        # `[".env.local", ".env"]` default is now read in four places with
+        # four different tolerances - that gate, this method,
         # `operations/database.py::_env_candidates`, which quietly falls back
-        # to the default instead - so "why is this one not defensive" is a
-        # question worth answering in place rather than by searching.
+        # to the default instead, and `cli/init.py::_missing_env_file`, which
+        # carries the same gate's guard rather than this method's trust in
+        # it, because it runs before any plan does - so "why is this one not
+        # defensive" is a question worth answering in place rather than by
+        # searching.
         candidates = [configured] if isinstance(configured, str) else list(configured)
         existing = {entry.name for entry in context.project.root.iterdir() if entry.is_file()}
         for name in candidates:

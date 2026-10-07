@@ -1221,6 +1221,54 @@ def test_a_directory_named_env_is_not_a_file(
     assert asked == [True]
 
 
+def test_a_file_named_env_in_capitals_does_not_satisfy_the_lowercase_candidate(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The case `iterdir()` exists for (`_missing_env_file`'s own docstring):
+    # a case-insensitive filesystem's `is_file()` would fold ".env" and
+    # ".ENV" together and wrongly call the question answered. The directory
+    # holds only ".ENV", so the question must still be asked.
+    _laravel(project)
+    (project / ".ENV").write_text("APP_ENV=local\n", encoding="utf-8")
+    asked: list[bool] = []
+
+    def answer(looked_for: list[str], present: list[str]) -> str:
+        asked.append(True)
+        return ENV_FILE_NONE
+
+    monkeypatch.setattr(init, "choose_env_file", answer)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    invoke(project, tmp_path)
+    assert asked == [True]
+
+
+def test_a_non_iterable_env_file_setting_fails_the_way_the_engine_would(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `_missing_env_file`'s docstring claims its two conditions are
+    # `engine/plan.py::_env`'s own - but that function's guard between its two
+    # conditions, which turns a non-str/non-list `env.file` into a `ConfigError`
+    # sentence instead of a raw `TypeError`, had not been copied along with them.
+    _laravel(project)
+    project_file.write_text(
+        "version: 1\nenv:\n  file: 7\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(init, "choose_env_file", _never_called)
+    _answer_the_target_questions(monkeypatch)
+    assert invoke(project, tmp_path) == 1
+    error = capsys.readouterr().err
+    assert "env.file must be a file name or a list of file names" in error
+    assert "7" in error
+
+
 def test_no_terminal_at_the_env_file_question_stops_init_with_nothing_written(
     project: Path,
     project_file: Path,
