@@ -25,6 +25,10 @@ from ddev_sync.operations.database import read_remote_credentials
 
 WP_TABLE_PREFIX_CONFIG_KEY = "database.wp_table_prefix"
 SYMFONY_USER_TABLE_CONFIG_KEY = "database.symfony_user_table"
+PRODUCTION_URL_CONFIG_KEY = "sanitize.production_url"
+PRODUCTION_URL_PLACEHOLDER = "${PRODUCTION_URL}"
+
+_URL_SCHEMES = ("http://", "https://")
 
 # `${WP_TABLE_PREFIX}` and `${SYMFONY_USER_TABLE}` are spliced directly into
 # *unquoted* raw SQL (see profiles/wordpress.yaml's and profiles/symfony.yaml's
@@ -148,6 +152,50 @@ def _resolve_wp_table_prefix(context: ExecutionContext) -> str:
     )
 
 
+def validate_production_url(value: str) -> str | None:
+    """Why `value` cannot be used as a production URL, or `None` if it can.
+
+    Deliberately *not* `_validated_identifier`: this value reaches
+    `wp search-replace` as a list element (`operations/catalog.py::SearchReplace
+    ._via_wp_cli`), never as part of a shell string, so there is nothing to
+    escape and nothing to inject into. The hazard is a degenerate value - an
+    empty search term matches everywhere in every column of the database - so
+    what is checked is that the value is a URL at all.
+
+    Returns the reason rather than raising so that the prompt
+    (`cli/prompts.py`) and the resolver below can enforce one rule: the prompt
+    shows it while the user is still typing, the resolver raises it for a file
+    somebody edited by hand.
+    """
+    if not value:
+        return "the production URL cannot be empty"
+    if any(character.isspace() for character in value):
+        return "the production URL must contain no whitespace"
+    if not value.startswith(_URL_SCHEMES):
+        return "the production URL must start with 'http://' or 'https://'"
+    return None
+
+
+def _resolve_production_url(context: ExecutionContext) -> str:
+    """The URL this site serves in production, from the configuration.
+
+    There is nothing to probe for it: the remote's own URL is not something
+    the engine can read over ssh without knowing the framework, and asking the
+    user once is both cheaper and more reliable. So unlike ${WP_TABLE_PREFIX}
+    this is a config key or an error, with no middle branch.
+    """
+    configured = context.config(PRODUCTION_URL_CONFIG_KEY, default="")
+    problem = validate_production_url(configured)
+    if problem is None:
+        return configured
+    raise OperationError(
+        f"could not resolve {PRODUCTION_URL_PLACEHOLDER}: {problem}. It is the URL this "
+        "site serves in production - the one a sanitize rule rewrites to the local "
+        f"DDEV address after the import. Set {PRODUCTION_URL_CONFIG_KEY!r} in "
+        ".ddev/ddev-sync.yaml, or run 'ddev sync init', which asks for it."
+    )
+
+
 def _substitutions(context: ExecutionContext) -> dict[str, Callable[[], str]]:
     return {
         "${DDEV_SITENAME}": lambda: context.project.name,
@@ -175,6 +223,10 @@ def _substitutions(context: ExecutionContext) -> dict[str, Callable[[], str]]:
             context.config(SYMFONY_USER_TABLE_CONFIG_KEY, default="user"),
             source=SYMFONY_USER_TABLE_CONFIG_KEY,
         ),
+        # Not memoised: resolving it reads a config key and validates a short
+        # string, which is the same reason ${SYMFONY_USER_TABLE} needs no thunk
+        # that does real work. ${WP_TABLE_PREFIX} is the one that shells out.
+        PRODUCTION_URL_PLACEHOLDER: lambda: _resolve_production_url(context),
     }
 
 

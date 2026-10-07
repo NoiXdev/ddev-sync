@@ -15,14 +15,14 @@ targets:
 database:
   remote_credentials: wp_cli
 sanitize:
-  rules:
-    # The per-project override VERIFIED.md says this profile needs: the
-    # shipped rule carries `https://REPLACE-ME.example`, a placeholder by
-    # design, because no profile can know a project's production URL. A list
-    # in the project config *extends* the profile's rules, so this runs in
-    # addition to that placeholder rule rather than instead of it.
-    - name: rewrite-site-url
-      operation: search_replace
-      driver: wp_cli
-      from: https://acme-production.example
-      to: https://mxwordpress.ddev.site
+  # The profile's shipped `rewrite-site-url` rule resolves its `from` through
+  # `${PRODUCTION_URL}` (operations/placeholders.py), which reads this key -
+  # no profile can know a project's production URL by itself. This cell used
+  # to carry its own `sanitize.rules` entry instead: a plain list under
+  # `sanitize.rules` *extends* the profile's list rather than replacing it
+  # (config/merge.py's default list mode), so that entry ran as a *second*
+  # `rewrite-site-url` rule alongside the shipped one, which matched nothing
+  # and did real work only through the duplicate. With the placeholder
+  # resolving, the shipped rule now does that work by itself and the
+  # duplicate is gone.
+  production_url: https://acme-production.example

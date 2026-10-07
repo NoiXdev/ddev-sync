@@ -16,11 +16,18 @@ files:
     - { remote: "wp-content/uploads/", local: "wp-content/uploads/" }
 
 sanitize:
+  # `rewrite-site-url`'s `from` is `${PRODUCTION_URL}` (operations/placeholders.py),
+  # resolved from `sanitize.production_url` - a config key the profile cannot
+  # supply a default for, since it has no way to know what URL a given site
+  # serves in production. An unset key fails the sync by name rather than
+  # silently matching nothing: the placeholder literal this used to ship
+  # matched no row in any real database, so the rewrite ran and reported
+  # success while leaving production's URL untouched throughout.
   rules:
     - name: rewrite-site-url
       operation: search_replace
       driver: wp_cli
-      from: "https://REPLACE-ME.example"
+      from: "${PRODUCTION_URL}"
       to: "https://${DDEV_SITENAME}.ddev.site"
     # `${WP_TABLE_PREFIX}` resolves at parse time (operations/placeholders.py):
     # `database.wp_table_prefix` if a project sets it, otherwise

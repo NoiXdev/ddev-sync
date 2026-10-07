@@ -7,7 +7,11 @@ from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations.base import ExecutionContext, OperationError
-from ddev_sync.operations.placeholders import expand_placeholders, expand_value
+from ddev_sync.operations.placeholders import (
+    expand_placeholders,
+    expand_value,
+    validate_production_url,
+)
 from ddev_sync.transport.fake import FakeCommandRunner
 
 
@@ -318,6 +322,55 @@ def test_symfony_user_table_is_overridable(tmp_path: Path) -> None:
         FakeCommandRunner(), tmp_path, database={"symfony_user_table": "app_user"}
     )
     assert expand_value("${SYMFONY_USER_TABLE}", context) == "app_user"
+
+
+# --- ${PRODUCTION_URL} -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://acme.example", None),
+        ("http://acme.example", None),
+        ("", "the production URL cannot be empty"),
+        ("https://acme.example ", "the production URL must contain no whitespace"),
+        ("acme.example", "the production URL must start with 'http://' or 'https://'"),
+    ],
+)
+def test_validate_production_url(value: str, expected: str | None) -> None:
+    assert validate_production_url(value) == expected
+
+
+def test_production_url_expands_from_the_config_key(tmp_path: Path) -> None:
+    context = make_context(
+        FakeCommandRunner(), tmp_path, sanitize={"production_url": "https://acme.example"}
+    )
+    assert expand_value("${PRODUCTION_URL}/x", context) == "https://acme.example/x"
+
+
+def test_production_url_without_the_key_names_it(tmp_path: Path) -> None:
+    context = make_context(FakeCommandRunner(), tmp_path)
+    with pytest.raises(OperationError) as error:
+        expand_value("${PRODUCTION_URL}", context)
+    assert "sanitize.production_url" in str(error.value)
+    assert "ddev sync init" in str(error.value)
+
+
+def test_production_url_rejects_a_configured_value_that_is_unusable(tmp_path: Path) -> None:
+    # A hand-edited file never passes the prompt, so the resolver is the only
+    # thing standing between a degenerate value and `wp search-replace`.
+    context = make_context(
+        FakeCommandRunner(), tmp_path, sanitize={"production_url": "acme.example"}
+    )
+    with pytest.raises(OperationError) as error:
+        expand_value("${PRODUCTION_URL}", context)
+    assert "http://" in str(error.value)
+
+
+def test_the_wordpress_profile_carries_no_placeholder_literal() -> None:
+    text = (Path(__file__).parent.parent.parent / "profiles" / "wordpress.yaml").read_text()
+    assert "REPLACE-ME" not in text
+    assert "${PRODUCTION_URL}" in text
 
 
 # --- expand_placeholders (flat mapping) -------------------------------------

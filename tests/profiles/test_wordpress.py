@@ -42,7 +42,17 @@ def context_for(tmp_path: Path) -> ExecutionContext:
             path="/srv/app/",
             stage=Stage.PRODUCTION,
         ),
-        merged=merge_layers([LayerDoc("profile:wordpress", profile.data)]),
+        merged=merge_layers(
+            [
+                LayerDoc("profile:wordpress", profile.data),
+                # `rewrite-site-url`'s `from` is now `${PRODUCTION_URL}`
+                # (operations/placeholders.py), which `parse_rules` resolves
+                # from `sanitize.production_url` for every rule it parses, not
+                # only the one a given test asserts on - so a project layer
+                # must supply it here exactly as a real sync's config would.
+                LayerDoc("project", {"sanitize": {"production_url": "https://acme.example"}}),
+            ]
+        ),
         runner=runner,
         downloads_dir=tmp_path / ".ddev" / ".downloads",
         assume_yes=True,
@@ -101,9 +111,9 @@ def test_the_admin_is_created_through_wp_cli() -> None:
 
 def test_the_placeholder_production_url_is_marked_so_nobody_ships_it() -> None:
     rule = next(entry for entry in rules() if entry["name"] == "rewrite-site-url")
-    assert "REPLACE-ME" in rule["from"], (
-        "The wordpress profile ships a placeholder production URL that each "
-        "project must override in .ddev/ddev-sync.yaml. If this assertion is "
-        "failing because the placeholder was replaced with a real URL, that "
-        "URL does not belong in a shared profile."
+    assert rule["from"] == "${PRODUCTION_URL}", (
+        "The wordpress profile must not ship a literal production URL - it has "
+        "no way to know one. If this assertion is failing because 'from' was "
+        "replaced with a real URL, that URL does not belong in a shared "
+        "profile; resolve it through 'sanitize.production_url' instead."
     )
