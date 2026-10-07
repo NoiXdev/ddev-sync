@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from ddev_sync.cli.context import build_context
+from ddev_sync.cli.context import build_context, resolve_project
+from ddev_sync.config.loader import PROJECT_LABEL
 from ddev_sync.ddev.project import read_ddev_project
 from ddev_sync.errors import ConfigError, TargetError
 from ddev_sync.transport.deployer import make_deployer_resolver
@@ -552,3 +553,66 @@ def test_a_resolver_that_was_already_used_is_not_asked_again(project: Path, tmp_
 
     assert context.target.host == "web-1.example"
     assert len(runner.calls) == 1
+
+
+def test_resolve_project_agrees_with_build_context(project: Path, tmp_path: Path) -> None:
+    # The extraction is only correct if the two produce the same values, so
+    # that is the assertion rather than a restatement of what a profile holds.
+    resolved = resolve_project(
+        project_root=project,
+        home=tmp_path / "home",
+        type_flag=None,
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+    )
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag=None,
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+    )
+    assert resolved.profile.name == context.profile.name
+    assert resolved.merged.data == context.merged.data
+    assert resolved.project == context.project
+    assert resolved.features.activated == context.features.activated
+
+
+def test_resolve_project_needs_no_target(project: Path, tmp_path: Path) -> None:
+    # The whole point: with no targets at all it still resolves, which is what
+    # lets `init` ask its questions before it has written one. `build_context`
+    # on the same project raises, and that contrast is the test.
+    (project / ".ddev" / "ddev-sync.yaml").write_text("version: 1\n", encoding="utf-8")
+    resolved = resolve_project(
+        project_root=project,
+        home=tmp_path / "home",
+        type_flag=None,
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+    )
+    assert resolved.profile.name
+    assert resolved.detection.profile.value
+    with pytest.raises(TargetError):
+        build_context(
+            project_root=project,
+            home=tmp_path / "home",
+            target_name=None,
+            type_flag=None,
+            framework_version_flag=None,
+            profile_root=PROFILE_ROOT,
+        )
+
+
+def test_resolve_project_carries_the_user_layers(project: Path, tmp_path: Path) -> None:
+    # `init` reads these to see whether the user already wrote a `features:`
+    # key (Task 7), so they are part of the contract, not an implementation
+    # detail that happens to be reachable.
+    resolved = resolve_project(
+        project_root=project,
+        home=tmp_path / "home",
+        type_flag=None,
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+    )
+    assert [layer.label for layer in resolved.user_layers] == [PROJECT_LABEL]

@@ -72,6 +72,72 @@ def detect_project(
     return Detection(profile=profile_resolution, version=version_resolution)
 
 
+@dataclass(frozen=True)
+class ProjectResolution:
+    """Everything a run resolves before it knows which target it is for.
+
+    This is the half of `build_context` that `ddev sync init` needs while it
+    is still asking questions: the target it will write does not exist yet, so
+    anything that depends on one cannot be here.
+    """
+
+    project: DdevProject
+    detection: Detection
+    profile: ResolvedProfile
+    features: FeatureResolution
+    merged: MergeResult
+    user_layers: tuple[LayerDoc, ...]
+
+
+def resolve_project(
+    *,
+    project_root: Path,
+    home: Path,
+    type_flag: str | None,
+    framework_version_flag: str | None,
+    profile_root: Path,
+    feature_root: Path = DEFAULT_FEATURE_ROOT,
+    features_flag: str | None = None,
+    no_features: bool = False,
+) -> ProjectResolution:
+    """Read config, detect type and version, resolve profile and features.
+
+    Everything `build_context` does except resolve a target - which it already
+    did last, so this is a split at a seam rather than a reordering. It is its
+    own function so that `ddev sync init` can ask about exactly what a run
+    would use, before it has a target to resolve; `detect_project` above was
+    extracted from the same function for the same reason.
+    """
+    project = read_ddev_project(project_root)
+    user_layers = load_user_layers(discover_config_paths(project_root, home))
+    user_merged = merge_layers(user_layers)
+    detection = detect_project(project, user_merged, type_flag, framework_version_flag)
+    major = None if detection.version is None else detection.version.value
+
+    registry = ProfileRegistry(profile_root)
+    profile = registry.resolve(detection.profile.value, major)
+
+    # Features need the profile's name (to filter `applies_to`), so they can
+    # only be resolved once the profile itself is - and must happen before
+    # the final merge, since their layers slot between the profile's and the
+    # user's own configuration (spec §4, amended).
+    feature_registry = FeatureRegistry(feature_root)
+    detect_enabled, disabled_reason = _detect_enabled(user_merged.data, no_features=no_features)
+    requests = _feature_requests(user_merged, features_flag)
+    resolution = resolve_features(
+        feature_registry, project, profile.name, requests, detect_enabled, disabled_reason
+    )
+
+    return ProjectResolution(
+        project=project,
+        detection=detection,
+        profile=profile,
+        features=resolution,
+        merged=merge_layers([*profile.layers, *resolution.layers, *user_layers]),
+        user_layers=tuple(user_layers),
+    )
+
+
 def build_context(
     *,
     project_root: Path,
@@ -96,43 +162,33 @@ def build_context(
     its `dep config` output is reused rather than fetched again; it takes
     precedence over `runner` for resolving a target.
     """
-    project = read_ddev_project(project_root)
-    user_layers = load_user_layers(discover_config_paths(project_root, home))
-    user_merged = merge_layers(user_layers)
-    detection = detect_project(project, user_merged, type_flag, framework_version_flag)
-    major = None if detection.version is None else detection.version.value
-
-    registry = ProfileRegistry(profile_root)
-    profile = registry.resolve(detection.profile.value, major)
-
-    # Features need the profile's name (to filter `applies_to`), so they can
-    # only be resolved once the profile itself is - and must happen before
-    # the final merge, since their layers slot between the profile's and the
-    # user's own configuration (spec §4, amended).
-    feature_registry = FeatureRegistry(feature_root)
-    detect_enabled, disabled_reason = _detect_enabled(user_merged.data, no_features=no_features)
-    requests = _feature_requests(user_merged, features_flag)
-    resolution = resolve_features(
-        feature_registry, project, profile.name, requests, detect_enabled, disabled_reason
+    resolved = resolve_project(
+        project_root=project_root,
+        home=home,
+        type_flag=type_flag,
+        framework_version_flag=framework_version_flag,
+        profile_root=profile_root,
+        feature_root=feature_root,
+        features_flag=features_flag,
+        no_features=no_features,
     )
-
-    merged = merge_layers([*profile.layers, *resolution.layers, *user_layers])
+    user_layers = list(resolved.user_layers)
     if deployer is None and runner is not None:
-        deployer = make_deployer_resolver(project, runner)
+        deployer = make_deployer_resolver(resolved.project, runner)
     target = resolve_target(
         _pick_target_name(target_name, user_layers),
         collect_targets(user_layers),
         resolve_deployer=deployer,
     )
 
-    notices = () if profile.notice is None else (profile.notice,)
+    notices = () if resolved.profile.notice is None else (resolved.profile.notice,)
     return RunContext(
-        project=project,
-        profile=profile,
+        project=resolved.project,
+        profile=resolved.profile,
         target=target,
-        merged=merged,
+        merged=resolved.merged,
         notices=notices,
-        features=resolution,
+        features=resolved.features,
     )
 
 
