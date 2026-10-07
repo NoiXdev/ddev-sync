@@ -156,9 +156,14 @@ The new questions sit directly after the detection confirmation because they
 are about the **project**, not the target: which URL production serves, which
 file holds this project's environment, which features this checkout has. Part
 A's reason for its own ordering — that someone who declines a collision should
-lose one answer, not five — is untouched, because none of these three answers
-is discarded by a later decline: they are written in step 7, which a `init`
-that ended at step 5 never reaches.
+lose one answer, not five — applies only within the target's own questions
+(name, connection, stage); it does not extend to these three. They are written
+in step 7, so an `init` that declines a collision in step 5 has already lost
+them, same as it loses the connection and stage it has not been asked yet.
+What does hold is the thing part A actually promised for the file: nothing is
+written until step 6, so an `init` that ends anywhere before it — including a
+decline at step 5 — leaves `.ddev/ddev-sync.yaml` exactly as it found it. The
+three answers themselves are not preserved; they are asked again next run.
 
 **Every one of the three is skipped when there is nothing to decide.** A TYPO3
 project is asked no WordPress URL; a project whose `.env` exists is asked no

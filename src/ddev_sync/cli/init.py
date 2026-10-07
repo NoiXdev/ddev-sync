@@ -1,9 +1,18 @@
 """`ddev sync init`: ask for one target, write it, then check it.
 
 The order of the questions is not the order a person would list the answers
-in. The name comes before the connection because it is all that is needed to
-know whether the target already exists, and a user who declines to replace one
-should lose one answer, not five.
+in. Within the target's own questions, the name comes before the connection
+because it is all that is needed to know whether the target already exists,
+and a user who declines to replace one should lose one answer, not five. The
+project questions - production URL, env file, features - are asked first of
+all, ahead of the name, because they describe the project rather than the
+target; nothing here protects *them* from a later decline the way the name
+ordering protects the connection. What holds instead is narrower: nothing is
+written until every question has an answer, so an `init` that ends anywhere
+before the write - at the name, at a declined collision, at the connection -
+leaves the configuration file exactly as it found it. The cost is real: the
+production-URL, env-file and feature answers are asked again on the next run,
+the same as the name and connection would be.
 
 Only `.ddev/ddev-sync.yaml` is ever written. The global file is mounted
 read-only in the sidecar on purpose (`docker-compose.ddev-sync.yaml`), and the
