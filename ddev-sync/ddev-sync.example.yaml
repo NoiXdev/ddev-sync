@@ -21,6 +21,11 @@
 # `host`, `user` and `port` here instead.
 version: 1
 
+# `ddev sync init` writes the first target into your copy of this file,
+# asking for the name, the connection and the stage, and then checks it. It
+# writes nothing anywhere else - including the global file above, which the
+# sidecar can only read. By hand, the shape is:
+
 # targets:
 #   production:
 #     host: web01.example

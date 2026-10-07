@@ -74,7 +74,7 @@ post_install_actions:
           "${DDEV_APPROOT}/.ddev/ddev-sync/ddev-sync.example.yaml" > "${tmp}" \
         && grep -q '^version:' "${tmp}" \
         && chmod 644 "${tmp}" && mv "${tmp}" "${target}"; then
-        echo "Wrote .ddev/ddev-sync.yaml, a commented template - define a target in it."
+        echo "Wrote .ddev/ddev-sync.yaml, a commented template - 'ddev sync init' fills it in."
       else
         rm -f "${tmp}"
         echo "Could not write .ddev/ddev-sync.yaml (is the template intact?)" >&2
@@ -100,7 +100,7 @@ post_install_actions:
            DDEV_SYNC_IMAGE=ddev-sync
            DDEV_SYNC_VERSION=dev
       3. ddev restart
-      4. ddev sync --target <name> doctor
+      4. ddev sync init
 
     The order matters: a pre-start hook runs on every start and reads the
     image, so the image has to exist and .ddev/.env has to name it before the

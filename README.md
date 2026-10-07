@@ -36,14 +36,20 @@ DDEV_SYNC_IMAGE=ddev-sync
 DDEV_SYNC_VERSION=dev
 ```
 
-Define a target in `.ddev/ddev-sync.yaml` (the install wrote a commented
-template), load your key, restart, and check:
+Then load your key, restart, and let `init` ask for the target:
 
 ```bash
 ddev auth ssh
 ddev restart
-ddev sync --target production doctor
+ddev sync init
 ```
+
+`init` asks for a name, where the remote is and which stage it is, writes that
+one target into `.ddev/ddev-sync.yaml` - the commented template the install
+put there - and finishes by running `doctor` against it. It only ever writes
+that file, and it reads the answers from a terminal, so there are no flags to
+supply them with: to set a target up without one, edit the template by hand
+and run `ddev sync --target <name> doctor` yourself.
 
 **The order matters.** A pre-start hook runs on every project start and reads
 the image, so the image has to exist and `.ddev/.env` has to name it *before*
