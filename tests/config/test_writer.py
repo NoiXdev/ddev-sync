@@ -1,11 +1,13 @@
+import os
+import stat
 from pathlib import Path
 
 import pytest
 
+from ddev_sync.config import writer
 from ddev_sync.config.loader import ConfigPaths, discover_config_paths
 from ddev_sync.config.writer import (
     WriteRefused,
-    _repeated_key,
     place_target,
     render_target,
     write_target,
@@ -29,7 +31,7 @@ def test_a_rendered_target_is_indented_for_the_targets_mapping() -> None:
 
 def test_a_rendered_target_keeps_the_order_it_was_given() -> None:
     # Field order is how a human reads the block; `sort_keys=False` is what
-    # keeps it, and a default-sorted dump would read host, path, port, stage.
+    # keeps it, and a default-sorted dump would read host, path, port, stage, user.
     block = render_target("production", MANUAL)
     assert [line.split(":")[0].strip() for line in block.splitlines()[1:]] == [
         "host",
@@ -120,17 +122,17 @@ def test_a_missing_file_is_created_with_a_version(tmp_path: Path) -> None:
     assert "web01.example" in text
 
 
-def test_a_write_that_the_loader_cannot_read_back_is_undone(tmp_path: Path) -> None:
-    # The net: a document whose shape defeats the placement must leave the
-    # file exactly as it was. A flow-style mapping is one such shape.
+def test_a_second_targets_key_beside_a_flow_mapping_is_undone(tmp_path: Path) -> None:
+    # The loader reads the result without complaint - PyYAML keeps the last of
+    # two `targets:` keys - so only the duplicate-key check stands between this
+    # and a file that quietly holds the key twice.
     document = "version: 1\ntargets: {production: {host: old.example, stage: production}}\n"
     path, paths = write_in(tmp_path, document)
-    with pytest.raises(WriteRefused) as caught:
+    with pytest.raises(WriteRefused, match="twice"):
         write_target(
             path=path, paths=paths, name="production", block=render_target("production", MANUAL)
         )
     assert path.read_text(encoding="utf-8") == document, "the file must be byte-for-byte as before"
-    assert "production" in str(caught.value)
 
 
 def test_a_neighbouring_target_survives_a_replacement(tmp_path: Path) -> None:
@@ -212,30 +214,189 @@ def test_another_target_changing_is_refused(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8") == document
 
 
-def test_a_target_that_is_not_there_afterwards_is_refused(tmp_path: Path) -> None:
-    # The `targets:` line sits inside a quoted scalar, so the block is placed
-    # in the middle of a string and the loader reads the file without error.
+NOTE_DOCUMENT = (
+    'version: 1\nnote: "a\ntargets:\nb"\n'
+    "targets:\n  production:\n    host: old.example\n    stage: production\n"
+)
+
+
+def test_a_block_that_landed_inside_a_quoted_scalar_is_refused(tmp_path: Path) -> None:
+    # The `targets:` line inside the string is taken for the real one, so the
+    # block is placed into `note`. The loader reads the result fine and the
+    # name is present, but the real target still has its old host.
+    path, paths = write_in(tmp_path, NOTE_DOCUMENT)
+    with pytest.raises(WriteRefused, match="not the one that was written"):
+        write_target(
+            path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+        )
+    assert path.read_text(encoding="utf-8") == NOTE_DOCUMENT
+
+
+def test_a_target_defined_in_another_layer_does_not_vouch_for_the_write(tmp_path: Path) -> None:
     document = 'version: 1\nnote: "a\ntargets:\nb"\n'
     path, paths = write_in(tmp_path, document)
-    with pytest.raises(WriteRefused, match="not there"):
+    paths.global_config.parent.mkdir(parents=True)
+    paths.global_config.write_text(
+        "version: 1\ntargets:\n  production:\n    host: elsewhere\n", encoding="utf-8"
+    )
+    with pytest.raises(WriteRefused, match="not the one that was written"):
         write_target(
             path=path, paths=paths, name="production", block=render_target("production", MANUAL)
         )
     assert path.read_text(encoding="utf-8") == document
 
 
-@pytest.mark.parametrize(
-    ("document", "expected"),
-    [
-        ("", None),
-        ("a: 1\nb: 2\n", None),
-        ("a: 1\na: 2\n", "a"),
-        ("a:\n  b: 1\n  b: 2\n", "b"),
-        ("a:\n  - x: 1\n  - y: 1\n    y: 2\n", "y"),
-        ("a:\n  - 1\n  - 2\n", None),
-        ("1: a\n'1': b\n", None),
-        ("? [a, b]\n: 1\n? [a, b]\n: 2\n", None),
-    ],
-)
-def test_a_key_repeated_in_one_mapping_is_found(document: str, expected: str | None) -> None:
-    assert _repeated_key(document) == expected
+def test_a_change_outside_targets_is_refused(tmp_path: Path) -> None:
+    # The real `production` already equals the block, so the target looks
+    # right; the damage is the string that now holds a copy of it.
+    document = (
+        'version: 1\nnote: "a\ntargets:\nb"\n' + "targets:\n" + render_target("production", MANUAL)
+    )
+    path, paths = write_in(tmp_path, document)
+    with pytest.raises(WriteRefused, match="'note' outside"):
+        write_target(
+            path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+        )
+    assert path.read_text(encoding="utf-8") == document
+
+
+def test_a_comment_inside_a_replaced_block_is_deleted(tmp_path: Path) -> None:
+    # Deliberate: the block is replaced as a whole, and the template tells
+    # people to comment their targets, so this is pinned rather than found out.
+    document = (
+        "version: 1\ntargets:\n  production:\n    # the old box\n    host: old.example\n"
+        "    stage: production\n"
+    )
+    path, paths = write_in(tmp_path, document)
+    write_target(
+        path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+    )
+    assert "the old box" not in path.read_text(encoding="utf-8")
+
+
+def test_a_self_referencing_alias_elsewhere_in_the_file_is_survived(tmp_path: Path) -> None:
+    document = "version: 1\nx: &x [*x]\n"
+    path, paths = write_in(tmp_path, document)
+    write_target(
+        path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+    )
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith(document)
+    assert "web01.example" in text
+
+
+def test_a_duplicate_the_file_already_had_is_not_blamed_on_the_write(tmp_path: Path) -> None:
+    document = "version: 1\nfoo: 1\nfoo: 2\nlist:\n  - a: 1\n    a: 2\n"
+    path, paths = write_in(tmp_path, document)
+    write_target(
+        path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+    )
+    assert path.read_text(encoding="utf-8").startswith(document)
+
+
+def test_a_new_duplicate_is_named_by_its_path(tmp_path: Path) -> None:
+    # A target whose own block repeats a key: the placement is right, the file
+    # is not, and the path says where.
+    document = "version: 1\ntargets:\n  staging:\n    host: web02\n"
+    path, paths = write_in(tmp_path, document)
+    block = "  production:\n    host: a\n    host: b\n"
+    with pytest.raises(WriteRefused, match=r"targets\.production\.host"):
+        write_target(path=path, paths=paths, name="production", block=block)
+    assert path.read_text(encoding="utf-8") == document
+
+
+def test_crlf_line_endings_survive_a_write(tmp_path: Path) -> None:
+    document = "version: 1\r\n# note\r\ntargets:\r\n  staging:\r\n    host: web02\r\n"
+    path, paths = write_in(tmp_path, document)
+    write_target(
+        path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+    )
+    data = path.read_bytes()
+    assert data.startswith(document.encode())
+    assert data.count(b"\n") == data.count(b"\r\n"), "no bare newline may be mixed in"
+    assert b"web01.example" in data
+
+
+def test_crlf_replacement_keeps_the_neighbours(tmp_path: Path) -> None:
+    document = (
+        "version: 1\r\ntargets:\r\n  production:\r\n    host: old\r\n"
+        "  staging:\r\n    host: web02\r\n"
+    )
+    path, paths = write_in(tmp_path, document)
+    write_target(
+        path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+    )
+    data = path.read_bytes()
+    assert b"host: old" not in data
+    assert data.endswith(b"  staging:\r\n    host: web02\r\n")
+    assert data.count(b"\n") == data.count(b"\r\n")
+
+
+def test_a_refused_write_to_a_crlf_file_is_byte_for_byte(tmp_path: Path) -> None:
+    document = "version: 1\r\ntargets: {production: {host: old, stage: production}}\r\n"
+    path, paths = write_in(tmp_path, document)
+    path.write_bytes(document.encode())
+    with pytest.raises(WriteRefused):
+        write_target(
+            path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+        )
+    assert path.read_bytes() == document.encode()
+
+
+def test_a_failing_rename_leaves_the_file_whole_and_no_temporary_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = "version: 1\n# kept\n"
+    path, paths = write_in(tmp_path, document)
+
+    def refuse(source: object, destination: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    before = sorted(p.name for p in path.parent.iterdir())
+    with pytest.raises(OSError, match="disk full"):
+        write_target(
+            path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+        )
+    assert path.read_text(encoding="utf-8") == document
+    assert sorted(p.name for p in path.parent.iterdir()) == before
+
+
+def test_an_unforeseen_error_after_the_write_restores_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = "version: 1\n# kept\n"
+    path, paths = write_in(tmp_path, document)
+
+    def explode(_document: str) -> object:
+        raise RuntimeError("not a DdevSyncError")
+
+    monkeypatch.setattr(writer, "_repeated_keys", explode)
+    with pytest.raises(RuntimeError):
+        write_target(
+            path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+        )
+    assert path.read_text(encoding="utf-8") == document
+
+
+def test_a_new_file_is_world_readable_and_an_existing_mode_is_kept(tmp_path: Path) -> None:
+    path, paths = write_in(tmp_path, None)
+    write_target(
+        path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+    )
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    path.chmod(0o600)
+    write_target(path=path, paths=paths, name="staging", block=render_target("staging", MANUAL))
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_a_symlinked_file_stays_a_symlink(tmp_path: Path) -> None:
+    path, paths = write_in(tmp_path, None)
+    real = tmp_path / "shared.yaml"
+    real.write_text("version: 1\n", encoding="utf-8")
+    path.symlink_to(real)
+    write_target(
+        path=path, paths=paths, name="production", block=render_target("production", MANUAL)
+    )
+    assert path.is_symlink()
+    assert "web01.example" in real.read_text(encoding="utf-8")
