@@ -158,6 +158,22 @@ def choose_env_file(looked_for: list[str], present: list[str]) -> str | None:
     )
 
 
+def choose_features(labels: dict[str, str]) -> list[str] | None:
+    """Ask which detected features to keep; every one starts ticked.
+
+    `labels` maps a feature name to the reason it was detected, which
+    `ActivatedFeature.reason` already phrases ("detected: composer package
+    filament/filament"). The reason is shown because the answer is otherwise a
+    guess: a name alone does not say what in this checkout matched.
+
+    An empty answer is "none of them", which is a real answer here and not the
+    absence of one - see `features/activation.py::parse_feature_key`.
+    """
+    shown = {f"{name:<24} {labels[name]}".rstrip(): name for name in labels}
+    ticked = _checkbox("Which detected features should the sync use?", list(shown), list(shown))
+    return None if ticked is None else [shown[choice] for choice in ticked]
+
+
 def choose_deployer_host(hosts: list[str]) -> str | None:
     """Ask which of the hosts Deployer knows about to use.
 

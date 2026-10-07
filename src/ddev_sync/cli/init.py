@@ -34,6 +34,7 @@ from ddev_sync.cli.prompts import (
     choose_connection_source,
     choose_deployer_host,
     choose_env_file,
+    choose_features,
     confirm_detection,
     confirm_replacement,
 )
@@ -260,7 +261,39 @@ def _ask_project_settings(
             )
         else:
             settings["env.file"] = [answer]
+    labels = _detected_features(resolution)
+    if labels is not None:
+        kept = choose_features(labels)
+        if kept is None:
+            raise _no_terminal()
+        # Written only when something was actually dropped. A `features:` key
+        # switches detection off for good (`features/resolver.py:68`), so
+        # writing one that merely restates what detection found would freeze
+        # this project's feature set for no benefit at all.
+        if len(kept) != len(labels):
+            settings["features"] = kept
+            echo(
+                "Feature detection is now off for this project: the `features:` key in "
+                f"{PROJECT_LABEL} lists what the sync uses. Delete it to detect again."
+            )
     return settings
+
+
+def _detected_features(resolution: ProjectResolution) -> dict[str, str] | None:
+    """Detected features and why, or `None` when there is no question to ask.
+
+    There is none when nothing was activated, and none when the user has
+    already written a `features:` key - in that case the resolution's entries
+    came from that key rather than from detection, so offering to deselect
+    them would be offering to rewrite an answer already given. That is read
+    from the layers directly rather than inferred from `reason`'s text.
+    """
+    if any("features" in layer.data for layer in resolution.user_layers):
+        return None
+    activated = resolution.features.activated
+    if not activated:
+        return None
+    return {entry.feature.name: entry.reason for entry in activated}
 
 
 def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:

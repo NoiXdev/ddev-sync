@@ -534,3 +534,53 @@ def test_valid_production_url_capitalises_and_punctuates_the_rejection() -> None
     refusal = prompts._valid_production_url(" acme.example ")
     assert refusal == "The production URL must start with 'http://' or 'https://'."
     assert refusal
+
+
+def test_choose_features_offers_each_with_its_reason_all_ticked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_checkbox(question: str, choices: list[str], defaults: list[str]) -> list[str]:
+        seen["question"] = question
+        seen["choices"] = choices
+        seen["defaults"] = defaults
+        return choices
+
+    monkeypatch.setattr(prompts, "_checkbox", fake_checkbox)
+    labels = {
+        "horizon": "detected: composer package laravel/horizon",
+        "livewire": "detected: composer package livewire/livewire",
+    }
+    assert prompts.choose_features(labels) == ["horizon", "livewire"]
+    # Every one starts ticked: dropping one is the exception, not the rule.
+    assert seen["choices"] == seen["defaults"]
+    assert seen["choices"] == [
+        f"{'horizon':<24} {labels['horizon']}",
+        f"{'livewire':<24} {labels['livewire']}",
+    ]
+
+
+def test_choose_features_keeping_only_some_maps_back_to_their_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_checkbox(_question: str, choices: list[str], _defaults: list[str]) -> list[str]:
+        return [choices[1]]
+
+    monkeypatch.setattr(prompts, "_checkbox", fake_checkbox)
+    labels = {"horizon": "detected: composer package laravel/horizon", "livewire": "from here"}
+    assert prompts.choose_features(labels) == ["livewire"]
+
+
+def test_choose_features_dropping_every_one_is_an_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompts, "_checkbox", lambda _q, _c, _d: [])
+    assert prompts.choose_features({"horizon": "detected: x"}) == []
+
+
+def test_choose_features_passes_a_missing_terminal_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompts, "_checkbox", lambda _q, _c, _d: None)
+    assert prompts.choose_features({"horizon": "detected: x"}) is None

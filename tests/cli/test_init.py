@@ -171,6 +171,35 @@ def _never_called(*_args: object, **_kwargs: object) -> Any:
     raise AssertionError("should not have been asked")
 
 
+def _laravel_with_horizon(project: Path) -> None:
+    """`_laravel`, plus a `.env` and a `composer.lock` `horizon.yaml`'s
+    `detect:` really matches.
+
+    The `.env` keeps the unrelated env question (fired by `_laravel`'s own
+    profile, see `_laravel`'s docstring) from also consuming the scripted
+    answers meant for the feature question. The `composer.lock` is real
+    detection, not a patched resolver: `features/detect.py::_composer_has`
+    reads this file off disk exactly as a project's own lockfile would.
+    """
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    _write_composer_lock(project, "laravel/horizon")
+
+
+def _laravel_with_horizon_and_livewire(project: Path) -> None:
+    """`_laravel_with_horizon`, plus a second feature `livewire.yaml` matches."""
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    _write_composer_lock(project, "laravel/horizon", "livewire/livewire")
+
+
+def _write_composer_lock(project: Path, *packages: str) -> None:
+    (project / "composer.lock").write_text(
+        json.dumps({"packages": [{"name": name} for name in packages]}),
+        encoding="utf-8",
+    )
+
+
 DEP_CONFIG = json.dumps(
     {
         name: {
@@ -1223,3 +1252,110 @@ def test_init_does_not_ask_when_env_set_is_configured_empty(
     _answer_the_target_questions(monkeypatch)
     report_green(monkeypatch)
     assert invoke(project, tmp_path) == 0
+
+
+def test_init_writes_nothing_when_every_feature_is_kept(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The rule that keeps detection alive: a feature added next month is still
+    # found, because no `features:` key was written.
+    _laravel_with_horizon(project)
+    monkeypatch.setattr(init, "choose_features", lambda labels: list(labels))
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    assert "features" not in yaml.safe_load(project_file.read_text(encoding="utf-8"))
+
+
+def test_init_writes_the_kept_features_when_one_is_dropped(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel_with_horizon_and_livewire(project)
+    monkeypatch.setattr(init, "choose_features", lambda labels: ["horizon"])
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    assert yaml.safe_load(project_file.read_text(encoding="utf-8"))["features"] == ["horizon"]
+    # A `features:` key freezes detection for this project, so `init` says so.
+    assert "Feature detection is now off for this project" in capsys.readouterr().out
+
+
+def test_init_writes_an_empty_list_when_all_are_dropped(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Review Focus 3: `[]` is "none, deliberately" and must survive the write.
+    _laravel_with_horizon(project)
+    monkeypatch.setattr(init, "choose_features", lambda labels: [])
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    assert yaml.safe_load(project_file.read_text(encoding="utf-8"))["features"] == []
+
+
+def test_init_does_not_ask_when_nothing_was_detected(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    monkeypatch.setattr(init, "choose_features", _never_called)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+
+
+def test_init_does_not_ask_when_the_user_already_wrote_the_key(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The entries then came from that key, not from detection, so offering to
+    # deselect them would be offering to rewrite an answer already given.
+    _laravel_with_horizon(project)
+    project_file.write_text("version: 1\nfeatures:\n- horizon\n", encoding="utf-8")
+    monkeypatch.setattr(init, "choose_features", _never_called)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+
+
+def test_the_feature_question_shows_why_each_was_detected(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel_with_horizon(project)
+    seen: dict[str, str] = {}
+    monkeypatch.setattr(init, "choose_features", lambda labels: seen.update(labels) or list(labels))
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    invoke(project, tmp_path)
+    assert "composer package" in seen["horizon"]
+
+
+def test_no_terminal_at_the_feature_question_stops_init_with_nothing_written(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel_with_horizon(project)
+    monkeypatch.setattr(init, "choose_features", lambda labels: None)
+    _answer_the_target_questions(monkeypatch)
+    assert invoke(project, tmp_path) == 1
+    error = capsys.readouterr().err
+    assert "terminal" in error
+    assert not project_file.exists()
