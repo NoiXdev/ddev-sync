@@ -79,8 +79,8 @@ def test_a_non_mapping_targets_block_is_rejected() -> None:
 
 # YAML 1.1, which PyYAML implements, reads an unquoted `yes:` as the boolean
 # true and `2026:` as a number. The key then is not the text the user wrote,
-# so `--target yes` can never match it, `ddev sync targets` prints `True`,
-# and - with one ordinary target beside it - `sorted()` raises a bare
+# so `--target yes` could never match it, `ddev sync targets` printed `True`,
+# and - with one ordinary target beside it - `sorted()` raised a bare
 # `TypeError` comparing a bool with a str, mid-command.
 @pytest.mark.parametrize(
     ("name", "expected"),
@@ -88,7 +88,7 @@ def test_a_non_mapping_targets_block_is_rejected() -> None:
         (True, "boolean"),
         (2026, "number"),
         (1.5, "number"),
-        (date(2026, 10, 7), "not text"),
+        (date(2026, 10, 7), "something other than text"),
     ],
 )
 def test_a_target_name_that_is_not_text_is_refused(name: Any, expected: str) -> None:
@@ -96,7 +96,7 @@ def test_a_target_name_that_is_not_text_is_refused(name: Any, expected: str) -> 
         collect_targets([layer("project", _targets({name: {"host": "web01.example"}}))])
     message = str(caught.value)
     assert expected in message
-    assert "Quote it" in message
+    assert "Quote the name" in message
 
 
 # A key with nothing before the colon has no spelling to quote, so telling
@@ -109,14 +109,50 @@ def test_a_target_with_no_name_at_all_is_told_to_get_one() -> None:
     assert "Quote it" not in message
 
 
-def test_the_refusal_shows_the_quoted_name_it_can_recover() -> None:
+# `0x10:` is 16 to YAML, `1_000:` is 1000 and `12:30:00:` is 45000. An earlier
+# version of this message built its remedy from the value and told the user to
+# write `'16':`, which would have renamed their target. It says what YAML made
+# of the key and leaves the spelling in the file, where they can see it.
+def test_the_refusal_does_not_invent_a_spelling_the_user_did_not_write() -> None:
     with pytest.raises(ConfigError) as caught:
-        collect_targets([layer("project", _targets({2026: {"host": "web01.example"}}))])
-    assert "'2026'" in str(caught.value)
+        collect_targets([layer("project", _targets({0x10: {"host": "web01.example"}}))])
+    message = str(caught.value)
+    assert "16" in message
+    assert "'16'" not in message
+    assert "'production'" in message
 
 
-def test_a_boolean_name_beside_an_ordinary_one_no_longer_crashes() -> None:
-    """The symptom that made this worth fixing: a `TypeError` from `sorted`."""
+# `merge_layers` joins a path with `".".join(...)` to build its own error
+# messages, so a non-string key reached it as a bare `TypeError` - the exact
+# failure this refusal exists to replace - before any of it could run. Keys
+# are therefore checked per layer, before the merge.
+def test_a_non_text_name_is_refused_before_the_merge_can_trip_over_it() -> None:
+    with pytest.raises(ConfigError) as caught:
+        collect_targets([layer("project", _targets({True: {"values": "notalist"}}))])
+    assert "must be text" in str(caught.value)
+
+
+# Only the keys of a mapping are checked early. A layer whose whole `targets:`
+# block is a scalar is still reported from the merged document, so a stronger
+# layer can override a weaker one's broken block instead of the run failing.
+def test_a_weak_layer_with_a_broken_targets_block_is_still_overridable() -> None:
+    collected = collect_targets(
+        [
+            LayerDoc(label="global", data={"targets": "oops"}),
+            layer("project", {"production": {"host": "web01.example"}}),
+        ]
+    )
+    assert list(collected) == ["production"]
+
+
+def test_a_boolean_name_beside_an_ordinary_one_is_refused() -> None:
+    """The shape that used to crash `ddev sync targets`.
+
+    Not the crash itself: `sorted` lives in `list_target_names`, and this
+    refusal happens first, so there is no longer a mixed set of names for it
+    to compare. What is pinned here is that the mixture is refused rather
+    than collected.
+    """
     with pytest.raises(ConfigError):
         collect_targets(
             [layer("project", _targets({"production": {"host": "a"}, True: {"host": "b"}}))]

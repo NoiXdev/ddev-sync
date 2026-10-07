@@ -41,6 +41,22 @@ class CollectedTarget:
 
 def collect_targets(layers: Sequence[LayerDoc]) -> dict[str, CollectedTarget]:
     """Merge every layer's `targets:` block and note the strongest contributor."""
+    # Before the merge, not after it: `merge_layers` builds its own error
+    # messages with `".".join(path)`, and a key that is not a string makes
+    # that raise a bare `TypeError` - the very thing `_validated_name` exists
+    # to replace - before anything here gets to look at the key. Measured: a
+    # target named `yes:` with a malformed `values:` under it gave
+    # "sequence item 1: expected str instance, bool found".
+    #
+    # Only the keys of a mapping are checked. A layer whose `targets:` is not
+    # a mapping at all is left exactly as it was, reported from the merged
+    # document below, so that a weak layer's broken block can still be
+    # overridden by a stronger layer rather than failing the run here.
+    for entry in layers:
+        own = entry.data.get("targets")
+        if isinstance(own, dict):
+            for raw_name in own:
+                _validated_name(raw_name)
     merged = merge_layers(
         [LayerDoc(entry.label, {"targets": entry.data.get("targets", {})}) for entry in layers]
     )
@@ -60,12 +76,14 @@ def list_target_names(collected: Mapping[str, CollectedTarget]) -> list[str]:
     return sorted(collected)
 
 
-# What YAML 1.1 - which PyYAML implements - reads an unquoted key as, in the
-# words the message uses. `bool` before `int` matters only to a reader: the
+# The two kinds worth naming, in the words the message uses; everything else
+# YAML 1.1 can produce for a bare key - a date, a timestamp, binary - falls to
+# the general wording below, because naming each would be a list that goes
+# stale rather than help. `bool` before `int` matters only to a reader: the
 # lookup is by exact type, so `True` cannot fall through to the `int` entry
 # the way `isinstance` would let it.
 _NAME_KINDS: dict[type, str] = {
-    bool: "a boolean: unquoted yes, no, on, off, true and false are booleans to YAML",
+    bool: "a boolean",
     int: "a number",
     float: "a number",
 }
@@ -91,20 +109,26 @@ def _validated_name(name: Any) -> str:
     # not the one every other case gets.
     if name is None:
         raise ConfigError(
-            "a target under `targets:` has no name at all - an empty key, or `~`, is null "
-            "to YAML, not a name. Give the target a name."
+            "a target under `targets:` has no name at all - an empty key, and `~`, `null`, "
+            "`Null` and `NULL`, are all null to YAML, not a name. Give the target a name."
         )
-    kind = _NAME_KINDS.get(type(name), "not text")
-    # The spelling is recoverable for everything except a boolean, where
-    # `True` says nothing about which of six words was written.
-    quoted = "`'yes':` rather than `yes:`" if isinstance(name, bool) else f"`'{name}':`"
-    # `str`, not `repr`: for a number or a date it gives back the spelling the
-    # user wrote, and `datetime.date(2026, 10, 7)` is not a thing to show
-    # somebody looking for the line to fix. For a boolean it gives `True`,
-    # which is what the listing showed before this refusal existed.
+    kind = _NAME_KINDS.get(type(name), "something other than text")
+    # The example is fixed rather than built from `name`, because what YAML
+    # produced is not the spelling that produced it: `0x10:`, `1_000:`, `017:`
+    # and `12:30:00:` are 16, 1000, 15 and 45000, and an earlier version of
+    # this message told the user to write `'16':` - which would have renamed
+    # their target. `True` loses even more: it could have been any of yes, no,
+    # on, off, true or false. So the message says what YAML made of the key,
+    # and leaves the spelling where the user can see it, in their own file.
+    hint = (
+        " - unquoted yes, no, on, off, true and false are all booleans to YAML"
+        if isinstance(name, bool)
+        else ""
+    )
     raise ConfigError(
-        f"the target name {name} is {kind}. Quote it in the configuration - "
-        f"{quoted} - so that the name is the text you wrote."
+        f"a target name must be text, and YAML read one of them as {kind}, giving "
+        f"{name}{hint}. Quote the name where it is written - `'production':`, with the "
+        "quotes - so that YAML keeps it as text."
     )
 
 

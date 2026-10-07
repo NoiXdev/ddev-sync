@@ -94,25 +94,32 @@ def _validated_docroot(docroot: str) -> str:
 
     `docroot` is joined onto `root` by `DdevProject.docroot_path`, and the
     result is handed to `transport/container.py`, which maps a workdir onto
-    the web container's `/var/www/html` with `Path.relative_to`. An absolute
-    docroot makes that join discard the root entirely (`Path("/a") / "/etc"`
-    is `/etc`), and a `..` segment climbs out of it; either way the path has
-    no place in the container, and the failure used to surface there, as a
-    `ValueError` about a workdir, rather than here, about the line that
-    caused it.
+    the web container's `/var/www/html` with `Path.relative_to`. The two bad
+    shapes failed differently, and only one of them failed loudly - both
+    measured against `web_command` with the root at `/var/www/html`:
 
-    `..` is refused even where it lands back inside the project, so that the
-    rule is one a reader can hold and matches the one
-    `operations/placeholders.py` already enforces on `${DDEV_DOCROOT}`. That
-    second check stays where it is: it guards shell splicing, which is a
-    different question from containment, and a `DdevProject` built in code
-    does not come through here.
+    * an absolute docroot makes the join discard the root entirely
+      (`Path("/a") / "/etc"` is `/etc`), which `relative_to` catches:
+      `ValueError: /etc is not inside the project`.
+    * a `..` segment raised nothing at all, because `relative_to` is lexical.
+      `docroot: ../sibling` produced `docker exec -w /var/www/html/../sibling`
+      and `public/../../etc` produced a `-w` the container resolves to `/etc`.
+      Framework commands ran outside the mount, silently.
+
+    So this refuses `..` even where it lands back inside the project: the rule
+    is then one a reader can hold, and the silent case is the one that most
+    needs a line number. `operations/placeholders.py` keeps its own check -
+    it guards shell splicing, a different question, and it tests `".." in
+    docroot` as a substring where this tests whole segments, so the two
+    deliberately refuse different sets. A `DdevProject` built in code does not
+    come through here either way.
     """
     if docroot.startswith("/") or ".." in Path(docroot).parts:
         raise ConfigError(
             f"docroot {docroot!r} in .ddev/config.yaml must be a relative path inside the "
-            "project, with no '..' segment - as it is, the web root lands outside the "
-            "project and has no place in the web container"
+            "project, with no '..' segment: an absolute path replaces the project root "
+            "instead of being joined to it, and a `..` segment can climb out of the only "
+            "directory the web container has mounted"
         )
     return docroot
 

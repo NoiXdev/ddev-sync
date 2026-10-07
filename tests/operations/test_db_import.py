@@ -440,6 +440,13 @@ def test_a_failed_dump_rewrite_says_the_local_database_is_empty(
     # and `mysql` never ran, so nothing was imported.
     assert [call[0] for call in runner.calls] == ["mysqladmin", "mysqladmin"]
     assert "drop" in runner.calls[0]
+    # This fixture is also the case where the cleanup cannot succeed: a
+    # directory is not unlinkable, so the temporary entry outlives the
+    # failure. The message said flatly that the copy "has been removed", in
+    # the one test that proves it has not. It hedges now, and this is what
+    # keeps the two honest about each other.
+    assert (context.downloads_dir / f"{DUMP_FILENAME}.tmp").exists()
+    assert "if it can" in message
 
 
 def test_every_local_client_call_relaxes_tls_verification(

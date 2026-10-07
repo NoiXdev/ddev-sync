@@ -391,8 +391,7 @@ class DbImportOperation:
                 "import, so fix the cause and run the sync again rather than "
                 "importing the file directly. A full disk is the likeliest cause - "
                 "the rewrite writes a second copy beside the dump before replacing "
-                "it - and that half-written copy has been removed, so there is "
-                "nothing to clean up by hand."
+                "it, and removes that copy again if it can."
             ) from error
         self._import(context, database, dump)
         if not context.keep_dump:
@@ -449,13 +448,21 @@ def strip_definers(path: Path) -> None:
     `read_bytes` is an avoidable memory spike, and DEFINER clauses never span
     a line boundary.
 
-    Anything that goes wrong takes the half-written copy with it. The dump
-    itself is never at risk - it is only ever read, and replaced in one atomic
-    step at the end - but the copy is as large as the dump, and the likeliest
-    reason to get here is a disk with no room left on it. Leaving a second
-    copy of a 400 MB dump behind, in that situation, would be the worst
-    moment to do it. The removal is suppressed rather than guarded: it must
-    not become the error the caller sees in place of the real one.
+    Anything that goes wrong takes the half-written copy with it, where it
+    can. The dump's *contents* are never at risk - it is only ever read, and
+    replaced in one atomic step at the end - but the copy is as large as the
+    dump, and the likeliest reason to get here is a disk with no room left on
+    it. Leaving a second copy of a 400 MB dump behind, in that situation,
+    would be the worst moment to do it. The removal is suppressed rather than
+    guarded: it must not become the error the caller sees in place of the real
+    one - which is also why the caller's message says the copy is removed "if
+    it can" rather than promising it. A directory in the temporary file's
+    place, or a read-only parent, defeats both the rewrite and the cleanup.
+
+    One thing the atomic replace does change, unrelated to failure: a
+    `dump.sql` that is a symbolic link becomes a regular file, and whatever it
+    pointed at is left as it was. That is unchanged behaviour, not something
+    this cleanup introduced.
     """
     temporary = path.with_suffix(path.suffix + ".tmp")
     try:
