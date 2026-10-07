@@ -13,6 +13,7 @@ argv or any output. This wrapper sees both.
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from ddev_sync.cli.scrub import scrub
 from ddev_sync.transport.runner import CommandResult, CommandRunner
 
 # Sits under the step line, inside its marker column, so it reads as belonging
@@ -76,13 +77,4 @@ class VerboseRunner:
         return result
 
     def _emit(self, line: str) -> None:
-        self._write(f"{_INDENT}{self._scrub(line)}")
-
-    def _scrub(self, line: str) -> str:
-        # Longest first: with `abc` and `abcdef` both registered, replacing the
-        # shorter one first would leave `***def` of the longer one on screen.
-        for secret in sorted(self._secrets, key=len, reverse=True):
-            # An empty secret would match between every two characters.
-            if secret:
-                line = line.replace(secret, "***")
-        return line
+        self._write(f"{_INDENT}{scrub(line, self._secrets)}")

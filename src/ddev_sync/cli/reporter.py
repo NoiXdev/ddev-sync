@@ -9,6 +9,7 @@ this module is what makes the output assertable in a test without a terminal.
 from collections.abc import Callable
 
 from ddev_sync.cli.colour import Colour, paint_padded
+from ddev_sync.cli.scrub import scrub
 from ddev_sync.engine.executor import StepOutcome
 from ddev_sync.engine.plan import PlannedStep
 from ddev_sync.engine.steps import STEP_DESCRIPTIONS
@@ -31,11 +32,34 @@ class ConsoleReporter:
     """Writes one line per step, plus notices and warnings."""
 
     def __init__(
-        self, write: Callable[[str], None], *, colour: bool = False, verbose: int = 0
+        self,
+        write: Callable[[str], None],
+        *,
+        colour: bool = False,
+        verbose: int = 0,
+        secrets: set[str] | None = None,
     ) -> None:
-        self._write = write
+        self._emit = write
         self._colour = colour
         self._verbose = verbose
+        # Held, not copied: the passwords are registered on the execution
+        # context during the run, by
+        # `operations/database.py::read_remote_credentials`, which is long
+        # after this reporter is built. The default is an empty set so that a
+        # caller with nothing to hide - `doctor`, the tests - needs no
+        # argument, and so that nothing has to decide whether to scrub.
+        self._secrets = secrets if secrets is not None else set()
+
+    def _write(self, text: str) -> None:
+        """Write one line, with every registered secret taken out of it.
+
+        Here rather than at the call sites: a reporter line is built from a
+        step's own error text, and which of those might one day interpolate a
+        password is not a thing to keep track of. Two error paths are already
+        scrubbed by hand in `operations/`, before the text becomes an
+        exception; this is the gate they both pass through anyway.
+        """
+        self._emit(scrub(text, self._secrets))
 
     def starting(self, step: PlannedStep) -> None:
         """Announce a step that is about to run, and say what it will do.

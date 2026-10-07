@@ -151,3 +151,56 @@ def test_level_three_shows_no_duration_for_a_step_that_never_ran() -> None:
     reporter = ConsoleReporter(write=lines.append, verbose=3)
     reporter.finished(StepOutcome(step=step(StepKind.SETUP), status="skipped"))
     assert "(" not in lines[0]
+
+
+# Every line the reporter writes passes through one scrub, rather than the two
+# error paths in `operations/` that are known to carry a password being
+# redacted by hand. A third path that interpolated one would have printed it.
+def test_a_secret_in_a_failure_is_scrubbed() -> None:
+    lines: list[str] = []
+    secrets = {"s3cret"}
+    reporter = ConsoleReporter(write=lines.append, secrets=secrets)
+    outcome = StepOutcome(
+        step=step(StepKind.DB_DUMP),
+        status="failed",
+        error=DdevSyncError("mysqldump: access denied for password s3cret"),
+    )
+    reporter.finished(outcome)
+    assert not any("s3cret" in line for line in lines)
+    assert any("***" in line for line in lines)
+
+
+def test_a_secret_registered_after_construction_is_still_scrubbed() -> None:
+    """The reporter holds the set, it does not copy it.
+
+    The passwords are read from the remote during the run, which is long
+    after the reporter is built.
+    """
+    lines: list[str] = []
+    secrets: set[str] = set()
+    reporter = ConsoleReporter(write=lines.append, secrets=secrets)
+    secrets.add("s3cret")
+    reporter.notice("the remote answered with s3cret")
+    assert lines == ["  !     the remote answered with ***"]
+
+
+def test_a_secret_in_a_step_detail_is_scrubbed() -> None:
+    """A hook's detail is the user's own command line, at every level."""
+    lines: list[str] = []
+    reporter = ConsoleReporter(write=lines.append, secrets={"s3cret"})
+    hook = PlannedStep(
+        index=1,
+        kind=StepKind.SETUP,
+        where="web",
+        detail="mysql --password=s3cret",
+        source="config",
+        is_hook=True,
+    )
+    reporter.starting(hook)
+    assert not any("s3cret" in line for line in lines)
+
+
+def test_without_secrets_nothing_is_touched() -> None:
+    reporter, lines = capture()
+    reporter.notice("nothing to hide")
+    assert lines == ["  !     nothing to hide"]

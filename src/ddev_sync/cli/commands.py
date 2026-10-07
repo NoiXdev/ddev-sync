@@ -115,10 +115,11 @@ def run_command(
         echo(render_plan(plan))
         return 0
 
-    # One set, handed to both the wrapper and the context: the passwords are
-    # registered on the context's side during the run, after the wrapper exists.
+    # One set, handed to the reporter, the wrapper and the context: the
+    # passwords are registered on the context's side during the run, after
+    # the other two exist.
     secrets: set[str] = set()
-    reporter = ConsoleReporter(write=echo, colour=colour, verbose=verbose)
+    reporter = ConsoleReporter(write=echo, colour=colour, verbose=verbose, secrets=secrets)
     if verbose >= 2:
         runner = VerboseRunner(runner, write=echo, secrets=secrets, verbose=verbose)
     execution = _execution_context(
