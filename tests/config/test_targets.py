@@ -21,6 +21,17 @@ def layer(label: str, targets: dict[str, Any]) -> LayerDoc:
     return LayerDoc(label=label, data={"targets": targets})
 
 
+def _targets(raw: dict[Any, Any]) -> dict[str, Any]:
+    """Pass a `targets:` mapping whose keys are deliberately not strings.
+
+    What YAML hands the loader for `yes:` or `2026:` is a bool or an int key,
+    which is the whole point of the tests below - and not something
+    `dict[str, Any]` can express. The cast is the test saying so out loud
+    rather than `layer` loosening its type for every other caller.
+    """
+    return raw
+
+
 def test_targets_from_several_layers_are_collected_together() -> None:
     collected = collect_targets(
         [
@@ -82,7 +93,7 @@ def test_a_non_mapping_targets_block_is_rejected() -> None:
 )
 def test_a_target_name_that_is_not_text_is_refused(name: Any, expected: str) -> None:
     with pytest.raises(ConfigError) as caught:
-        collect_targets([layer("project", {name: {"host": "web01.example"}})])
+        collect_targets([layer("project", _targets({name: {"host": "web01.example"}}))])
     message = str(caught.value)
     assert expected in message
     assert "Quote it" in message
@@ -92,7 +103,7 @@ def test_a_target_name_that_is_not_text_is_refused(name: Any, expected: str) -> 
 # the user to quote it would be advice they cannot follow.
 def test_a_target_with_no_name_at_all_is_told_to_get_one() -> None:
     with pytest.raises(ConfigError) as caught:
-        collect_targets([layer("project", {None: {"host": "web01.example"}})])
+        collect_targets([layer("project", _targets({None: {"host": "web01.example"}}))])
     message = str(caught.value)
     assert "Give the target a name" in message
     assert "Quote it" not in message
@@ -100,14 +111,16 @@ def test_a_target_with_no_name_at_all_is_told_to_get_one() -> None:
 
 def test_the_refusal_shows_the_quoted_name_it_can_recover() -> None:
     with pytest.raises(ConfigError) as caught:
-        collect_targets([layer("project", {2026: {"host": "web01.example"}})])
+        collect_targets([layer("project", _targets({2026: {"host": "web01.example"}}))])
     assert "'2026'" in str(caught.value)
 
 
 def test_a_boolean_name_beside_an_ordinary_one_no_longer_crashes() -> None:
     """The symptom that made this worth fixing: a `TypeError` from `sorted`."""
     with pytest.raises(ConfigError):
-        collect_targets([layer("project", {"production": {"host": "a"}, True: {"host": "b"}})])
+        collect_targets(
+            [layer("project", _targets({"production": {"host": "a"}, True: {"host": "b"}}))]
+        )
 
 
 def test_target_names_are_listed_sorted() -> None:
