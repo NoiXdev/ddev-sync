@@ -23,7 +23,6 @@ from collections.abc import Callable
 
 import questionary
 
-from ddev_sync.config.loader import GLOBAL_LABEL, PROJECT_LABEL
 from ddev_sync.config.models import Stage
 
 DEFAULT_STEPS = ("db", "files", "sanitize")
@@ -153,11 +152,6 @@ def choose_deployer_host(hosts: list[str]) -> str | None:
 def ask_stage() -> str | None:
     """Ask which kind of environment the target is."""
     return _select("Which stage is it?", [stage.value for stage in Stage])
-
-
-def choose_layer() -> str | None:
-    """Ask which configuration file receives the target, by its label."""
-    return _select("Where should the target be saved?", [GLOBAL_LABEL, PROJECT_LABEL])
 
 
 def confirm_replacement(name: str, label: str, existing: str) -> bool | None:

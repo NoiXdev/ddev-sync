@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from ddev_sync.cli import init
+from ddev_sync.cli.context import build_context
 from ddev_sync.cli.main import main
 from ddev_sync.cli.prompts import DEPLOYER_SOURCE, MANUAL_SOURCE
 from ddev_sync.config.loader import GLOBAL_LABEL, PROJECT_LABEL
@@ -46,6 +47,11 @@ def project(tmp_path: Path) -> Path:
 @pytest.fixture
 def project_file(project: Path) -> Path:
     return project / ".ddev" / "ddev-sync.yaml"
+
+
+@pytest.fixture
+def local_file(project: Path) -> Path:
+    return project / ".ddev" / "ddev-sync.local.yaml"
 
 
 @pytest.fixture
@@ -91,7 +97,6 @@ def script(
     *,
     detection: Iterable[bool | None] = (True,),
     names: Iterable[str | None] = ("production",),
-    layers: Iterable[str | None] = (PROJECT_LABEL,),
     replacements: Iterable[bool | None] = (),
     source: Iterable[str | None] = (MANUAL_SOURCE,),
     connection: Iterable[dict[str, object] | None] = (CONNECTION,),
@@ -105,7 +110,6 @@ def script(
     for attribute, answers in (
         ("confirm_detection", detection),
         ("ask_target_name", names),
-        ("choose_layer", layers),
         ("confirm_replacement", replacements),
         ("choose_connection_source", source),
         ("ask_connection", connection),
@@ -131,42 +135,46 @@ def report_green(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 def test_every_question_answered_writes_the_target_and_runs_doctor(
     project: Path,
     project_file: Path,
+    global_file: Path,
+    local_file: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    local_file.write_text("version: 1\n# machine-only settings\n", encoding="utf-8")
+    local_before = local_file.read_bytes()
     script(monkeypatch)
     hosts = report_green(monkeypatch)
     assert invoke(project, tmp_path) == 0
     written = project_file.read_text(encoding="utf-8")
     assert written.startswith("version: 1\n")
     assert "web09.example" in written
-    # The port is a number in the file, not the text the question handed over.
+    # `ask_connection` hands the port over as a number and it stays one in the file.
     assert "port: 2222\n" in written
     assert "stage: production" in written
     # The check ran against the target that was just written.
     assert hosts == ["web09.example"]
+    # Exactly one file changes per run: the other two layers are left alone.
+    assert local_file.read_bytes() == local_before
+    assert not global_file.exists()
     output = capsys.readouterr().out
     assert f"Wrote the target 'production' to {PROJECT_LABEL}." in output
-    assert "ssh" in output
     # Said once the outcome is known, so after the checklist.
     assert output.index("ssh connection") < output.index("Wrote the target")
 
 
-def test_the_global_layer_is_written_when_it_is_chosen(
+def test_the_success_message_says_the_file_is_committed_and_where_hosts_can_go(
     project: Path,
-    project_file: Path,
-    global_file: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    script(monkeypatch, layers=(GLOBAL_LABEL,))
+    script(monkeypatch)
     report_green(monkeypatch)
     assert invoke(project, tmp_path) == 0
-    assert "web09.example" in global_file.read_text(encoding="utf-8")
-    assert not project_file.exists()
-    assert f"to {GLOBAL_LABEL}." in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert f"{PROJECT_LABEL} is committed with the project." in output
+    assert f"move the target to {GLOBAL_LABEL}." in output
 
 
 def test_the_name_is_stripped_and_the_comments_around_it_survive(
@@ -185,20 +193,6 @@ def test_the_name_is_stripped_and_the_comments_around_it_survive(
     assert "stage: staging\n" in written
 
 
-def test_the_layers_are_explained_where_the_user_chooses_one(
-    project: Path,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    script(monkeypatch)
-    report_green(monkeypatch)
-    invoke(project, tmp_path)
-    output = capsys.readouterr().out
-    assert "not part of the repository" in output
-    assert "shared with everyone" in output
-
-
 def test_a_declined_detection_writes_nothing_and_names_the_config_keys(
     project: Path,
     project_file: Path,
@@ -208,12 +202,12 @@ def test_a_declined_detection_writes_nothing_and_names_the_config_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Every later question is an empty script, which fails if it is asked.
-    script(monkeypatch, detection=(False,), names=(), layers=(), source=(), connection=())
+    script(monkeypatch, detection=(False,), names=(), source=(), connection=())
     assert invoke(project, tmp_path) == 1
     error = capsys.readouterr().err
     assert "project.type" in error
     assert "project.version" in error
-    assert "--type" not in error
+    assert f"in {PROJECT_LABEL}" in error
     assert not project_file.exists()
     assert not global_file.exists()
 
@@ -233,31 +227,42 @@ def test_the_detection_question_names_the_profile_the_version_and_where_each_cam
     ]
 
 
-def test_the_type_and_version_flags_decide_what_is_asked_and_what_is_checked(
+def test_the_type_and_version_flags_reach_the_question_and_the_check(
     project: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     asked = script(monkeypatch)
     report_green(monkeypatch)
+    built: list[dict[str, object]] = []
+    real = build_context
+
+    def spy(**kwargs: Any) -> Any:
+        built.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(init, "build_context", spy)
     assert invoke(project, tmp_path, "--type", "laravel", "--framework-version", "11") == 0
     assert asked["confirm_detection"] == [
         ("laravel 11", "--type flag; version from --framework-version flag")
     ]
+    # The context the check runs in is built from the same answers the question was.
+    assert len(built) == 1
+    assert built[0]["type_flag"] == "laravel"
+    assert built[0]["framework_version_flag"] == "11"
 
 
 @pytest.mark.parametrize(
     ("answers", "existing"),
     [
-        ({"detection": (None,), "names": (), "layers": (), "source": (), "connection": ()}, False),
-        ({"names": (None,), "layers": (), "source": (), "connection": ()}, False),
-        ({"layers": (None,), "source": (), "connection": ()}, False),
+        ({"detection": (None,), "names": (), "source": (), "connection": ()}, False),
+        ({"names": (None,), "source": (), "connection": ()}, False),
         ({"replacements": (None,), "source": (), "connection": ()}, True),
         ({"source": (None,), "connection": ()}, False),
         ({"connection": (None,)}, False),
         ({"stage": (None,)}, False),
     ],
-    ids=["detection", "name", "layer", "replacement", "source", "connection", "stage"],
+    ids=["detection", "name", "replacement", "source", "connection", "stage"],
 )
 def test_a_missing_terminal_stops_init_with_nothing_written(
     answers: dict[str, Any],
@@ -314,7 +319,6 @@ def test_a_declined_replacement_asks_again_and_leaves_the_first_target_alone(
     asked = script(
         monkeypatch,
         names=("production", "staging"),
-        layers=(PROJECT_LABEL,) * 2,
         replacements=(False,),
         stage=("staging",),
     )
@@ -341,32 +345,11 @@ def test_the_suggested_name_skips_the_numbers_the_file_already_uses(
     asked = script(
         monkeypatch,
         names=("production", "other"),
-        layers=(PROJECT_LABEL,) * 2,
         replacements=(False,),
     )
     report_green(monkeypatch)
     assert invoke(project, tmp_path) == 0
     assert asked["ask_target_name"] == [("production",), ("production-3",)]
-
-
-def test_declining_in_one_file_and_choosing_the_other_is_a_way_out(
-    project: Path,
-    project_file: Path,
-    global_file: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_file.write_text(EXISTING, encoding="utf-8")
-    script(
-        monkeypatch,
-        names=("production",) * 2,
-        layers=(PROJECT_LABEL, GLOBAL_LABEL),
-        replacements=(False,),
-    )
-    report_green(monkeypatch)
-    assert invoke(project, tmp_path) == 0
-    assert project_file.read_text(encoding="utf-8") == EXISTING
-    assert "web09.example" in global_file.read_text(encoding="utf-8")
 
 
 def test_a_target_only_another_file_defines_is_not_asked_about(
@@ -399,7 +382,6 @@ def test_three_declined_replacements_end_the_command_with_nothing_changed(
     script(
         monkeypatch,
         names=("production",) * 3,
-        layers=(PROJECT_LABEL,) * 3,
         replacements=(False,) * 3,
         source=(),
         connection=(),
@@ -447,7 +429,7 @@ def test_a_refusal_the_writer_raises_is_reported_the_same_way(
     output = capsys.readouterr().out
     assert "it would have changed something else" in output
     assert f"Add the target to {PROJECT_LABEL} yourself" in output
-    assert not project_file.exists()
+    assert "Wrote" not in output
 
 
 def test_a_failing_check_leaves_the_file_and_exits_non_zero(
@@ -465,6 +447,8 @@ def test_a_failing_check_leaves_the_file_and_exits_non_zero(
     assert "web09.example" in project_file.read_text(encoding="utf-8")
     output = capsys.readouterr().out
     assert "FAIL" in output
+    # A failing check is not a success, so the success line is not printed.
+    assert "Wrote" not in output
     assert f"The target stays in {PROJECT_LABEL}" in output
     assert "ddev sync --target production doctor" in output
 
@@ -508,6 +492,89 @@ def test_a_check_that_raises_is_reported_like_one_that_could_not_start(
     assert "unexpected output" in captured.err
 
 
+def test_a_stronger_layer_that_redefines_the_target_is_named_and_is_no_success(
+    project: Path,
+    project_file: Path,
+    local_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local_file.write_text(
+        "version: 1\ntargets:\n  production:\n    host: elsewhere.example\n", encoding="utf-8"
+    )
+    script(monkeypatch)
+    hosts = report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 1
+    captured = capsys.readouterr()
+    # The check really did run against the other definition, which is the point.
+    assert hosts == ["elsewhere.example"]
+    assert "Wrote" not in captured.out
+    assert ".ddev/ddev-sync.local.yaml" in captured.err
+    assert "not against what was just written" in captured.err
+    # What was written is kept, and the local file is not touched.
+    assert "web09.example" in project_file.read_text(encoding="utf-8")
+    assert "elsewhere.example" in local_file.read_text(encoding="utf-8")
+
+
+def test_another_layer_that_defines_the_same_target_identically_is_no_conflict(
+    project: Path,
+    global_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global_file.parent.mkdir(parents=True)
+    global_file.write_text(
+        "version: 1\ntargets:\n  production:\n    host: web09.example\n"
+        "    user: sync\n    port: 2222\n    path: /srv/new/\n    stage: production\n",
+        encoding="utf-8",
+    )
+    script(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    assert "Wrote the target" in capsys.readouterr().out
+
+
+def test_an_interrupted_check_still_says_which_file_holds_the_target(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(_self: object, _context: object) -> PreflightReport:
+        raise KeyboardInterrupt
+
+    script(monkeypatch)
+    monkeypatch.setattr(PreflightOperation, "check", interrupt)
+    # `main` ends an interrupt with 130, and that is not changed by saying more.
+    assert invoke(project, tmp_path) == 130
+    captured = capsys.readouterr()
+    assert "Wrote" not in captured.out
+    assert f"is in {PROJECT_LABEL}, but the check did not finish" in captured.out
+    assert "ddev sync --target production doctor" in captured.out
+    assert "web09.example" in project_file.read_text(encoding="utf-8")
+
+
+def test_an_unexpected_error_in_the_check_still_says_which_file_holds_the_target(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(_self: object, _context: object) -> PreflightReport:
+        raise ValueError("something nobody foresaw")
+
+    script(monkeypatch)
+    monkeypatch.setattr(PreflightOperation, "check", fail)
+    assert invoke(project, tmp_path) == 1
+    captured = capsys.readouterr()
+    assert "Wrote" not in captured.out
+    assert f"is in {PROJECT_LABEL}, but the check did not finish" in captured.out
+    assert "something nobody foresaw" in captured.err
+
+
 def test_a_passing_check_does_not_say_the_target_stays(
     project: Path,
     tmp_path: Path,
@@ -517,7 +584,7 @@ def test_a_passing_check_does_not_say_the_target_stays(
     script(monkeypatch)
     report_green(monkeypatch)
     assert invoke(project, tmp_path) == 0
-    assert "stays" not in capsys.readouterr().out
+    assert "The target stays in" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -587,7 +654,7 @@ def test_options_init_would_ignore_are_refused_and_nothing_is_written(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    script(monkeypatch, detection=(), names=(), layers=(), source=(), connection=(), stage=())
+    script(monkeypatch, detection=(), names=(), source=(), connection=(), stage=())
     assert invoke(project, tmp_path, *flags) == 2
     assert f"{flags[0]} cannot be combined with 'init'" in capsys.readouterr().err
     assert not project_file.exists()

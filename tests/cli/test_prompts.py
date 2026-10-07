@@ -4,7 +4,6 @@ import pytest
 import questionary
 
 from ddev_sync.cli import prompts
-from ddev_sync.config.loader import GLOBAL_LABEL, PROJECT_LABEL
 from ddev_sync.config.models import Stage
 
 
@@ -385,27 +384,6 @@ def test_the_stage_question_passes_a_missing_terminal_through(
 ) -> None:
     monkeypatch.setattr(prompts, "_select", lambda _q, _c: None)
     assert prompts.ask_stage() is None
-
-
-def test_the_layer_question_offers_the_loaders_own_labels(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    offered: list[list[str]] = []
-
-    def fake_select(_question: str, choices: list[str]) -> str:
-        offered.append(choices)
-        return choices[1]
-
-    monkeypatch.setattr(prompts, "_select", fake_select)
-    assert prompts.choose_layer() == PROJECT_LABEL
-    assert offered[0] == [GLOBAL_LABEL, PROJECT_LABEL]
-
-
-def test_the_layer_question_passes_a_missing_terminal_through(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(prompts, "_select", lambda _q, _c: None)
-    assert prompts.choose_layer() is None
 
 
 def test_the_replacement_question_names_the_target_the_file_and_what_is_there(
