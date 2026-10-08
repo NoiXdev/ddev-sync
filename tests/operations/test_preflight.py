@@ -259,6 +259,34 @@ def test_an_explicit_source_with_nothing_set_is_red(tmp_path: Path) -> None:
     assert "database.credentials" in report.credentials_detail
 
 
+# --- A real sync stops for the same reason `doctor` reports it --------------
+#
+# `check()` reports a bad credentials source without raising; `execute()`
+# must actually stop the run, because every step after preflight reads the
+# database. Gated on `db_selected`, since a files-only run reads no database
+# and must not be refused over credentials it never needed.
+
+
+def test_execute_refuses_a_database_run_whose_credentials_do_not_resolve(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    _script_env_file_missing(runner)
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(
+            make_context(runner, tmp_path), {"db_selected": True, "sanitize_selected": False}
+        )
+    assert "no environment file found" in str(caught.value)
+
+
+def test_execute_lets_a_files_only_run_through_without_credentials(tmp_path: Path) -> None:
+    # Review Focus 1: this run never reads the database, so a credentials
+    # problem is none of its business.
+    runner = healthy_runner()
+    _script_env_file_missing(runner)
+    PreflightOperation().execute(
+        make_context(runner, tmp_path), {"db_selected": False, "sanitize_selected": False}
+    )
+
+
 # --- Part 3: the sanitize-table probe ---------------------------------------
 
 
@@ -324,6 +352,40 @@ def test_sanitize_selected_aborts_before_the_dump_when_a_required_table_is_missi
     # Nothing was downloaded or imported: only the two ssh round trips (the
     # connectivity probe, then SHOW TABLES) happened.
     assert len(runner.calls) == 2
+    # §8 item 3: `context_with_rules` is an `explicit` source, so the table
+    # prefix cannot be what is wrong here - naming it would send the reader
+    # the wrong way.
+    assert "database.wp_table_prefix" not in message
+
+
+def test_a_missing_table_names_the_prefix_override_for_a_wp_cli_source(tmp_path: Path) -> None:
+    # On a `wp_cli` source the declared table name came from WordPress's own
+    # `$table_prefix`, resolved over ssh - so when the resolved table does
+    # not exist, the prefix itself is a real suspect and `doctor` should say
+    # which key fixes it: `database.wp_table_prefix`.
+    runner = healthy_runner()
+    # wp-cli credentials read: name, user, password, host, table_prefix.
+    runner.script_prefix(["ssh"], stdout="acme_prod\nacme\nsecret\ndb\nmxwp_\n")
+    runner.script_prefix(["ssh"], stdout="wp_options\n")  # SHOW TABLES: no wp_users
+    context = make_context(
+        runner,
+        tmp_path,
+        database={"remote_credentials": "wp_cli"},
+        sanitize={
+            "rules": [
+                {
+                    "name": "anonymize-users",
+                    "sql": "UPDATE x SET y=1",
+                    "requires_table": "${WP_TABLE_PREFIX}users",
+                }
+            ]
+        },
+    )
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    message = str(caught.value)
+    assert "does not exist" in message
+    assert "database.wp_table_prefix" in message
 
 
 def test_a_lowercase_declared_table_matching_an_uppercase_remote_one_aborts_naming_both(

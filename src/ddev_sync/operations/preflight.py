@@ -139,6 +139,14 @@ class PreflightOperation:
                 f"only {report.free_bytes // 1024**2} MB free on the project volume; "
                 f"a sync wants at least {MIN_FREE_BYTES // 1024**3} GB"
             )
+        if bool(params.get("db_selected", False)):
+            # Reported rather than raised by `check()`; here it must stop the
+            # run, because everything after this reads the database. Gated on
+            # the selection: a `files`-only sync never reads credentials, and
+            # refusing it over them would break a run that was going to work.
+            ok, detail = self._check_credentials(context, report)
+            if ok is False:
+                raise OperationError(detail)
         if bool(params.get("sanitize_selected", False)):
             self._probe_sanitize_tables(context)
 
@@ -522,6 +530,14 @@ def _first_missing_table_problem(
                 "(the common case on Linux), it will fail for real. Change the "
                 f"rule's declared table name to match the exact case ({actual!r})."
             )
+        remedy = (
+            " This project reads its credentials with 'wp_cli', so the table "
+            "name came from WordPress's own `$table_prefix` - if that is what "
+            "is wrong, set 'database.wp_table_prefix' in .ddev/ddev-sync.yaml "
+            "to the prefix production really uses."
+            if context.config("database.remote_credentials", default="env") == "wp_cli"
+            else ""
+        )
         return (
             f"sanitize rule {rule_name!r} requires table {table!r}, which does "
             f"not exist on {context.target.host}'s database "
@@ -530,7 +546,7 @@ def _first_missing_table_problem(
             "override it in .ddev/ddev-sync.yaml - or, if the table is "
             "genuinely optional for this project, add "
             "'tolerate_missing_table: true' to the rule."
-        )
+        ) + remedy
     return None
 
 

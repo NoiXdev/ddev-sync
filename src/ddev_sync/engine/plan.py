@@ -294,6 +294,9 @@ class _Builder:
         # Plan, which it never sees (engine/executor.py only ever passes a
         # step's own params to its operation).
         self._sanitize_selected = StepKind.SANITIZE in steps
+        # Read from the operation's own params for the same reason
+        # `_sanitize_selected` is: the operation never sees the Plan.
+        self._db_selected = StepKind.DB_DUMP in steps
 
     def step(self, kind: StepKind) -> list[_Entry]:
         handlers = {
@@ -346,7 +349,10 @@ class _Builder:
                 where="remote",
                 detail=detail,
                 source="built-in",
-                params={"sanitize_selected": self._sanitize_selected},
+                params={
+                    "sanitize_selected": self._sanitize_selected,
+                    "db_selected": self._db_selected,
+                },
             )
         ]
 

@@ -430,13 +430,28 @@ def test_preflight_params_flag_sanitize_as_selected_when_it_is() -> None:
     # sees the whole Plan.
     plan = plan_for(["sanitize"])
     preflight = next(entry for entry in plan.steps if entry.kind is StepKind.PREFLIGHT)
-    assert preflight.params == {"sanitize_selected": True}
+    assert preflight.params == {"sanitize_selected": True, "db_selected": False}
 
 
 def test_preflight_params_flag_sanitize_as_not_selected_otherwise() -> None:
     plan = plan_for(["files"])
     preflight = next(entry for entry in plan.steps if entry.kind is StepKind.PREFLIGHT)
-    assert preflight.params == {"sanitize_selected": False}
+    assert preflight.params == {"sanitize_selected": False, "db_selected": False}
+
+
+def test_the_preflight_step_knows_whether_the_database_is_selected() -> None:
+    # operations/preflight.py's execute() must refuse a run that reads the
+    # database but cannot resolve credentials - gated on this flag so a
+    # files-only run, which reads no database, is never refused over it.
+    plan = plan_for(["db", "files"])
+    preflight = next(entry for entry in plan.steps if entry.kind is StepKind.PREFLIGHT)
+    assert preflight.params["db_selected"] is True
+
+
+def test_a_files_only_run_marks_the_database_unselected() -> None:
+    plan = plan_for(["files"])
+    preflight = next(entry for entry in plan.steps if entry.kind is StepKind.PREFLIGHT)
+    assert preflight.params["db_selected"] is False
 
 
 def test_a_files_entry_missing_remote_names_the_entry_instead_of_crashing() -> None:
