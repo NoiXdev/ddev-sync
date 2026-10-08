@@ -98,9 +98,9 @@ def _reject_committed_secret(context: ExecutionContext, side: str, key: str) -> 
     if context.merged.scalar_sources.get(("s3", side, key)) == PROJECT_LABEL:
         raise OperationError(
             f"s3.{side}.{key} is set in {PROJECT_LABEL}, which is committed to "
-            "the repository; move S3 credentials to .ddev/ddev-sync.local.yaml "
-            "or the global config instead - and check that your repository "
-            "ignores that path, because nothing here does it for you"
+            "the repository; move S3 credentials to .ddev/ddev-sync/local.yaml "
+            "or the global config instead - the add-on's shipped .gitignore "
+            "already ignores that path"
         )
 
 

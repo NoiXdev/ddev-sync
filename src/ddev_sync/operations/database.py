@@ -105,9 +105,9 @@ def _from_config(context: ExecutionContext) -> RemoteCredentials:
     if missing:
         raise OperationError(
             f"database.credentials is missing {', '.join(missing)}; they are "
-            "secrets, so set them in .ddev/ddev-sync.local.yaml rather than the "
-            "project file, and check that your repository ignores it - nothing "
-            "here does that for you"
+            "secrets, so set them in .ddev/ddev-sync/local.yaml rather than the "
+            "project file - the add-on's shipped .gitignore already ignores "
+            "that path"
         )
     return RemoteCredentials(**values)
 

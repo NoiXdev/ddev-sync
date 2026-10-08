@@ -1,8 +1,8 @@
 # Fallback profile. Applies to DDEV types with no dedicated profile.
 # Credentials must be supplied per project because there is no framework
 # convention to read them from. They are secrets, so put them in
-# .ddev/ddev-sync.local.yaml rather than the committed project file, and make
-# sure your repository ignores that path - nothing here does it for you.
+# .ddev/ddev-sync/local.yaml rather than the committed project file - the
+# add-on's shipped .gitignore already ignores that path.
 name: generic
 
 env:

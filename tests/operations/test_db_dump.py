@@ -183,12 +183,14 @@ def test_explicit_credentials_missing_a_key_are_reported(tmp_path: Path) -> None
         read_remote_credentials(make_context(FakeCommandRunner(), tmp_path, config))
     message = str(caught.value)
     assert "user" in message
-    # The message used to send people to `.ddev/ddev-sync.yaml`, the file the
-    # add-on commits - so the engine was telling them to put a production
-    # password into git. The shipped template says `.local.yaml` for exactly
-    # that reason, and the committed name must not appear here at all.
-    assert ".ddev/ddev-sync.local.yaml" in message
-    assert ".ddev/ddev-sync.yaml" not in message
+    # The message used to send people to the legacy `.ddev/ddev-sync.local.yaml`
+    # path, which the add-on's shipped `.gitignore` does not cover - so the
+    # engine was telling them to put a production password exactly where it
+    # would be committed. It must now name the path the `.gitignore` actually
+    # covers, and say so, not the legacy one.
+    assert ".ddev/ddev-sync/local.yaml" in message
+    assert ".ddev/ddev-sync.local.yaml" not in message
+    assert "ignores" in message or "ignored" in message
 
 
 def test_an_unknown_credentials_source_lists_the_valid_ones(tmp_path: Path) -> None:
