@@ -145,12 +145,13 @@ class EnvRewriteOperation:
         # containing this step exists at all. Named explicitly because the
         # `[".env.local", ".env"]` default is now read in four places with
         # four different tolerances - that gate, this method,
-        # `operations/database.py::_env_candidates`, which quietly falls back
-        # to the default instead, and `cli/init.py::_missing_env_file`, which
-        # carries the same gate's guard rather than this method's trust in
-        # it, because it runs before any plan does - so "why is this one not
-        # defensive" is a question worth answering in place rather than by
-        # searching.
+        # `operations/database.py::remote_env_candidates`, which checks
+        # `database.env_file` first, then falls back to this same `env.file`
+        # key, before quietly falling back to the default itself, and
+        # `cli/init.py::_missing_env_file`, which carries the same gate's
+        # guard rather than this method's trust in it, because it runs
+        # before any plan does - so "why is this one not defensive" is a
+        # question worth answering in place rather than by searching.
         candidates = [configured] if isinstance(configured, str) else list(configured)
         existing = {entry.name for entry in context.project.root.iterdir() if entry.is_file()}
         for name in candidates:
