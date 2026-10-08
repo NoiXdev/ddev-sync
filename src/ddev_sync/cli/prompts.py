@@ -30,6 +30,7 @@ DEFAULT_STEPS = ("db", "files", "sanitize")
 MANUAL_SOURCE = "Enter the connection by hand"
 DEPLOYER_SOURCE = "Read it from Deployer"
 ENV_FILE_NONE = "None of these - I will create the file myself"
+REMOTE_ENV_NONE = "None of these - I will fix it another way"
 
 # What questionary accepts: True to take the answer, or the sentence to show
 # before asking again.
@@ -155,6 +156,21 @@ def choose_env_file(looked_for: list[str], present: list[str]) -> str | None:
     return _select(
         f"No environment file found (looked for {', '.join(looked_for)}). Which file is it?",
         [*present, ENV_FILE_NONE],
+    )
+
+
+def choose_remote_env_file(looked_for: list[str], present: list[str]) -> str | None:
+    """Ask which file on the target holds the database credentials.
+
+    `present` is what the target's data root really contains, so the usual
+    cause of this question - the file is there under another name - is one
+    keystroke away. The opt-out is last because the override branch behind it
+    is the heavier answer, and most projects do not need it.
+    """
+    return _select(
+        f"No credentials file found on the target (looked for {', '.join(looked_for)}). "
+        "Which file is it?",
+        [*present, REMOTE_ENV_NONE],
     )
 
 

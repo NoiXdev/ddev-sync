@@ -9,7 +9,7 @@ import yaml
 from ddev_sync.cli import init
 from ddev_sync.cli.context import build_context
 from ddev_sync.cli.main import main
-from ddev_sync.cli.prompts import DEPLOYER_SOURCE, ENV_FILE_NONE, MANUAL_SOURCE
+from ddev_sync.cli.prompts import DEPLOYER_SOURCE, ENV_FILE_NONE, MANUAL_SOURCE, REMOTE_ENV_NONE
 from ddev_sync.config.loader import GLOBAL_LABEL, PROJECT_LABEL
 from ddev_sync.config.writer import WriteRefused
 from ddev_sync.operations.base import OperationError
@@ -106,6 +106,7 @@ def script(
     connection: Iterable[dict[str, object] | None] = (CONNECTION,),
     stage: Iterable[str | None] = ("production",),
     deployer_host: Iterable[str | None] = (),
+    remote_env_file: Iterable[str | None] = (),
 ) -> dict[str, list[tuple[Any, ...]]]:
     """Replace every question `init` asks with scripted answers.
 
@@ -113,6 +114,10 @@ def script(
     defaults to an empty script: most fixtures here build a `php`-typed
     project, which resolves to the generic profile and never asks it, so a
     test that does not expect the question fails loudly if it fires anyway.
+    `remote_env_file` defaults the same way - the credentials-fix question
+    (task 5) only fires when `PreflightOperation.check` reports a red
+    `credentials_ok` (see `stub_checks`), which none of the tests that omit it
+    ever scripts.
     """
     asked: dict[str, list[tuple[Any, ...]]] = {}
     for attribute, answers in (
@@ -124,6 +129,7 @@ def script(
         ("ask_connection", connection),
         ("ask_stage", stage),
         ("choose_deployer_host", deployer_host),
+        ("choose_remote_env_file", remote_env_file),
     ):
         asked[attribute] = []
         monkeypatch.setattr(init, attribute, _queue(answers, attribute, asked[attribute]))
@@ -234,6 +240,70 @@ def report_green(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return hosts
 
 
+def _report(
+    credentials_ok: bool | None, *, ssh_ok: bool = True, remote_path_ok: bool = True
+) -> PreflightReport:
+    """A `PreflightReport` naming only what the credentials-fix tests vary."""
+    return PreflightReport(ssh_ok, remote_path_ok, 50 * 1024**3, credentials_ok=credentials_ok)
+
+
+def stub_checks(monkeypatch: pytest.MonkeyPatch, *reports: PreflightReport) -> None:
+    """Replace `PreflightOperation.check` with one report per call, repeating the last.
+
+    `_fix_credentials`'s own guard and `doctor_command` each call `check()`
+    once per `init` run - R1 of `progress.md`'s ruling that `init` must go
+    through `check()` rather than the private probes it is built from, so
+    `report_green`'s stub still governs every test that does not call this
+    one. A test proving the fix actually helped scripts a red report and then
+    a green one; a test where nothing about credentials is in question
+    scripts a single report, which this function then answers both calls
+    with - the same way `report_green`'s one-report stub already does for
+    every pre-existing test.
+    """
+    sequence = list(reports)
+
+    def check(_self: object, _context: object) -> PreflightReport:
+        return sequence.pop(0) if len(sequence) > 1 else sequence[0]
+
+    monkeypatch.setattr(PreflightOperation, "check", check)
+
+
+def _runner_whose_remote_listing_is(
+    monkeypatch: pytest.MonkeyPatch, entries: list[str]
+) -> FakeCommandRunner:
+    """Install a fake runner whose `ls -1a` of the target's data root answers `entries`.
+
+    `PreflightOperation.check` is always stubbed (`stub_checks`) in a test
+    that calls this, so the one real command any of them drives through the
+    runner is `_remote_env_entries`'s listing - the probe and the credentials
+    fetch `check()` would otherwise also run never reach a real runner at all.
+    """
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout="".join(f"{entry}\n" for entry in entries))
+    monkeypatch.setattr("ddev_sync.cli.main.SubprocessRunner", lambda: runner)
+    return runner
+
+
+def _runner_where_the_remote_env_is(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> FakeCommandRunner:
+    return _runner_whose_remote_listing_is(monkeypatch, [name])
+
+
+def _symfony(project: Path) -> None:
+    """Overwrite the project fixture's `.ddev/config.yaml` to detect as Symfony.
+
+    `profiles/symfony.yaml` sets `env.file: [.env.local, .env]` - textually
+    identical to `remote_env_candidates`'s own unconfigured default - which is
+    what lets a test assert that fallback list without separately configuring
+    it to get there. `_laravel`'s profile sets `env.file: [.env]` instead, so
+    it cannot be used for that.
+    """
+    (project / ".ddev" / "config.yaml").write_text(
+        "name: acme\ntype: symfony\ndocroot: public\n", encoding="utf-8"
+    )
+
+
 def test_every_question_answered_writes_the_target_and_runs_doctor(
     project: Path,
     project_file: Path,
@@ -254,8 +324,9 @@ def test_every_question_answered_writes_the_target_and_runs_doctor(
     # `ask_connection` hands the port over as a number and it stays one in the file.
     assert "port: 2222\n" in written
     assert "stage: production" in written
-    # The check ran against the target that was just written.
-    assert hosts == ["web09.example"]
+    # The check ran against the target that was just written - twice: the
+    # credentials-fix guard's own `check()` (task 5), then `doctor`'s.
+    assert hosts == ["web09.example", "web09.example"]
     # Exactly one file changes per run: the other two layers are left alone.
     assert local_file.read_bytes() == local_before
     assert not global_file.exists()
@@ -614,8 +685,9 @@ def test_a_stronger_layer_that_redefines_the_target_is_named_and_is_no_success(
     hosts = report_green(monkeypatch)
     assert invoke(project, tmp_path) == 1
     captured = capsys.readouterr()
-    # The check really did run against the other definition, which is the point.
-    assert hosts == ["elsewhere.example"]
+    # The check really did run against the other definition, which is the
+    # point - twice: the credentials-fix guard's own `check()`, then `doctor`'s.
+    assert hosts == ["elsewhere.example", "elsewhere.example"]
     assert "Wrote" not in captured.out
     assert ".ddev/ddev-sync.local.yaml" in captured.err
     assert "not against what was just written" in captured.err
@@ -754,8 +826,9 @@ def test_a_picked_deployer_host_is_written_as_a_block_naming_the_alias(
     assert asked["choose_deployer_host"] == [(["web-1", "staging"],)]
     assert len(asked["ask_stage"]) == 1
     # The check resolved the alias that was written, and `dep` ran only once
-    # for the listing, the check and the comparison with what was written.
-    assert hosts == ["staging.example"]
+    # for the listing, both checks (the credentials-fix guard's, then
+    # `doctor`'s) and the comparison with what was written.
+    assert hosts == ["staging.example", "staging.example"]
     assert len(runner.calls) == 1
     assert f"Wrote the target 'production' to {PROJECT_LABEL}." in capsys.readouterr().out
 
@@ -1407,3 +1480,154 @@ def test_no_terminal_at_the_feature_question_stops_init_with_nothing_written(
     error = capsys.readouterr().err
     assert "terminal" in error
     assert not project_file.exists()
+
+
+# --- `init` offers a fix when the credentials row is red (task 5) ----------
+#
+# `PreflightOperation.check` is stubbed for every test below (`stub_checks`),
+# never driven for real: `report_green`'s own stub already proves twenty other
+# tests never call `_offer_remote_env_file` by accident, and reaching this
+# code through a real probe would mean also faking the web-container and
+# ssh-agent rows `check()` always runs - exposure this feature has nothing to
+# do with. The one thing these tests do drive through a real `FakeCommandRunner`
+# is `_remote_env_entries`'s `ls`, which is new code `check()` knows nothing
+# about.
+
+
+def test_init_writes_the_remote_env_file_the_user_names(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    _runner_where_the_remote_env_is(monkeypatch, ".env.production")
+    script(monkeypatch, remote_env_file=(".env.production",))
+    # Red, then green: the second report is `doctor`'s own check, standing in
+    # for the write having actually fixed the configuration.
+    stub_checks(monkeypatch, _report(False), _report(True))
+    assert invoke(project, tmp_path) == 0
+    loaded = yaml.safe_load(project_file.read_text(encoding="utf-8"))
+    assert loaded["database"]["env_file"] == [".env.production"]
+
+
+def test_init_does_not_ask_when_the_credentials_already_resolve(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    script(monkeypatch, remote_env_file=())  # asking would exhaust the empty queue
+    stub_checks(monkeypatch, _report(True))
+    assert invoke(project, tmp_path) == 0
+
+
+def test_init_offers_the_env_files_that_are_on_the_server(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _symfony(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    _runner_whose_remote_listing_is(
+        monkeypatch, [".env.production", ".env.example", "composer.json"]
+    )
+    script(monkeypatch)
+    # After `script`, which also patches `choose_remote_env_file` with its own
+    # (here, unused) empty queue - this stand-in must be the one left in place.
+    seen: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        init,
+        "choose_remote_env_file",
+        lambda looked_for, present: (
+            seen.update(looked_for=looked_for, present=present) or REMOTE_ENV_NONE
+        ),
+    )
+    stub_checks(monkeypatch, _report(False))
+    invoke(project, tmp_path)
+    assert seen["looked_for"] == [".env.local", ".env"]
+    assert seen["present"] == [".env.example", ".env.production"]
+
+
+def test_init_does_not_ask_when_ssh_itself_is_down(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A red credentials row whose cause is connectivity is not a question's
+    # to fix; the ssh row already says so (`_check_credentials` returns
+    # `None`, never `False`, when ssh or the deploy path is down).
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    monkeypatch.setattr(init, "choose_remote_env_file", _never_called)
+    script(monkeypatch)
+    stub_checks(monkeypatch, _report(None, ssh_ok=False, remote_path_ok=False))
+    assert invoke(project, tmp_path) == 1
+
+
+def test_init_writes_nothing_when_no_remote_file_is_chosen(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    _runner_whose_remote_listing_is(monkeypatch, [])
+    script(monkeypatch, remote_env_file=(REMOTE_ENV_NONE,))
+    stub_checks(monkeypatch, _report(False))
+    invoke(project, tmp_path)
+    assert "database" not in yaml.safe_load(project_file.read_text(encoding="utf-8"))
+    assert "before anything is downloaded or imported" in capsys.readouterr().out
+
+
+def test_no_terminal_at_the_remote_env_file_question_is_folded_into_the_check_error(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Unlike every earlier question, this one runs after the target and its
+    # settings are already on disk, inside the same try/except that already
+    # wraps a `doctor` failure - so a missing terminal here is reported the
+    # same way a `check()` that raised would be, rather than with its own
+    # bespoke message.
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    _runner_where_the_remote_env_is(monkeypatch, ".env.production")
+    script(monkeypatch, remote_env_file=(None,))
+    stub_checks(monkeypatch, _report(False))
+    assert invoke(project, tmp_path) == 1
+    error = capsys.readouterr().err
+    assert "terminal" in error
+    assert f"is in {PROJECT_LABEL}" in error
+    assert "web09.example" in project_file.read_text(encoding="utf-8")
+
+
+def test_a_remote_listing_that_fails_offers_only_the_opt_out(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=1, stderr="no such file or directory")
+    monkeypatch.setattr("ddev_sync.cli.main.SubprocessRunner", lambda: runner)
+    script(monkeypatch)
+    # After `script`, for the same reason as the test above.
+    seen: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        init,
+        "choose_remote_env_file",
+        lambda looked_for, present: (
+            seen.update(looked_for=looked_for, present=present) or REMOTE_ENV_NONE
+        ),
+    )
+    stub_checks(monkeypatch, _report(False))
+    invoke(project, tmp_path)
+    assert seen["present"] == []

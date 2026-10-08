@@ -31,11 +31,18 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ddev_sync.cli.commands import doctor_command
-from ddev_sync.cli.context import Detection, ProjectResolution, build_context, resolve_project
+from ddev_sync.cli.commands import _execution_context, doctor_command
+from ddev_sync.cli.context import (
+    Detection,
+    ProjectResolution,
+    RunContext,
+    build_context,
+    resolve_project,
+)
 from ddev_sync.cli.prompts import (
     DEPLOYER_SOURCE,
     ENV_FILE_NONE,
+    REMOTE_ENV_NONE,
     ask_connection,
     ask_production_url,
     ask_stage,
@@ -44,10 +51,12 @@ from ddev_sync.cli.prompts import (
     choose_deployer_host,
     choose_env_file,
     choose_features,
+    choose_remote_env_file,
     confirm_detection,
     confirm_replacement,
 )
 from ddev_sync.cli.render import describe_endpoint
+from ddev_sync.config.detect import WORDPRESS_PROFILE
 from ddev_sync.config.loader import (
     GLOBAL_LABEL,
     PROJECT_LABEL,
@@ -59,13 +68,17 @@ from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import CollectedTarget, collect_targets, resolve_target
 from ddev_sync.config.writer import WriteRefused, render_target, write_settings, write_target
 from ddev_sync.errors import ConfigError, DdevSyncError, DeployerError
+from ddev_sync.operations.base import ExecutionContext
+from ddev_sync.operations.database import DATABASE_ENV_FILE_KEY, remote_env_candidates
 from ddev_sync.operations.placeholders import (
     PRODUCTION_URL_CONFIG_KEY,
     PRODUCTION_URL_PLACEHOLDER,
     validate_production_url,
 )
+from ddev_sync.operations.preflight import PreflightOperation
 from ddev_sync.transport.deployer import ProjectDeployer, make_deployer_resolver
 from ddev_sync.transport.runner import CommandRunner
+from ddev_sync.transport.ssh import ssh_command
 
 DEFAULT_NAME = "production"
 
@@ -159,10 +172,10 @@ def init_command(
     # not resolve a success. Whatever ends the check - a refusal, an interrupt,
     # an error nobody foresaw - the user is told which file holds the target.
     try:
-        context = build_context(
+        context = _resolve_context(
             project_root=project_root,
             home=home,
-            target_name=name,
+            name=name,
             type_flag=type_flag,
             framework_version_flag=framework_version_flag,
             profile_root=profile_root,
@@ -170,6 +183,26 @@ def init_command(
             runner=runner,
             deployer=deployer,
         )
+        execution = _execution_context(
+            context, runner=runner, assume_yes=True, secrets=set(), stdout_is_terminal=False
+        )
+        wordpress = resolution.profile.name == WORDPRESS_PROFILE
+        if _fix_credentials(execution, paths, wordpress, echo):
+            # `_fix_credentials` may have just written `database.env_file`;
+            # `context` above was resolved before that write, so `doctor`
+            # would otherwise report on the configuration as it was found,
+            # not as it was fixed.
+            context = _resolve_context(
+                project_root=project_root,
+                home=home,
+                name=name,
+                type_flag=type_flag,
+                framework_version_flag=framework_version_flag,
+                profile_root=profile_root,
+                feature_root=feature_root,
+                runner=runner,
+                deployer=deployer,
+            )
         code = doctor_command(context, echo, runner=runner, colour=colour)
         written = _written_target(paths, name, deployer)
         others = _other_layers_defining(paths, name)
@@ -487,6 +520,130 @@ def _deployer_connection(deployer: ProjectDeployer) -> dict[str, object]:
 
 def _has_deployer_recipe(root: Path) -> bool:
     return any((root / recipe).is_file() for recipe in _DEPLOYER_RECIPES)
+
+
+def _resolve_context(
+    *,
+    project_root: Path,
+    home: Path,
+    name: str,
+    type_flag: str | None,
+    framework_version_flag: str | None,
+    profile_root: Path,
+    feature_root: Path,
+    runner: CommandRunner,
+    deployer: ProjectDeployer,
+) -> RunContext:
+    """`build_context` with `init_command`'s own arguments bound.
+
+    Called twice when `_fix_credentials` actually writes something: once to
+    resolve the target before offering the fix, once more afterwards so that
+    `doctor` sees the configuration as it was fixed, not as it was found.
+    """
+    return build_context(
+        project_root=project_root,
+        home=home,
+        target_name=name,
+        type_flag=type_flag,
+        framework_version_flag=framework_version_flag,
+        profile_root=profile_root,
+        feature_root=feature_root,
+        runner=runner,
+        deployer=deployer,
+    )
+
+
+def _fix_credentials(
+    execution: ExecutionContext,
+    paths: ConfigPaths,
+    wordpress: bool,
+    echo: Callable[[str], None],
+) -> bool:
+    """Offer to fix a credentials source that does not resolve.
+
+    Runs after the target is written because `read_remote_credentials` needs
+    a resolved target, and before `doctor` so that the checklist the user
+    sees describes the configuration as fixed rather than as merely found
+    broken.
+
+    Goes through `PreflightOperation().check()` rather than its private
+    `_probe`/`_check_credentials`: `tests/cli/test_init.py::report_green`
+    stubs `check` for roughly twenty other `init` tests, and calling the
+    private methods instead would run a real probe through their fake runner
+    on every one of them and fire this question where none of them expect
+    one. `check` also keeps the guard meaningful on its own terms -
+    `credentials_ok` is `False` only when ssh and the deploy path are already
+    green (see `PreflightReport`'s own docstring) - so a connectivity failure
+    still cannot reach the question below; that failure has its own `doctor`
+    row and its own fix.
+
+    Returns whether the question ran, not whether it wrote anything: a
+    declined fix (`REMOTE_ENV_NONE`) still spent this function's one
+    `check()` call, and `init_command` uses the return value to decide
+    whether the context it hands `doctor` next needs re-resolving from disk -
+    cheap next to the ssh round trip `check()` already paid for either way.
+    """
+    report = PreflightOperation().check(execution)
+    if report.credentials_ok is not False:
+        return False
+    _offer_remote_env_file(execution, paths, wordpress, echo)
+    return True
+
+
+def _offer_remote_env_file(
+    execution: ExecutionContext,
+    paths: ConfigPaths,
+    wordpress: bool,
+    echo: Callable[[str], None],
+) -> None:
+    """Ask which file on the target really holds the database credentials.
+
+    `present` comes from the target's own data root (`_remote_env_entries`),
+    so the usual cause of a red credentials row - the file is there under a
+    name nobody configured - is one keystroke away rather than a guess.
+
+    `wordpress` is not read here. It is threaded through now, rather than
+    added as a fourth parameter later, so that a future override branch for a
+    source this listing cannot fix - `explicit`, or `wp_cli` on a WordPress
+    project - adds a branch to this function instead of changing its
+    signature and `_fix_credentials`'s together.
+    """
+    looked_for = remote_env_candidates(execution)
+    present = _remote_env_entries(execution)
+    answer = choose_remote_env_file(looked_for, present)
+    if answer is None:
+        raise _no_terminal()
+    if answer == REMOTE_ENV_NONE:
+        echo(
+            "No credentials file was named. The sync will stop at the database dump, "
+            "before anything is downloaded or imported."
+        )
+        return
+    write_settings(
+        path=paths.project_config, paths=paths, settings={DATABASE_ENV_FILE_KEY: [answer]}
+    )
+
+
+def _remote_env_entries(execution: ExecutionContext) -> list[str]:
+    """The `.env*` entries in the target's data root, sorted.
+
+    Filtered in Python rather than with a shell glob: an unmatched `.env*`
+    comes back as the literal pattern, which would then be offered as a
+    filename that does not exist. One `ls`, over the same connection the
+    credentials probe just proved - through `ssh_command` and
+    `context.runner.run`, never `subprocess` (`transport/runner.py`). A
+    listing that fails for any reason is an empty list rather than a second
+    error: the question still has its opt-out, and the failure that matters
+    is already on screen as the red row that led here.
+    """
+    result = execution.runner.run(
+        ssh_command(execution.target, ["ls", "-1a", execution.target.data_root])
+    )
+    if not result.ok:
+        return []
+    return sorted(
+        line.strip() for line in result.stdout.splitlines() if line.strip().startswith(".env")
+    )
 
 
 def _no_terminal() -> DdevSyncError:

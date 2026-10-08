@@ -380,6 +380,27 @@ def test_the_env_file_question_passes_a_missing_terminal_through(
     assert prompts.choose_env_file([".env"], []) is None
 
 
+def test_the_remote_env_question_offers_what_is_there_plus_an_opt_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked: dict[str, object] = {}
+    monkeypatch.setattr(
+        prompts,
+        "_select",
+        lambda question, choices: asked.update(q=question, c=choices) or choices[0],
+    )
+    assert prompts.choose_remote_env_file([".env"], [".env.production"]) == ".env.production"
+    assert asked["c"] == [".env.production", prompts.REMOTE_ENV_NONE]
+    assert ".env" in str(asked["q"])
+
+
+def test_the_remote_env_question_passes_a_missing_terminal_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompts, "_select", lambda _q, _c: None)
+    assert prompts.choose_remote_env_file([".env"], []) is None
+
+
 def test_the_deployer_host_question_passes_a_missing_terminal_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
