@@ -209,8 +209,10 @@ naming both files** — this codebase already refuses to guess when two layers
 define the same target (`cli/init.py`'s check against
 `_other_layers_defining`), and silently preferring one copy of a credentials
 file over another is the same class of mistake with worse consequences.
-When only the old file exists it is read as before. Neither `doctor` nor
-`init` says anything about it (see "Corrections after the first
+When only the old file exists it is read as before, and neither `doctor`
+nor the ordinary read path says anything about it. `init`'s credentials
+override is the one exception: it warns right after writing new credentials
+to that file, naming both paths (see "Corrections after the first
 implementation" below).
 
 **`init` writes to whichever file is already in use, and creates only the
@@ -282,9 +284,12 @@ TDD: the failing test first.
   above.
 - Migrating an existing `.ddev/ddev-sync.local.yaml` automatically, and
   prompting the user to do it themselves. Moving someone's credentials file
-  for them is not a thing a wizard should do silently, and neither `init` nor
-  `doctor` nags about where it currently lives — only the README and the
-  installed template say the new path is where it belongs.
+  for them is not a thing a wizard should do silently — `init`'s credentials
+  override does say something now, once, right after it writes to that file
+  (see "Corrections after the first implementation" below), but it still
+  does not move the file itself, and `doctor` still says nothing; otherwise
+  only the README and the installed template say the new path is where it
+  belongs.
 - Reading credentials from anything other than the three existing sources.
 
 ## Corrections after the first implementation
