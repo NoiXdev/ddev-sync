@@ -1854,12 +1854,56 @@ def test_init_appends_to_the_old_local_file_when_it_exists(
     assert ".ddev/ddev-sync.local.yaml" in output
     assert ".ddev/ddev-sync/local.yaml" in output
     assert "gitignore" in output
-    # Review finding 4: this warning used to be echoed immediately, where
-    # `doctor`'s whole checklist and two more closing lines then printed over
-    # it. It must now be the very last thing `init` prints, after both.
+    # Review finding 4 (and its regression): the full warning is echoed
+    # immediately, at write time - before `doctor`'s checklist runs - so it
+    # cannot be lost to anything that happens afterwards; a shorter
+    # restatement is also the very last thing `init` prints, in case the
+    # checklist pushed the first one off screen.
+    assert "The credentials were written to" in output
     lines = output.rstrip("\n").splitlines()
-    assert lines[-1].startswith("The credentials were written to")
+    assert lines[-1].startswith("Reminder:")
     assert "committed with the project" in lines[-2]
+
+
+def test_a_raise_in_doctor_after_a_legacy_path_write_does_not_swallow_the_warning(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The regression a re-review caught: when the warning was only a return
+    # value echoed in `init_command`'s own closing lines, anything that threw
+    # between the write and that point - here, `doctor_command`'s own
+    # `check()` call, which makes real ssh calls and can genuinely fail -
+    # discarded it with no trace. `_offer_override` now echoes it
+    # synchronously, before `doctor_command` ever runs, so it survives.
+    _generic(project)
+    legacy = project / ".ddev" / "ddev-sync.local.yaml"
+    legacy.write_text("version: 1\n", encoding="utf-8")
+    _runner_whose_credentials_probe(monkeypatch, ok=True)
+    script(
+        monkeypatch,
+        credentials_source=(EXPLICIT_SOURCE,),
+        credentials=(CREDENTIALS,),
+    )
+    calls = {"n": 0}
+
+    def check(_self: object, _context: object) -> PreflightReport:
+        # First call is `_fix_credentials`'s own guard (red, so the override
+        # fires and writes); the second is `doctor_command`'s, which is where
+        # this raises - after the write, not before it.
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _report(False)
+        raise ValueError("something nobody foresaw")
+
+    monkeypatch.setattr(PreflightOperation, "check", check)
+    assert invoke(project, tmp_path) == 1
+    loaded = yaml.safe_load(legacy.read_text(encoding="utf-8"))
+    assert loaded["database"]["credentials"] == CREDENTIALS
+    output = capsys.readouterr().out
+    assert "The credentials were written to" in output
+    assert "gitignore" in output
 
 
 def test_choosing_wp_cli_writes_the_project_file_not_the_local_one(

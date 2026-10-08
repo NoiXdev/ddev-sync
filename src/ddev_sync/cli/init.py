@@ -198,7 +198,7 @@ def init_command(
             context, runner=runner, assume_yes=True, secrets=set(), stdout_is_terminal=False
         )
         wordpress = resolution.profile.name == WORDPRESS_PROFILE
-        fixed, legacy_warning = _fix_credentials(execution, paths, wordpress, echo)
+        fixed, wrote_legacy_credentials = _fix_credentials(execution, paths, wordpress, echo)
         if fixed:
             # `_fix_credentials` may have just written `database.env_file`;
             # `context` above was resolved before that write, so `doctor`
@@ -253,12 +253,17 @@ def init_command(
         f"{PROJECT_LABEL} is committed with the project. To keep this host and user out of "
         f"the repository, move the target to {GLOBAL_LABEL}."
     )
-    if legacy_warning is not None:
-        # Last, deliberately: this is the most security-relevant sentence
-        # `init` can print, and echoing it when `_offer_override` produced it
-        # would have buried it under `doctor`'s whole checklist and the two
-        # lines above. Nothing after this one prints over it.
-        echo(legacy_warning)
+    if wrote_legacy_credentials:
+        # `_offer_override` already `echo`d the full warning synchronously, at
+        # write time - before `doctor_command` above ran, so a `doctor` that
+        # raises (it makes real ssh calls) cannot make the write happen with
+        # no warning at all. This is a shorter restatement, not a repeat of
+        # the same sentence: said again here, last, in case the checklist
+        # pushed the first one off screen.
+        echo(
+            f"Reminder: the credentials just written to {LEGACY_LOCAL_LABEL} are not "
+            f"gitignored - move them to {LOCAL_LABEL}."
+        )
     return code
 
 
@@ -576,7 +581,7 @@ def _fix_credentials(
     paths: ConfigPaths,
     wordpress: bool,
     echo: Callable[[str], None],
-) -> tuple[bool, str | None]:
+) -> tuple[bool, bool]:
     """Offer to fix a credentials source that does not resolve.
 
     Runs after the target is written because `read_remote_credentials` needs
@@ -595,22 +600,22 @@ def _fix_credentials(
     still cannot reach the question below; that failure has its own `doctor`
     row and its own fix.
 
-    Returns whether the question ran, not whether it wrote anything: a run
-    that reaches the override (`REMOTE_ENV_NONE`) and still writes nothing -
-    a declined source, or one whose probe fails - still spent this function's
-    one `check()` call, and `init_command` uses the return value to decide
-    whether the context it hands `doctor` next needs re-resolving from disk -
-    cheap next to the ssh round trip `check()` already paid for either way.
+    The first element is whether the question ran, not whether it wrote
+    anything: a run that reaches the override (`REMOTE_ENV_NONE`) and still
+    writes nothing - a declined source, or one whose probe fails - still
+    spent this function's one `check()` call, and `init_command` uses the
+    return value to decide whether the context it hands `doctor` next needs
+    re-resolving from disk - cheap next to the ssh round trip `check()`
+    already paid for either way.
 
-    The second element is `_offer_override`'s legacy-path warning, carried
-    all the way back up rather than echoed where it is produced -
-    `init_command` echoes it last, after `doctor`'s checklist and its own
-    closing lines, which is the only place in this command nothing still
-    prints over it.
+    The second element is whether `_offer_override` wrote to the legacy local
+    path - its own warning is already `echo`d by the time this returns;
+    `init_command` uses this only to decide whether to restate it in its
+    closing lines, not to print it for the first time.
     """
     report = PreflightOperation().check(execution)
     if report.credentials_ok is not False:
-        return False, None
+        return False, False
     if execution.config("database.remote_credentials", default="env") == "env":
         return True, _offer_remote_env_file(execution, paths, wordpress, echo)
     # The remote-file question's premise - a `.env` on the target that
@@ -627,7 +632,7 @@ def _offer_remote_env_file(
     paths: ConfigPaths,
     wordpress: bool,
     echo: Callable[[str], None],
-) -> str | None:
+) -> bool:
     """Ask which file on the target really holds the database credentials.
 
     Only reached for an `env` source (`_fix_credentials`'s own gate): that is
@@ -639,8 +644,8 @@ def _offer_remote_env_file(
     `wordpress` is threaded through to `_offer_override` below, which is
     reached when naming a file does not settle it either - the last resort,
     for setups where nothing on the remote can be read back at all. Returns
-    whatever that call returns - `_offer_override`'s own legacy-path warning,
-    or `None` - unchanged, so `_fix_credentials` has one place to collect it
+    whatever that call returns - whether the override wrote to the legacy
+    local path - unchanged, so `_fix_credentials` has one place to collect it
     regardless of which of the two questions actually wrote it.
     """
     looked_for = remote_env_candidates(execution)
@@ -653,7 +658,7 @@ def _offer_remote_env_file(
     write_settings(
         path=paths.project_config, paths=paths, settings={DATABASE_ENV_FILE_KEY: [answer]}
     )
-    return None
+    return False
 
 
 def _offer_override(
@@ -661,7 +666,7 @@ def _offer_override(
     paths: ConfigPaths,
     wordpress: bool,
     echo: Callable[[str], None],
-) -> str | None:
+) -> bool:
     """Offer a credentials source other than the one that failed.
 
     Last resort by design: the credentials normally live on the target, which
@@ -669,13 +674,15 @@ def _offer_override(
     setups where nothing on the remote can be read back - Bedrock and other
     env-based WordPress installs among them.
 
-    Returns the legacy-path warning's text when the write landed on
-    `LEGACY_LOCAL_LABEL`, `None` otherwise - rather than `echo`ing it here and
-    having it done with. This is the most security-relevant sentence `init`
-    can print, and `echo`ing it immediately used to bury it under `doctor`'s
-    whole checklist and two more closing lines, all printed after it before
-    the command returned. `init_command` echoes the string this returns last,
-    once there is nothing left to print over it.
+    Returns whether the write landed on `LEGACY_LOCAL_LABEL`, so
+    `init_command` can restate the warning below in its own closing lines -
+    it does not also carry the warning's text: this `echo`s it immediately,
+    at write time, so nothing downstream (a `doctor` that raises, a
+    multiply-defined target) can make the write happen with no warning ever
+    reaching the user at all. The closing restatement is what used to be this
+    function's only emission; echoing twice, once synchronously and once at
+    the end, is deliberate - see `init_command`'s own comment at the second
+    one.
     """
     source = choose_credentials_source(wordpress)
     if source is None:
@@ -688,7 +695,7 @@ def _offer_override(
             paths=paths,
             settings={"database.remote_credentials": "wp_cli"},
         )
-        return None
+        return False
     values = ask_credentials()
     if values is None:
         raise _no_terminal()
@@ -697,7 +704,7 @@ def _offer_override(
             "Those credentials did not work against the target, so they were not "
             "written. Check them and run 'ddev sync init' again."
         )
-        return None
+        return False
     local_path = _local_path(paths)
     write_settings(
         path=local_path,
@@ -708,18 +715,22 @@ def _offer_override(
         },
     )
     if local_path != paths.legacy_local_config:
-        return None
+        return False
     # The one path the add-on's shipped `.gitignore` does not cover - covering
     # it is why the layer moved to `LOCAL_LABEL` in the first place
     # (`config/loader.py`). Relevant only here, and only now: a project on the
     # new path has nothing to act on, and the risk this names only exists once
-    # the secret has actually landed on the old one.
-    return (
+    # the secret has actually landed on the old one. Said now, synchronously,
+    # not only in `init_command`'s closing lines: `doctor_command` right after
+    # this makes real ssh calls and can raise, and a raise must not be the
+    # reason a written production password goes unmentioned.
+    echo(
         f"The credentials were written to {LEGACY_LOCAL_LABEL}. The add-on's shipped "
         f".gitignore does not cover that path - it covers {LOCAL_LABEL} instead - so "
         "this file is not ignored and the password it holds would be committed with "
         f"the project. Move it to {LOCAL_LABEL}."
     )
+    return True
 
 
 def _credentials_work(execution: ExecutionContext, values: dict[str, str]) -> bool:
