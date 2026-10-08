@@ -114,6 +114,23 @@ def test_a_failing_command_raises_with_its_output(tmp_path: Path) -> None:
     assert "composer: not found" in message
 
 
+# `docker exec` reports an OCI runtime failure on stdout with exit 127 - the
+# shape of a binary the web container does not have - so reading stderr alone
+# left the user with the command and nothing about why it failed.
+def test_a_failing_command_whose_reason_came_on_stdout_still_reports_it(
+    tmp_path: Path,
+) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["docker", "exec"],
+        returncode=127,
+        stdout='OCI runtime exec failed: exec: "sh": executable file not found in $PATH\n',
+    )
+    with pytest.raises(OperationError) as caught:
+        ExecOperation().execute(make_context(runner, tmp_path), {"run": "composer install"})
+    assert "executable file not found" in str(caught.value)
+
+
 def test_allow_failure_swallows_a_non_zero_exit(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["docker", "exec"], returncode=1, stderr="nothing to do")

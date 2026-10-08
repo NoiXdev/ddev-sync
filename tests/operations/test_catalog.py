@@ -246,6 +246,34 @@ def test_create_admin_uses_the_documented_local_password(tmp_path: Path) -> None
     assert f"--password={LOCAL_ADMIN_PASSWORD}" in runner.calls[0]
 
 
+# The three framework-CLI failures in this module all read stderr alone, and
+# `docker exec` puts an OCI runtime failure on stdout with exit 127 - which is
+# exactly the shape of a web container without `wp` or `drush` installed. The
+# message carried the rule name and then nothing.
+_NOT_ON_PATH = 'OCI runtime exec failed: exec: "wp": executable file not found in $PATH\n'
+
+
+def test_a_failed_create_admin_reports_a_reason_that_came_on_stdout(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], returncode=127, stdout=_NOT_ON_PATH)
+    config = rule_config(name="admin", operation="create_admin", driver="wp_cli", user="ddev")
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert "executable file not found" in str(caught.value)
+
+
+def test_a_failed_role_grant_reports_a_reason_that_came_on_stdout(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout="created")
+    runner.script_prefix(["docker", "exec"], returncode=127, stdout=_NOT_ON_PATH)
+    config = rule_config(name="admin", operation="create_admin", driver="drush", user="ddev")
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    message = str(caught.value)
+    assert "executable file not found" in message
+    assert "role" in message
+
+
 def test_an_existing_admin_is_not_an_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -565,6 +593,22 @@ def test_a_failing_wp_search_replace_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(OperationError) as caught:
         SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     assert "no wp-config.php" in str(caught.value)
+
+
+def test_a_failing_wp_search_replace_reports_a_reason_that_came_on_stdout(
+    tmp_path: Path,
+) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], returncode=127, stdout=_NOT_ON_PATH)
+    config = rule_config(
+        name="urls",
+        operation="search_replace",
+        driver="wp_cli",
+        **{"from": "a", "to": "b"},
+    )
+    with pytest.raises(OperationError) as caught:
+        SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert "executable file not found" in str(caught.value)
 
 
 def test_create_admin_runs_the_framework_cli_in_the_web_container(tmp_path: Path) -> None:

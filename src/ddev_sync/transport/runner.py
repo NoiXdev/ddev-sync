@@ -28,6 +28,28 @@ class CommandResult:
         """True when the command exited zero."""
         return self.returncode == 0
 
+    def failure_detail(self) -> str:
+        """Why this command failed, from whichever stream carries the reason.
+
+        `docker exec` splits its failures across both streams, measured
+        against real Docker: a daemon-level refusal ("No such container",
+        "is not running") arrives on **stderr** with exit 1, while an OCI
+        runtime failure arrives on **stdout** with exit 127 - a workdir that
+        does not exist in the image, or a binary that is not on its PATH.
+        Reporting `stderr` alone therefore printed nothing at all for the
+        whole second class, which is the class a web container missing `wp`,
+        `drush` or `dep` falls into. A real `doctor` run showed it as
+        `FAIL  web container  ddev-t3-13-ssg-web did not answer: `.
+
+        Both streams are kept when both said something, stderr first: a
+        failing framework CLI often explains itself on stdout while warning
+        on stderr, and this text is read once, by somebody who needs all of
+        it. A command that printed nothing says so with its exit code, which
+        is more than the bare colon it used to leave behind.
+        """
+        parts = [stream.strip() for stream in (self.stderr, self.stdout) if stream.strip()]
+        return "\n".join(parts) if parts else f"no output (exit {self.returncode})"
+
 
 class CommandFailed(DdevSyncError):
     """A command that was expected to succeed did not."""

@@ -119,7 +119,7 @@ class SearchReplace:
         )
         if not result.ok:
             raise OperationError(
-                f"sanitize rule {rule.name!r}: wp search-replace failed: {result.stderr.strip()}"
+                f"sanitize rule {rule.name!r}: wp search-replace failed: {result.failure_detail()}"
             )
 
 
@@ -240,7 +240,7 @@ class CreateAdmin:
             if not any(marker in combined for marker in _ALREADY_EXISTS.get(driver, ())):
                 raise OperationError(
                     f"sanitize rule {rule.name!r}: creating the admin user failed: "
-                    f"{result.stderr.strip()}"
+                    f"{result.failure_detail()}"
                 )
             print(f"  local admin already exists - user: {user}")
         # Also for an account that already existed: it may have been made by an
@@ -275,7 +275,7 @@ class CreateAdmin:
         if not result.ok:
             raise OperationError(
                 f"sanitize rule {rule.name!r}: giving {user!r} the role {role!r} failed: "
-                f"{result.stderr.strip()}\n"
+                f"{result.failure_detail()}\n"
                 f"The role {role!r} must exist in this site; the default, "
                 f"{_DEFAULT_ADMIN_ROLE!r}, is the one Drupal's 'standard' install profile "
                 "creates. For another role name, replace the whole sanitize.rules list "

@@ -160,6 +160,34 @@ def test_the_hosts_are_listed_from_the_same_single_invocation_that_resolves() ->
     assert len(runner.calls) == 1
 
 
+# Two shapes, both from `docker exec`, both previously silent. A recipe that
+# fails is exit 1 with the reason on stderr; a container without `php` is exit
+# 127 with the reason on **stdout**, and 127 is also what makes the resolver
+# try the next candidate - so the last attempt's words are all the user gets.
+def test_a_recipe_that_fails_with_its_reason_on_stdout_still_reports_it() -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], returncode=1, stdout="PHP Fatal error in deploy.php")
+    resolve = make_deployer_resolver(project(), runner)
+    with pytest.raises(DeployerError) as error:
+        resolve("web-1")
+    assert "deploy.php" in str(error.value)
+
+
+def test_neither_candidate_found_carries_the_last_attempts_words() -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["docker", "exec"],
+        returncode=127,
+        stdout='OCI runtime exec failed: exec: "vendor/bin/dep": no such file or directory\n',
+    )
+    resolve = make_deployer_resolver(project(), runner)
+    with pytest.raises(DeployerError) as error:
+        resolve("web-1")
+    message = str(error.value)
+    assert "could not find Deployer" in message
+    assert "no such file or directory" in message
+
+
 def test_listing_the_hosts_fails_like_resolving_when_dep_fails() -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["docker", "exec"], returncode=1, stderr="PHP Fatal error in deploy.php")

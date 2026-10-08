@@ -93,3 +93,46 @@ def test_passthrough_inherits_stdout_but_still_captures_stderr() -> None:
     assert result.returncode == 3
     assert result.stdout == ""
     assert "err" in result.stderr
+
+
+# Measured against real Docker, because this is the whole reason the property
+# exists: `docker exec` splits its failures across the two streams. A
+# daemon-level refusal - no such container, container not running - arrives on
+# stderr with exit 1, and an OCI runtime failure - a workdir that is not in the
+# image, a binary that is not on its PATH - arrives on **stdout** with exit
+# 127. Reporting stderr alone printed `did not answer: ` and nothing else for
+# the whole second class, which includes a web container missing `wp`, `drush`
+# or `dep`.
+def test_the_reason_comes_from_stderr_when_that_is_where_it_is() -> None:
+    result = CommandResult(
+        argv=("docker", "exec"),
+        returncode=1,
+        stdout="",
+        stderr="Error response from daemon: No such container: ddev-acme-web\n",
+    )
+    assert result.failure_detail() == "Error response from daemon: No such container: ddev-acme-web"
+
+
+def test_the_reason_comes_from_stdout_when_that_is_where_it_is() -> None:
+    result = CommandResult(
+        argv=("docker", "exec"),
+        returncode=127,
+        stdout='OCI runtime exec failed: exec: "wp": executable file not found in $PATH\n',
+        stderr="",
+    )
+    assert "executable file not found" in result.failure_detail()
+
+
+def test_both_streams_are_kept_when_both_said_something() -> None:
+    """Neither is dropped: a failing CLI often explains itself on stdout while
+    warning on stderr, and an error message is read once."""
+    result = CommandResult(
+        argv=("docker", "exec"), returncode=1, stdout="Error: no such post\n", stderr="Warning: x\n"
+    )
+    assert result.failure_detail() == "Warning: x\nError: no such post"
+
+
+def test_a_command_that_said_nothing_at_all_says_so() -> None:
+    """Better than a message ending in a colon and nothing."""
+    result = CommandResult(argv=("docker", "exec"), returncode=137, stdout="", stderr="")
+    assert result.failure_detail() == "no output (exit 137)"

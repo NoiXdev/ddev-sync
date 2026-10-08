@@ -265,7 +265,9 @@ class PreflightOperation:
             # row of its checklist.
             return False, f"could not ask {context.project.web_container}: {error}"
         if not result.ok:
-            return False, f"{context.project.web_container} did not answer: {result.stderr.strip()}"
+            return False, (
+                f"{context.project.web_container} did not answer: {result.failure_detail()}"
+            )
         return True, f"{context.project.web_container} answers"
 
     @staticmethod

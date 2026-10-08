@@ -72,7 +72,7 @@ def make_deployer_resolver(project: DdevProject, runner: CommandRunner) -> Proje
 
 def _dep_config(project: DdevProject, runner: CommandRunner) -> str:
     """The text `dep config --format=json` printed, from the first place it exists."""
-    last_stderr = ""
+    last_detail = ""
     for candidate in _CANDIDATES:
         # The project root is the working directory because that is where
         # Deployer looks for `deploy.php` or `deploy.yaml`.
@@ -83,9 +83,9 @@ def _dep_config(project: DdevProject, runner: CommandRunner) -> str:
         if result.returncode != _NOT_FOUND:
             raise DeployerError(
                 f"`{candidate} {' '.join(_SUBCOMMAND)}` failed with exit "
-                f"{result.returncode} in the web container: {result.stderr.strip()}"
+                f"{result.returncode} in the web container: {result.failure_detail()}"
             )
-        last_stderr = result.stderr.strip()
+        last_detail = result.failure_detail()
     # The last attempt's own words stay in the message: exit 127 also comes
     # from a host without `docker` at all, and naming only the two places
     # looked would then send someone hunting for a Deployer that is not the
@@ -97,7 +97,7 @@ def _dep_config(project: DdevProject, runner: CommandRunner) -> str:
     # above as a place that was looked in.
     raise DeployerError(
         f"could not find Deployer in the web container: neither {_CANDIDATES[0]} "
-        f"nor a `dep` on its PATH ran ({last_stderr}); Deployer belongs in the "
+        f"nor a `dep` on its PATH ran ({last_detail}); Deployer belongs in the "
         "project's require-dev, so install it with "
         "'ddev composer require --dev deployer/deployer'"
     )

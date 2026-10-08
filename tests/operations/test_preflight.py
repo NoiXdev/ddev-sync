@@ -971,6 +971,28 @@ def test_check_reports_a_web_container_that_does_not_answer(
     assert "ddev-acme-web" in report.web_detail
 
 
+# The shape a real `doctor` run hit: `FAIL  web container  ddev-t3-13-ssg-web
+# did not answer: ` with nothing after the colon. `docker exec` puts an OCI
+# runtime failure - a workdir not in the image, a binary not on its PATH - on
+# stdout with exit 127, and the row read stderr only.
+def test_check_reports_a_web_container_whose_reason_came_on_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+    monkeypatch.setattr(preflight, "DOCKER_SOCKET", socket)
+    runner = healthy_runner()
+    runner.script_prefix(
+        ["docker", "exec"],
+        returncode=127,
+        stdout='OCI runtime exec failed: exec: "true": executable file not found in $PATH\n',
+    )
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+    assert report.web_ok is False
+    assert "executable file not found" in report.web_detail
+    assert not report.web_detail.endswith(": ")
+
+
 def test_check_reports_a_runner_that_raises_instead_of_returning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

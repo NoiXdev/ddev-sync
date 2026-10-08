@@ -56,7 +56,7 @@ def run_command_entry(context: ExecutionContext, entry: Mapping[str, Any]) -> No
     if result.ok or bool(entry.get("allow_failure", False)):
         return
     raise OperationError(
-        f"command failed (exit {result.returncode}): {command}\n{result.stderr.strip()}"
+        f"command failed (exit {result.returncode}): {command}\n{result.failure_detail()}"
     )
 
 
