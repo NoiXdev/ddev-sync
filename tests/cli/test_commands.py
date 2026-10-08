@@ -274,6 +274,35 @@ def test_doctor_exits_zero_when_the_sanitize_table_probe_has_nothing_to_report(
     assert "sanitize tables" not in capsys.readouterr().out
 
 
+def test_doctor_exits_non_zero_on_failed_credentials(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The blind spot this closes: ssh and the deploy path are both fine, but
+    # `database.credentials` does not actually resolve - the one failure mode
+    # that, before this probe existed, no profile with `sanitize.rules: []`
+    # could ever see in `doctor`.
+    from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
+
+    monkeypatch.setattr(
+        PreflightOperation,
+        "check",
+        lambda _self, _context: PreflightReport(
+            True,
+            True,
+            50 * 1024**3,
+            credentials_ok=False,
+            credentials_detail="database.credentials is missing password",
+        ),
+    )
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
+    output = capsys.readouterr().out
+    assert "FAIL" in output
+    assert "credentials" in output
+
+
 def test_a_run_without_a_target_and_without_a_tty_asks_for_target(
     project: Path,
     tmp_path: Path,

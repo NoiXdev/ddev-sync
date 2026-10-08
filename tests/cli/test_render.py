@@ -577,6 +577,27 @@ def test_render_doctor_omits_the_sanitize_tables_row_when_nothing_was_probed() -
     assert "sanitize tables" not in render_doctor(report, _target())
 
 
+def test_the_credentials_row_sits_between_disk_space_and_sanitize_tables() -> None:
+    report = PreflightReport(
+        ssh_ok=True,
+        remote_path_ok=True,
+        free_bytes=100 * 1024**3,
+        credentials_ok=True,
+        credentials_detail="env: deploy@db.internal:3306/app",
+        sanitize_tables_ok=True,
+        sanitize_tables_detail="1 required table present",
+    )
+    lines = render_doctor(report, _target()).splitlines()
+    labels = [line.split()[1] for line in lines if line.strip().startswith(("OK", "FAIL"))]
+    assert labels.index("credentials") == labels.index("disk") + 1
+    assert labels.index("credentials") < labels.index("sanitize")
+
+
+def test_no_credentials_row_when_the_probe_did_not_run() -> None:
+    report = PreflightReport(ssh_ok=False, remote_path_ok=False, free_bytes=0)
+    assert "credentials" not in render_doctor(report, _target())
+
+
 def test_render_doctor_shows_sanitize_tables_ok() -> None:
     report = PreflightReport(
         ssh_ok=True,

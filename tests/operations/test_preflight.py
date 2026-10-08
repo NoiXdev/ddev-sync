@@ -148,6 +148,121 @@ def test_low_disk_space_is_refused_with_the_numbers(
     assert "2 GB" in message
 
 
+# --- The credentials probe: doctor's only check of `database.credentials` --
+#
+# The table probe reads credentials only when a sanitize rule requires a
+# table, so `profiles/generic.yaml` - `sanitize.rules: []` and
+# `database.remote_credentials: explicit` with nothing writing
+# `database.credentials` - got a green `doctor` and then died at `db.dump`.
+# This probe runs for every profile, regardless of sanitize.
+
+
+def _script_env_file(runner: FakeCommandRunner, contents: str) -> None:
+    """Script the ssh round trip `_fetch_first_env_file` makes, as a success.
+
+    Its real stdout is the matched path on its own first line, followed by
+    the file's contents - `_fetch_first_env_file` partitions on the first
+    newline to recover both.
+    """
+    runner.script_prefix(["ssh"], stdout=f"/var/www/.env\n{contents}")
+
+
+def _script_env_file_missing(runner: FakeCommandRunner) -> None:
+    """Script the ssh round trip as every candidate path missing.
+
+    `_fetch_first_env_file`'s probe script ends `exit 9` when none of the
+    candidates exist, which `result.ok` reports as failure regardless of the
+    exact code.
+    """
+    runner.script_prefix(["ssh"], returncode=9)
+
+
+def test_the_credentials_row_reports_the_database_a_sync_would_dump(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    _script_env_file(
+        runner,
+        "DATABASE_NAME=app\nDATABASE_USER=deploy\n"
+        "DATABASE_PASSWORD=s3cret\nDATABASE_HOST=db.internal\n"
+        "DATABASE_PORT=3306\n",
+    )
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+    assert report.credentials_ok is True
+    assert "deploy@db.internal:3306/app" in report.credentials_detail
+
+
+def test_the_credentials_detail_never_carries_the_password(tmp_path: Path) -> None:
+    # `render_doctor` writes this string to the terminal with no scrubbing
+    # of its own - `context.secrets` protects the verbose command log, not
+    # this detail string.
+    runner = healthy_runner()
+    _script_env_file(
+        runner,
+        "DATABASE_NAME=app\nDATABASE_USER=deploy\n"
+        "DATABASE_PASSWORD=s3cret\nDATABASE_HOST=db.internal\n"
+        "DATABASE_PORT=3306\n",
+    )
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+    assert "s3cret" not in report.credentials_detail
+
+
+def test_a_credentials_failure_is_reported_not_raised(tmp_path: Path) -> None:
+    # `check()` is documented never to raise, and `doctor` renders its whole
+    # checklist only after `check()` returns.
+    runner = healthy_runner()
+    _script_env_file_missing(runner)
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+    assert report.credentials_ok is False
+    assert "no environment file found" in report.credentials_detail
+    # The other rows still arrived, which is the point of not raising.
+    assert report.ssh_ok is True
+
+
+def test_credentials_are_not_probed_when_ssh_failed(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=255, stderr="Permission denied (publickey).")
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+    assert report.credentials_ok is None
+    assert report.credentials_detail == ""
+
+
+def test_an_explicit_source_needs_no_round_trip(tmp_path: Path) -> None:
+    # `_from_config` reads the merged configuration; a `generic` project
+    # with credentials set is green without touching the network.
+    runner = healthy_runner()
+    context = make_context(
+        runner,
+        tmp_path,
+        database={
+            "remote_credentials": "explicit",
+            "credentials": {
+                "name": "app",
+                "user": "deploy",
+                "password": "s3cret",
+                "host": "db.internal",
+                "port": "3306",
+            },
+        },
+    )
+    report = PreflightOperation().check(context)
+    assert report.credentials_ok is True
+    assert "s3cret" not in report.credentials_detail
+    assert len(runner.calls) == 1  # only the connectivity probe
+
+
+def test_an_explicit_source_with_nothing_set_is_red(tmp_path: Path) -> None:
+    # The measured blind spot: `profiles/generic.yaml` defaults to
+    # `explicit` and nothing writes `database.credentials`, and with
+    # `sanitize.rules: []` no other probe ever read them.
+    context = make_context(healthy_runner(), tmp_path, database={"remote_credentials": "explicit"})
+    report = PreflightOperation().check(context)
+    assert report.credentials_ok is False
+    # `_from_config`'s own message - all five keys named, plus the remedy -
+    # is 230 characters; `_clip` (the same cap `_ssh_detail` uses) keeps the
+    # tail, not the lead-in, so the surviving text is the remedy rather than
+    # the literal string "database.credentials". It still names the fix.
+    assert "ddev-sync.local.yaml" in report.credentials_detail
+
+
 # --- Part 3: the sanitize-table probe ---------------------------------------
 
 

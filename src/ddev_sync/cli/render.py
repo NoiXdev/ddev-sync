@@ -163,11 +163,12 @@ def render_targets(collected: Mapping[str, CollectedTarget]) -> str:
 def render_doctor(report: PreflightReport, target: ResolvedTarget, *, colour: bool = False) -> str:
     """Render the preflight report as a checklist.
 
-    The sanitize-tables, web-container and ssh-agent rows are included only
-    when their `*_ok` field is not `None` - that probe genuinely was not run
-    (for sanitize: no remote database to query, or no rule requires a
-    table), and a row would otherwise show either a false OK or need a third
-    marker of its own.
+    The credentials, sanitize-tables, web-container and ssh-agent rows are
+    included only when their `*_ok` field is not `None` - that probe
+    genuinely was not run (for credentials and sanitize alike: connectivity
+    itself already failed, so there is no remote left to query; for sanitize
+    specifically, also that no rule requires a table), and a row would
+    otherwise show either a false OK or need a third marker of its own.
 
     `colour` paints the OK and FAIL markers, and nothing else, green and red.
     It is an argument rather than something this function works out so that
@@ -186,6 +187,8 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget, *, colour: bo
             f"{report.free_bytes // 1024**3} GB free",
         ),
     ]
+    if report.credentials_ok is not None:
+        checks.append(("credentials", report.credentials_ok, report.credentials_detail))
     if report.sanitize_tables_ok is not None:
         checks.append(("sanitize tables", report.sanitize_tables_ok, report.sanitize_tables_detail))
     if report.web_ok is not None:

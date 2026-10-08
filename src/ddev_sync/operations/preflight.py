@@ -73,6 +73,17 @@ class PreflightReport:
     reason on one line (see `_one_line_reason`). It defaults to empty like
     the other details, and `doctor` then falls back to the bare host, so a
     report built without it still renders a useful row.
+
+    `credentials_ok` is `None` when the probe was not meaningfully run -
+    connectivity already failed, so there is no remote to read from - and
+    `True`/`False` when it ran. Unlike `sanitize_tables_ok` there is no second
+    reason to skip it: this is the one probe that runs for *every* profile -
+    `profiles/generic.yaml` has `sanitize.rules: []`, so the table probe
+    never runs at all there, which is exactly the blind spot this field
+    closes. `credentials_detail` names the database a sync would dump -
+    built from `user`, `host`, `port` and `name` only - and deliberately
+    carries no password, because `render_doctor` writes it to the terminal
+    unscrubbed.
     """
 
     ssh_ok: bool
@@ -85,6 +96,8 @@ class PreflightReport:
     agent_ok: bool | None = None
     agent_detail: str = ""
     ssh_detail: str = ""
+    credentials_ok: bool | None = None
+    credentials_detail: str = ""
 
     @property
     def free_space_ok(self) -> bool:
@@ -132,13 +145,20 @@ class PreflightOperation:
     def check(self, context: ExecutionContext) -> PreflightReport:
         """Run the probes and report, without raising on a bad result.
 
-        Includes the sanitize-table probe (`_check_sanitize_tables`), the
-        same check `execute()` runs when sanitize is selected - `doctor`'s
-        whole job is "tell me whether a sync will work", so it must be able
-        to report the one failure mode that otherwise only surfaces by
-        actually running a sync. `execute()`'s version raises because it
-        runs mid-sync and must stop everything after it; this one must not,
-        because `check()` itself is documented never to raise.
+        Includes the credentials probe (`_check_credentials`) and the
+        sanitize-table probe (`_check_sanitize_tables`, the same check
+        `execute()` runs when sanitize is selected) - `doctor`'s whole job is
+        "tell me whether a sync will work", so it must be able to report the
+        failure modes that otherwise only surface by actually running a
+        sync. `execute()`'s sanitize-table version raises because it runs
+        mid-sync and must stop everything after it; these must not, because
+        `check()` itself is documented never to raise.
+
+        The credentials probe runs first so that, when it succeeds, the
+        memoised credentials (`ExecutionContext.cache`) are already there for
+        the table probe to reuse rather than fetching them a second time -
+        either order is correct, this one just makes the shared read obvious
+        to a reader.
 
         Also probes the two things a sync needs locally that the ssh probes
         cannot see: the web container (`_check_web_container`, one local
@@ -147,6 +167,7 @@ class PreflightOperation:
         Both previously surfaced only mid-sync, after the dump was imported.
         """
         report, stderr = self._probe(context)
+        credentials_ok, credentials_detail = self._check_credentials(context, report)
         sanitize_ok, sanitize_detail = self._check_sanitize_tables(context, report)
         web_ok, web_detail = self._check_web_container(context)
         agent_ok, agent_detail = self._check_ssh_agent()
@@ -159,6 +180,8 @@ class PreflightOperation:
             web_ok=web_ok,
             web_detail=web_detail,
             agent_ok=agent_ok,
+            credentials_ok=credentials_ok,
+            credentials_detail=credentials_detail,
             agent_detail=agent_detail,
             ssh_detail=self._ssh_detail(context, report, stderr),
         )
@@ -300,6 +323,45 @@ class PreflightOperation:
         problem = _first_missing_table_problem(context, required, tables)
         if problem is not None:
             raise OperationError(problem)
+
+    @staticmethod
+    def _check_credentials(
+        context: ExecutionContext, report: PreflightReport
+    ) -> tuple[bool | None, str]:
+        """Whether the configured credential source actually yields credentials.
+
+        The non-raising form, like `_check_sanitize_tables` below: `check()`
+        is documented never to raise, and `doctor` renders its whole
+        checklist only after `check()` returns, so an `OperationError`
+        escaping here would cost the user the ssh, deploy-path and
+        disk-space rows too.
+
+        Guarded on connectivity for the same reason the table probe is. An
+        `explicit` source could technically be judged without ssh - it reads
+        the merged configuration and makes no network call - but a green
+        credentials row under a red ssh row sends the reader at the wrong
+        problem, and diagnosis here is sequential.
+
+        This is the one probe that runs for *every* profile. The table probe
+        returns early when no rule requires a table, which left
+        `profiles/generic.yaml` - `sanitize.rules: []` and
+        `database.remote_credentials: explicit` - with a green `doctor` and a
+        sync that died at `db.dump`.
+
+        The detail is built from the non-secret fields only. `render_doctor`
+        writes it straight to the terminal and does no scrubbing of its own;
+        `context.secrets` protects the verbose command log, not this string.
+        """
+        if not (report.ssh_ok and report.remote_path_ok):
+            return None, ""
+        source = context.config("database.remote_credentials", default="env")
+        try:
+            credentials = read_remote_credentials(context)
+        except OperationError as error:
+            return False, _clip(str(error))
+        return True, (
+            f"{source}: {credentials.user}@{credentials.host}:{credentials.port}/{credentials.name}"
+        )
 
     @staticmethod
     def _check_sanitize_tables(
