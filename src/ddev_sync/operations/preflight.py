@@ -81,10 +81,17 @@ class PreflightReport:
     reason to skip it: this is the one probe that runs for *every* profile -
     `profiles/generic.yaml` has `sanitize.rules: []`, so the table probe
     never runs at all there, which is exactly the blind spot this field
-    closes. `credentials_detail` names the database a sync would dump -
-    built from `user`, `host`, `port` and `name` only - and deliberately
-    carries no password, because `render_doctor` writes it to the terminal
-    unscrubbed.
+    closes. When `credentials_ok` is `True`, `credentials_detail` names the
+    database a sync would dump - built from `user`, `host`, `port` and `name`
+    only, and deliberately carrying no password, because `render_doctor`
+    writes it to the terminal unscrubbed. That guarantee is scoped to the
+    success branch only: when `credentials_ok` is `False`, the detail is
+    whatever the credential source's own `OperationError` said
+    (`_check_credentials` below), collapsed to one line and bounded in
+    length. For a `wp_cli` source that can carry the remote's raw `stderr`
+    from a command chain that reads `DB_PASSWORD` - and nothing can redact a
+    password out of it there, because at that point in the failure it was
+    never successfully read in the first place.
     """
 
     ssh_ok: bool
@@ -357,9 +364,13 @@ class PreflightOperation:
         `database.remote_credentials: explicit` - with a green `doctor` and a
         sync that died at `db.dump`.
 
-        The detail is built from the non-secret fields only. `render_doctor`
-        writes it straight to the terminal and does no scrubbing of its own;
-        `context.secrets` protects the verbose command log, not this string.
+        On success the detail is built from the non-secret fields only.
+        `render_doctor` writes it straight to the terminal and does no
+        scrubbing of its own; `context.secrets` protects the verbose command
+        log, not this string. On failure the detail is the credential
+        source's own `OperationError`, which carries no equivalent guarantee -
+        see `PreflightReport`'s own docstring for why `_from_wp_cli`'s can
+        embed an unredactable password-bearing `stderr`.
         """
         if not (report.ssh_ok and report.remote_path_ok):
             return None, ""
@@ -367,14 +378,19 @@ class PreflightOperation:
         try:
             credentials = read_remote_credentials(context)
         except OperationError as error:
-            # Not `_clip`: that cuts from the front and keeps the tail,
-            # right for ssh's stderr (unbounded machine noise where the
-            # verdict is at the end) but wrong here - these are authored
-            # messages whose diagnosis is the first sentence, e.g.
-            # `_from_config`'s "database.credentials is missing ...". The
-            # sibling probe below (`_check_sanitize_tables`) returns
-            # `str(error)` unclipped for the same reason.
-            return False, str(error)
+            # Not `_clip`: that cuts from the front and keeps the tail, right
+            # for ssh's stderr (unbounded machine noise where the verdict is
+            # at the end) but wrong here - these are authored messages whose
+            # diagnosis is the first sentence, e.g. `_from_config`'s
+            # "database.credentials is missing ...". `_bounded_front` (below)
+            # keeps that sentence instead. Collapsed to one line first
+            # because `_from_wp_cli`'s detail can embed the remote's raw,
+            # possibly multi-line `stderr`, which would otherwise break the
+            # checklist's alignment. The sibling probe below
+            # (`_check_sanitize_tables`) returns `str(error)` unclipped and
+            # un-collapsed: its messages are single-line and authored by this
+            # module, not reflecting arbitrary remote output.
+            return False, _bounded_front(" ".join(str(error).split()))
         return True, (
             f"{source}: {credentials.user}@{credentials.host}:{credentials.port}/{credentials.name}"
         )
@@ -471,6 +487,21 @@ def _clip(text: str) -> str:
     return "..." + text[-(_MAX_DETAIL - 3) :]
 
 
+def _bounded_front(text: str) -> str:
+    """Cap a detail at `_MAX_DETAIL`, keeping the FRONT.
+
+    The mirror of `_clip` above, not a reuse of it: `_clip` cuts from the
+    front and keeps the tail, which is right for ssh's stderr (the verdict is
+    its last line) but was wrong for a credentials failure, whose diagnosis
+    is its opening sentence - reinstating `_clip` there once ate exactly that
+    sentence, which is why this is a separate function instead of a shared
+    one.
+    """
+    if len(text) <= _MAX_DETAIL:
+        return text
+    return text[: _MAX_DETAIL - 3] + "..."
+
+
 def _required_tables(rules: list[SanitizeRule]) -> list[tuple[str, str]]:
     """Every (rule name, table) pair a non-tolerated rule needs.
 
@@ -556,10 +587,10 @@ def verify_credentials(context: ExecutionContext) -> None:
 
     Public, unlike the private probes this module otherwise keeps to itself:
     `cli/init.py`'s credentials override needs to prove a candidate
-    `explicit` source really connects before writing it to disk, and reaching
-    through another module's underscore-prefixed name for that was exactly
-    what the previous task did and review flagged - this gives it a real
-    seam instead.
+    `explicit` source really connects before writing it to disk, and the
+    previous task reached through `_show_tables_result`'s underscore-prefixed
+    name to do that, which review flagged - this gives it a real seam
+    instead.
 
     Runs the same `SHOW TABLES` round trip `_remote_tables` uses to verify
     sanitize rules before a dump (`_show_tables_result`, shared by both), but

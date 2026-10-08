@@ -222,6 +222,36 @@ def test_a_credentials_failure_is_reported_not_raised(tmp_path: Path) -> None:
     assert report.ssh_ok is True
 
 
+def test_a_long_credentials_failure_is_bounded_keeping_the_front(tmp_path: Path) -> None:
+    # `_from_wp_cli`'s error embeds the remote's own `stderr` verbatim, with
+    # no bound of its own - unlike `_from_config`'s authored messages, that
+    # text is whatever the remote happened to print. The opening sentence,
+    # which names what went wrong, must survive; reinstating `_clip` here
+    # once cut it instead, keeping only the unredactable tail.
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], returncode=1, stderr="x" * 400)
+    context = make_context(runner, tmp_path, database={"remote_credentials": "wp_cli"})
+    report = PreflightOperation().check(context)
+    assert report.credentials_ok is False
+    assert report.credentials_detail.startswith("could not read wp-config on web01.example")
+    assert len(report.credentials_detail) <= 200
+    assert report.credentials_detail.endswith("...")
+    assert "database connection itself" not in report.credentials_detail
+
+
+def test_a_multiline_credentials_failure_is_collapsed_to_one_line(tmp_path: Path) -> None:
+    # A real remote failure prints several lines; `doctor`'s checklist has no
+    # room for more than one per row, and a bare newline would break its
+    # column alignment.
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], returncode=1, stderr="first line\nsecond line")
+    context = make_context(runner, tmp_path, database={"remote_credentials": "wp_cli"})
+    report = PreflightOperation().check(context)
+    assert report.credentials_ok is False
+    assert "\n" not in report.credentials_detail
+    assert "first line second line" in report.credentials_detail
+
+
 def test_credentials_are_not_probed_when_ssh_failed(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
     runner.script_prefix(["ssh"], returncode=255, stderr="Permission denied (publickey).")
