@@ -116,6 +116,31 @@ def test_every_local_files_path_is_relative(name: str, major: str | None) -> Non
         assert ".." not in str(entry["local"])
 
 
+# The one way a variant may drop a base sanitize rule: by saying so here,
+# with the reason. The assertion below used to be absolute while its own
+# message promised that "the variant needs a comment saying why" - a comment
+# no test can read. This is the mechanism that message meant, and it is a
+# registry rather than a comment so that a reviewer sees the drop in the diff
+# of a file whose whole job is to forbid it.
+#
+# Nothing data-protecting belongs in here. `local-admin` creates a local
+# administrator; it does not keep production data off a laptop, which is what
+# the guard exists for. An entry for `anonymize-*` or `reset-*` should be
+# refused on sight.
+DELIBERATE_RULE_DROPS: dict[tuple[str, str], dict[str, str]] = {
+    ("typo3", "11"): {
+        "local-admin": (
+            "Stock TYPO3 11.5 has no command that creates a user. Measured against "
+            "typo3/cms-core v11.5.41 on PHP 8.1.34: `typo3 list --raw` offers eighteen "
+            "commands and none of them creates one - core gained `backend:user:create` "
+            "in 12, and in 11 it is typo3-console's, an optional package. Inheriting "
+            "the rule aborts the sync inside sanitize, after the production database "
+            "is already imported. See profiles/typo3@11.yaml's header."
+        )
+    },
+}
+
+
 @pytest.mark.parametrize(("name", "major"), variants())
 def test_a_variant_never_silently_drops_a_sanitize_rule_the_base_declares(
     name: str, major: str | None
@@ -135,10 +160,20 @@ def test_a_variant_never_silently_drops_a_sanitize_rule_the_base_declares(
         for rule in REGISTRY.resolve(name, major).data.get("sanitize", {}).get("rules", [])
     }
     dropped = base_rules - variant_rules
-    assert dropped == set(), (
-        f"{name}@{major} drops sanitize rule(s) {sorted(dropped)} that {name} declares. "
-        "If that is deliberate, the variant needs a comment saying why - a silently "
-        "missing sanitize rule means production data stays on a laptop."
+    allowed = DELIBERATE_RULE_DROPS.get((name, major or ""), {})
+    unexplained = dropped - set(allowed)
+    assert unexplained == set(), (
+        f"{name}@{major} drops sanitize rule(s) {sorted(unexplained)} that {name} declares. "
+        "A silently missing sanitize rule means production data stays on a laptop. If the "
+        "drop is deliberate, add it to DELIBERATE_RULE_DROPS above with the reason."
+    )
+    # And the other direction, so the registry cannot outlive what it excuses:
+    # a rule the variant has again, or one renamed in the base, leaves a stale
+    # entry that would quietly excuse a future drop of the same name.
+    stale = set(allowed) - dropped
+    assert stale == set(), (
+        f"DELIBERATE_RULE_DROPS excuses {sorted(stale)} for {name}@{major}, but the variant "
+        "does not drop it any more. Remove the entry."
     )
 
 

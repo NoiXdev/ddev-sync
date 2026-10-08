@@ -62,11 +62,12 @@ def test_fileadmin_and_uploads_are_both_synced(registry: ProfileRegistry) -> Non
 
 
 def test_a_variant_with_no_name_of_its_own_still_validates(registry: ProfileRegistry) -> None:
-    """typo3@11/@12/@13 are near-empty deltas (`extends: typo3` only) with no
-    `name` key of their own - `validate_profile` runs on the merged document,
-    so the name inherited from the base satisfies it. This is the asymmetry
-    documented in the task brief: a *base* profile without a name is rejected,
-    a *variant* without one is fine because it is never validated on its own.
+    """typo3@12/@13 are near-empty deltas (`extends: typo3` only), and @11
+    carries a replaced rule list, but none of the three has a `name` key of
+    its own - `validate_profile` runs on the merged document, so the name
+    inherited from the base satisfies it. This is the asymmetry documented in
+    the task brief: a *base* profile without a name is rejected, a *variant*
+    without one is fine because it is never validated on its own.
     """
     for major in ("11", "12", "13"):
         resolved = registry.resolve("typo3", major)
@@ -76,7 +77,7 @@ def test_a_variant_with_no_name_of_its_own_still_validates(registry: ProfileRegi
 def test_the_no_variant_version_deltas_still_prevent_a_wrong_nearest_lower_match(
     registry: ProfileRegistry,
 ) -> None:
-    """Without the near-empty typo3@11/@12/@13 files, a v13 project would
+    """Without the typo3@11/@12/@13 files, a v13 project would
     resolve through nearest-lower matching to typo3@10 and silently run the
     typo3cms binary the modern CLI does not ship. Pin that it does not.
     """
@@ -84,6 +85,43 @@ def test_the_no_variant_version_deltas_still_prevent_a_wrong_nearest_lower_match
     assert resolved.label == "typo3@13"
     commands = [entry["run"] for entry in resolved.data["setup"]["commands"]]
     assert not any("typo3cms" in command for command in commands)
+
+
+# Measured against a stock typo3/cms-base-distribution:^11 install
+# (typo3/cms-core v11.5.41, PHP 8.1.34): `typo3 list --raw` offers eighteen
+# commands and not one of them creates a user. Core gained
+# `backend:user:create` in 12. Inheriting the base's `local-admin` rule
+# therefore aborted a sync inside sanitize - after the production database was
+# already imported.
+def test_typo3_11_declares_no_create_admin_rule(registry: ProfileRegistry) -> None:
+    rules = registry.resolve("typo3", "11").data["sanitize"]["rules"]
+    assert not any(rule.get("operation") == "create_admin" for rule in rules)
+
+
+# And the two it does keep from the base, which 11.5.41 really has: the rule
+# list is replaced wholesale, so every data-protecting rule had to be copied
+# across by hand and a typo would drop one silently.
+def test_typo3_11_keeps_the_rules_that_protect_production_data(
+    registry: ProfileRegistry,
+) -> None:
+    names = {rule["name"] for rule in registry.resolve("typo3", "11").data["sanitize"]["rules"]}
+    assert {
+        "anonymize-be-users",
+        "reset-be-passwords",
+        "anonymize-fe-users",
+        "reset-fe-passwords",
+    } <= names
+
+
+def test_typo3_11_still_runs_cores_commands_and_not_typo3cms(
+    registry: ProfileRegistry,
+) -> None:
+    resolved = registry.resolve("typo3", "11")
+    commands = [entry["run"] for entry in resolved.data["setup"]["commands"]]
+    assert not any("typo3cms" in command for command in commands)
+    assert any("extension:setup" in command for command in commands)
+    flush = [rule for rule in resolved.data["sanitize"]["rules"] if rule["name"] == "flush-cache"]
+    assert flush and flush[0]["command"] == "vendor/bin/typo3 cache:flush"
 
 
 @pytest.mark.parametrize("major", ["11", "12", "13"])

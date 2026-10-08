@@ -1,1 +1,72 @@
+# TYPO3 11.5 runs the base profile's commands, with one exception it cannot:
+# creating a backend administrator.
+#
+# Measured against a stock `typo3/cms-base-distribution:^11` install
+# (typo3/cms-core v11.5.41, PHP 8.1.34, 2026-10-08), `vendor/bin/typo3 list
+# --raw` offers exactly eighteen commands:
+#
+#   backend:lock  backend:resetpassword  backend:unlock  cache:flush
+#   cache:warmup  extension:list  extension:setup  help  impexp:export
+#   impexp:import  language:update  list  mailer:spool:send
+#   referenceindex:update  site:list  site:show  upgrade:list  upgrade:run
+#
+# `extension:setup` and `cache:flush` are there, so the base profile's setup
+# commands and its `flush-cache` rule are inherited unchanged. What is not
+# there - in any namespace - is a way to create a user. Core gained
+# `backend:user:create` in 12; in 11 that is typo3-console's
+# `backend:createadmin`, which is an optional Composer package the profile
+# cannot assume (typo3@9 and typo3@10 do assume it, and declare
+# `driver: console` for exactly this reason).
+#
+# So the rule list is the base's, minus `local-admin`. Inheriting it would
+# abort the sync *inside* sanitize, after the production database is already
+# imported - the worst place to stop, and the same shape as the defect the
+# typo3@13 cell found. The whole list has to be repeated because a rule can
+# only be appended or the list replaced; there is no way to remove one by
+# name.
+#
+# The consequence is deliberate and has to be said plainly: after a sync,
+# `reset-be-passwords` has made every backend password unusable and no local
+# admin was created, so nobody can log in. The way back in on 11 is
+# `vendor/bin/typo3 backend:resetpassword`, which this install does have (its
+# help calls it "Trigger a password reset for a backend user"); under DDEV the
+# mail it sends is caught by Mailpit. That path is named from the command
+# list, not from a run - it has not been exercised here. A project that has
+# typo3-console can override this rule list and use `driver: console`.
 extends: typo3
+sanitize:
+  rules:
+    mode: replace
+    values:
+      - name: clear-be-sessions
+        sql: "TRUNCATE TABLE be_sessions"
+        requires_table: be_sessions
+      - name: clear-scheduler-tasks
+        sql: "TRUNCATE TABLE tx_scheduler_task"
+        tolerate_missing_table: true
+      - name: clear-fe-sessions
+        sql: "TRUNCATE TABLE fe_sessions"
+        tolerate_missing_table: true
+      - name: clear-sys-log
+        sql: "TRUNCATE TABLE sys_log"
+        requires_table: sys_log
+      - name: anonymize-fe-users
+        sql: "UPDATE fe_users SET email = CONCAT('fe', uid, '@example.invalid')"
+        tolerate_missing_table: true
+      - name: reset-fe-passwords
+        operation: reset_passwords
+        table: fe_users
+        column: password
+        value: "$argon2i$disabled"
+        tolerate_missing_table: true
+      - name: anonymize-be-users
+        sql: "UPDATE be_users SET email = CONCAT('be', uid, '@example.invalid')"
+        requires_table: be_users
+      - name: reset-be-passwords
+        operation: reset_passwords
+        table: be_users
+        column: password
+        value: "$argon2i$disabled"
+      - name: flush-cache
+        operation: flush_cache
+        command: "vendor/bin/typo3 cache:flush"
