@@ -256,11 +256,7 @@ def test_an_explicit_source_with_nothing_set_is_red(tmp_path: Path) -> None:
     context = make_context(healthy_runner(), tmp_path, database={"remote_credentials": "explicit"})
     report = PreflightOperation().check(context)
     assert report.credentials_ok is False
-    # `_from_config`'s own message - all five keys named, plus the remedy -
-    # is 230 characters; `_clip` (the same cap `_ssh_detail` uses) keeps the
-    # tail, not the lead-in, so the surviving text is the remedy rather than
-    # the literal string "database.credentials". It still names the fix.
-    assert "ddev-sync.local.yaml" in report.credentials_detail
+    assert "database.credentials" in report.credentials_detail
 
 
 # --- Part 3: the sanitize-table probe ---------------------------------------

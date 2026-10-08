@@ -358,7 +358,14 @@ class PreflightOperation:
         try:
             credentials = read_remote_credentials(context)
         except OperationError as error:
-            return False, _clip(str(error))
+            # Not `_clip`: that cuts from the front and keeps the tail,
+            # right for ssh's stderr (unbounded machine noise where the
+            # verdict is at the end) but wrong here - these are authored
+            # messages whose diagnosis is the first sentence, e.g.
+            # `_from_config`'s "database.credentials is missing ...". The
+            # sibling probe below (`_check_sanitize_tables`) returns
+            # `str(error)` unclipped for the same reason.
+            return False, str(error)
         return True, (
             f"{source}: {credentials.user}@{credentials.host}:{credentials.port}/{credentials.name}"
         )
