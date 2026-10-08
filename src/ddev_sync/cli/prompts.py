@@ -31,6 +31,8 @@ MANUAL_SOURCE = "Enter the connection by hand"
 DEPLOYER_SOURCE = "Read it from Deployer"
 ENV_FILE_NONE = "None of these - I will create the file myself"
 REMOTE_ENV_NONE = "None of these - I will fix it another way"
+EXPLICIT_SOURCE = "Enter the database credentials by hand"
+WP_CLI_SOURCE = "Read them from WordPress on the target (wp-cli)"
 
 # What questionary accepts: True to take the answer, or the sentence to show
 # before asking again.
@@ -261,4 +263,44 @@ def ask_connection() -> dict[str, object] | None:
         if answer is None:
             return None
         answers[key] = convert(answer)
+    return answers
+
+
+def choose_credentials_source(wordpress: bool) -> str | None:
+    """Ask where the credentials should come from instead.
+
+    `wp_cli` is offered only for a WordPress profile, the way the Deployer
+    import is offered only to a project with a recipe for it: a question
+    nobody on this project could answer is a question not worth asking.
+    """
+    choices = [EXPLICIT_SOURCE]
+    if wordpress:
+        choices.insert(0, WP_CLI_SOURCE)
+    return _select("Where should the credentials come from?", choices)
+
+
+_CREDENTIAL_QUESTIONS: tuple[tuple[str, str], ...] = (
+    ("name", "Database name?"),
+    ("user", "Database user?"),
+    ("password", "Database password?"),
+    ("host", "Database host?"),
+    ("port", "Database port?"),
+)
+
+
+def ask_credentials() -> dict[str, str] | None:
+    """Ask for the five values an `explicit` source needs.
+
+    No `questionary.password` for the password field: the value is about to be
+    written to a file the user can read, the terminal is theirs, and hiding it
+    would stop them checking a typo against the one thing that matters here -
+    whether it is the password production really uses. The probe that follows
+    is the real check.
+    """
+    answers: dict[str, str] = {}
+    for key, question in _CREDENTIAL_QUESTIONS:
+        answer = _text(question, "", _required)
+        if answer is None:
+            return None
+        answers[key] = answer.strip()
     return answers

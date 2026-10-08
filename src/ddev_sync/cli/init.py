@@ -14,11 +14,15 @@ leaves the configuration file exactly as it found it. The cost is real: the
 production-URL, env-file and feature answers are asked again on the next run,
 the same as the name and connection would be.
 
-Only `.ddev/ddev-sync.yaml` is ever written. The global file is mounted
-read-only in the sidecar on purpose (`docker-compose.ddev-sync.yaml`), and the
-sidecar is where this command normally runs, so offering it would end in a
-permission error. The advice the shipped template gives about keeping hosts out
-of the repository is said after the write instead.
+The global file is never written. It is mounted read-only in the sidecar on
+purpose (`docker-compose.ddev-sync.yaml`), and the sidecar is where this
+command normally runs, so offering it would end in a permission error. The
+advice the shipped template gives about keeping hosts out of the repository
+is said after the write instead. `.ddev/ddev-sync.yaml` is the only file most
+runs touch; `_offer_override` below is the one place that also writes a local
+layer - credentials entered by hand, which do not belong in the file that is
+committed with the project - and it writes to whichever of the two local
+paths is already in use, never both (`cli/init.py::_local_path`).
 
 Every question returns `None` when there is no terminal (see `cli/prompts.py`),
 and that is turned into an error here, the moment it happens, rather than
@@ -28,6 +32,7 @@ twice, so the error names the file to edit.
 """
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -43,11 +48,14 @@ from ddev_sync.cli.prompts import (
     DEPLOYER_SOURCE,
     ENV_FILE_NONE,
     REMOTE_ENV_NONE,
+    WP_CLI_SOURCE,
     ask_connection,
+    ask_credentials,
     ask_production_url,
     ask_stage,
     ask_target_name,
     choose_connection_source,
+    choose_credentials_source,
     choose_deployer_host,
     choose_env_file,
     choose_features,
@@ -64,12 +72,17 @@ from ddev_sync.config.loader import (
     discover_config_paths,
     load_user_layers,
 )
+from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import CollectedTarget, collect_targets, resolve_target
 from ddev_sync.config.writer import WriteRefused, render_target, write_settings, write_target
 from ddev_sync.errors import ConfigError, DdevSyncError, DeployerError
-from ddev_sync.operations.base import ExecutionContext
-from ddev_sync.operations.database import DATABASE_ENV_FILE_KEY, remote_env_candidates
+from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.database import (
+    DATABASE_ENV_FILE_KEY,
+    read_remote_credentials,
+    remote_env_candidates,
+)
 from ddev_sync.operations.placeholders import (
     PRODUCTION_URL_CONFIG_KEY,
     PRODUCTION_URL_PLACEHOLDER,
@@ -577,9 +590,10 @@ def _fix_credentials(
     still cannot reach the question below; that failure has its own `doctor`
     row and its own fix.
 
-    Returns whether the question ran, not whether it wrote anything: a
-    declined fix (`REMOTE_ENV_NONE`) still spent this function's one
-    `check()` call, and `init_command` uses the return value to decide
+    Returns whether the question ran, not whether it wrote anything: a run
+    that reaches the override (`REMOTE_ENV_NONE`) and still writes nothing -
+    a declined source, or one whose probe fails - still spent this function's
+    one `check()` call, and `init_command` uses the return value to decide
     whether the context it hands `doctor` next needs re-resolving from disk -
     cheap next to the ssh round trip `check()` already paid for either way.
     """
@@ -602,11 +616,9 @@ def _offer_remote_env_file(
     so the usual cause of a red credentials row - the file is there under a
     name nobody configured - is one keystroke away rather than a guess.
 
-    `wordpress` is not read here. It is threaded through now, rather than
-    added as a fourth parameter later, so that a future override branch for a
-    source this listing cannot fix - `explicit`, or `wp_cli` on a WordPress
-    project - adds a branch to this function instead of changing its
-    signature and `_fix_credentials`'s together.
+    `wordpress` is threaded through to `_offer_override` below, which is
+    reached when naming a file does not settle it either - the last resort,
+    for setups where nothing on the remote can be read back at all.
     """
     looked_for = remote_env_candidates(execution)
     present = _remote_env_entries(execution)
@@ -614,14 +626,94 @@ def _offer_remote_env_file(
     if answer is None:
         raise _no_terminal()
     if answer == REMOTE_ENV_NONE:
-        echo(
-            "No credentials file was named. The sync will stop at the database dump, "
-            "before anything is downloaded or imported."
-        )
+        _offer_override(execution, paths, wordpress, echo)
         return
     write_settings(
         path=paths.project_config, paths=paths, settings={DATABASE_ENV_FILE_KEY: [answer]}
     )
+
+
+def _offer_override(
+    execution: ExecutionContext,
+    paths: ConfigPaths,
+    wordpress: bool,
+    echo: Callable[[str], None],
+) -> None:
+    """Offer a credentials source other than the one that failed.
+
+    Last resort by design: the credentials normally live on the target, which
+    is what the question before this one tries to reach. This is for the
+    setups where nothing on the remote can be read back - Bedrock and other
+    env-based WordPress installs among them.
+    """
+    source = choose_credentials_source(wordpress)
+    if source is None:
+        raise _no_terminal()
+    if source == WP_CLI_SOURCE:
+        # No secret: `wp_cli` reads the values from the target every run, so
+        # the setting is a plain project-file key like any other.
+        write_settings(
+            path=paths.project_config,
+            paths=paths,
+            settings={"database.remote_credentials": "wp_cli"},
+        )
+        return
+    values = ask_credentials()
+    if values is None:
+        raise _no_terminal()
+    if not _credentials_work(execution, values):
+        echo(
+            "Those credentials did not work against the target, so they were not "
+            "written. Check them and run 'ddev sync init' again."
+        )
+        return
+    write_settings(
+        path=_local_path(paths),
+        paths=paths,
+        settings={
+            "database.remote_credentials": "explicit",
+            "database.credentials": values,
+        },
+    )
+
+
+def _credentials_work(execution: ExecutionContext, values: dict[str, str]) -> bool:
+    """Whether `values` actually resolve, without writing them anywhere.
+
+    A candidate layer on top of the merged configuration, probed through the
+    same `read_remote_credentials` a real run uses, so what is proved here is
+    what a run will do. `cache` is a plain constructor-settable field on the
+    frozen `ExecutionContext` (`operations/base.py`), so `dataclasses.replace`
+    both builds the candidate and empties it in one call - emptying it
+    matters because the failure that brought the user into this branch is
+    already memoised there, and a reused cache would return that instead of
+    trying the candidate.
+    """
+    candidate = LayerDoc(
+        label="answers",
+        data={"database": {"remote_credentials": "explicit", "credentials": values}},
+    )
+    probe = replace(
+        execution,
+        merged=merge_layers([LayerDoc("merged", execution.merged.data), candidate]),
+        cache={},
+    )
+    try:
+        read_remote_credentials(probe)
+    except OperationError:
+        return False
+    return True
+
+
+def _local_path(paths: ConfigPaths) -> Path:
+    """Where the local layer should be written.
+
+    The new path, unless the old one is already in use. Writing the new file
+    beside an existing old one would produce the very state `load_user_layers`
+    refuses, and a command may not create the error it then declines to
+    resolve.
+    """
+    return paths.legacy_local_config if paths.legacy_local_config.is_file() else paths.local_config
 
 
 def _remote_env_entries(execution: ExecutionContext) -> list[str]:

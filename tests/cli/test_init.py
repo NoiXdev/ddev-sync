@@ -9,12 +9,27 @@ import yaml
 from ddev_sync.cli import init
 from ddev_sync.cli.context import build_context
 from ddev_sync.cli.main import main
-from ddev_sync.cli.prompts import DEPLOYER_SOURCE, ENV_FILE_NONE, MANUAL_SOURCE, REMOTE_ENV_NONE
+from ddev_sync.cli.prompts import (
+    DEPLOYER_SOURCE,
+    ENV_FILE_NONE,
+    EXPLICIT_SOURCE,
+    MANUAL_SOURCE,
+    REMOTE_ENV_NONE,
+    WP_CLI_SOURCE,
+)
 from ddev_sync.config.loader import GLOBAL_LABEL, PROJECT_LABEL
 from ddev_sync.config.writer import WriteRefused
 from ddev_sync.operations.base import OperationError
 from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
 from ddev_sync.transport.fake import FakeCommandRunner
+
+CREDENTIALS = {
+    "name": "acme_prod",
+    "user": "acme",
+    "password": "s3cret",
+    "host": "db.internal",
+    "port": "3306",
+}
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
 
@@ -107,6 +122,8 @@ def script(
     stage: Iterable[str | None] = ("production",),
     deployer_host: Iterable[str | None] = (),
     remote_env_file: Iterable[str | None] = (),
+    credentials_source: Iterable[str | None] = (),
+    credentials: Iterable[dict[str, str] | None] = (),
 ) -> dict[str, list[tuple[Any, ...]]]:
     """Replace every question `init` asks with scripted answers.
 
@@ -117,7 +134,8 @@ def script(
     `remote_env_file` defaults the same way - the credentials-fix question
     (task 5) only fires when `PreflightOperation.check` reports a red
     `credentials_ok` (see `stub_checks`), which none of the tests that omit it
-    ever scripts.
+    ever scripts. `credentials_source` and `credentials` (task 6) answer the
+    override behind `REMOTE_ENV_NONE`, and default empty for the same reason.
     """
     asked: dict[str, list[tuple[Any, ...]]] = {}
     for attribute, answers in (
@@ -130,6 +148,8 @@ def script(
         ("ask_stage", stage),
         ("choose_deployer_host", deployer_host),
         ("choose_remote_env_file", remote_env_file),
+        ("choose_credentials_source", credentials_source),
+        ("ask_credentials", credentials),
     ):
         asked[attribute] = []
         monkeypatch.setattr(init, attribute, _queue(answers, attribute, asked[attribute]))
@@ -155,6 +175,21 @@ def _wordpress(project: Path) -> None:
     """
     (project / ".ddev" / "config.yaml").write_text(
         "name: acme\ntype: wordpress\ndocroot: public\n", encoding="utf-8"
+    )
+
+
+def _generic(project: Path) -> None:
+    """Overwrite the project fixture's `.ddev/config.yaml` to detect as generic.
+
+    Spelled out explicitly rather than relying on the fixture's own default
+    (which already resolves here): the generic profile has no WordPress
+    `wp_cli` choice and no production-url placeholder, so it is the plain
+    case the credentials override (task 6) is tested against, and a change to
+    the fixture's default must not silently turn these tests into something
+    else.
+    """
+    (project / ".ddev" / "config.yaml").write_text(
+        "name: acme\ntype: php\ndocroot: public\n", encoding="utf-8"
     )
 
 
@@ -1534,7 +1569,10 @@ def test_init_offers_the_env_files_that_are_on_the_server(
     _runner_whose_remote_listing_is(
         monkeypatch, [".env.production", ".env.example", "composer.json"]
     )
-    script(monkeypatch)
+    # Declining the listing now falls to the credentials override (task 6),
+    # which this test has no opinion about - `None` ends it with the usual
+    # no-terminal error, which `invoke`'s unchecked return leaves harmless.
+    script(monkeypatch, credentials_source=(None,))
     # After `script`, which also patches `choose_remote_env_file` with its own
     # (here, unused) empty queue - this stand-in must be the one left in place.
     seen: dict[str, list[str]] = {}
@@ -1567,21 +1605,29 @@ def test_init_does_not_ask_when_ssh_itself_is_down(
     assert invoke(project, tmp_path) == 1
 
 
-def test_init_writes_nothing_when_no_remote_file_is_chosen(
+def test_declining_the_remote_file_falls_to_the_override(
     project: Path,
     project_file: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    # Task 6 replaces the old dead end behind `REMOTE_ENV_NONE` (formerly
+    # "I will fix it another way", which then did nothing further) with the
+    # override question itself - declining the file is no longer where this
+    # stops. A missing terminal at that question is reported the same way a
+    # `check()` that raised would be, same as the remote-env-file question
+    # itself a few lines above.
     _laravel(project)
     (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
     _runner_whose_remote_listing_is(monkeypatch, [])
-    script(monkeypatch, remote_env_file=(REMOTE_ENV_NONE,))
+    script(monkeypatch, remote_env_file=(REMOTE_ENV_NONE,), credentials_source=(None,))
     stub_checks(monkeypatch, _report(False))
-    invoke(project, tmp_path)
+    assert invoke(project, tmp_path) == 1
     assert "database" not in yaml.safe_load(project_file.read_text(encoding="utf-8"))
-    assert "before anything is downloaded or imported" in capsys.readouterr().out
+    error = capsys.readouterr().err
+    assert "terminal" in error
+    assert f"is in {PROJECT_LABEL}" in error
 
 
 def test_no_terminal_at_the_remote_env_file_question_is_folded_into_the_check_error(
@@ -1618,7 +1664,9 @@ def test_a_remote_listing_that_fails_offers_only_the_opt_out(
     runner = FakeCommandRunner()
     runner.script_prefix(["ssh"], returncode=1, stderr="no such file or directory")
     monkeypatch.setattr("ddev_sync.cli.main.SubprocessRunner", lambda: runner)
-    script(monkeypatch)
+    # `credentials_source=(None,)` for the same reason as the test above:
+    # declining falls to the override, which this test has no opinion about.
+    script(monkeypatch, credentials_source=(None,))
     # After `script`, for the same reason as the test above.
     seen: dict[str, list[str]] = {}
     monkeypatch.setattr(
@@ -1631,3 +1679,139 @@ def test_a_remote_listing_that_fails_offers_only_the_opt_out(
     stub_checks(monkeypatch, _report(False))
     invoke(project, tmp_path)
     assert seen["present"] == []
+
+
+# --- `init` falls back to credentials entered by hand (task 6) -------------
+#
+# Reached only when naming a remote file (task 5) does not settle it either -
+# `REMOTE_ENV_NONE` now leads here instead of stopping. As above, every test
+# below stubs `PreflightOperation.check` rather than driving a real probe,
+# and the one real command any of them sends through the runner is
+# `_remote_env_entries`'s `ls`.
+
+
+def _unresolvable(_context: object) -> Any:
+    """Stand in for `read_remote_credentials` when the target rejects every value.
+
+    `_from_config` (the `explicit` source) only checks that all five values
+    were supplied - it has no way to tell a wrong password from a right one
+    on its own, so standing in for "the target rejected it" means replacing
+    the read itself, not scripting a runner underneath it.
+    """
+    raise OperationError("could not connect with those credentials")
+
+
+def test_init_writes_probed_credentials_to_the_local_layer(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _generic(project)
+    _runner_whose_remote_listing_is(monkeypatch, [])
+    script(
+        monkeypatch,
+        remote_env_file=(REMOTE_ENV_NONE,),
+        credentials_source=(EXPLICIT_SOURCE,),
+        credentials=(CREDENTIALS,),
+    )
+    # Red, then green: the second report is `doctor`'s own check, standing in
+    # for the write having actually fixed the configuration.
+    stub_checks(monkeypatch, _report(False), _report(True))
+    assert invoke(project, tmp_path) == 0
+    local = project / ".ddev" / "ddev-sync" / "local.yaml"
+    loaded = yaml.safe_load(local.read_text(encoding="utf-8"))
+    assert loaded["database"]["credentials"] == CREDENTIALS
+    assert loaded["database"]["remote_credentials"] == "explicit"
+
+
+def test_credentials_that_fail_the_probe_are_never_written(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Review Focus 5. The probe runs first precisely so a wrong password
+    # cannot reach the disk.
+    _generic(project)
+    _runner_whose_remote_listing_is(monkeypatch, [])
+    monkeypatch.setattr(init, "read_remote_credentials", _unresolvable)
+    script(
+        monkeypatch,
+        remote_env_file=(REMOTE_ENV_NONE,),
+        credentials_source=(EXPLICIT_SOURCE,),
+        credentials=(CREDENTIALS,),
+    )
+    stub_checks(monkeypatch, _report(False), _report(True))
+    invoke(project, tmp_path)
+    assert not (project / ".ddev" / "ddev-sync" / "local.yaml").exists()
+    assert "were not written" in capsys.readouterr().out
+
+
+def test_init_appends_to_the_old_local_file_when_it_exists(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Review Focus 4: writing the new path beside an existing old one would
+    # create the both-exist state the loader refuses.
+    _generic(project)
+    legacy = project / ".ddev" / "ddev-sync.local.yaml"
+    legacy.write_text("version: 1\ndefaults:\n  keep_dump: true\n", encoding="utf-8")
+    _runner_whose_remote_listing_is(monkeypatch, [])
+    script(
+        monkeypatch,
+        remote_env_file=(REMOTE_ENV_NONE,),
+        credentials_source=(EXPLICIT_SOURCE,),
+        credentials=(CREDENTIALS,),
+    )
+    stub_checks(monkeypatch, _report(False), _report(True))
+    assert invoke(project, tmp_path) == 0
+    assert not (project / ".ddev" / "ddev-sync" / "local.yaml").exists()
+    loaded = yaml.safe_load(legacy.read_text(encoding="utf-8"))
+    assert loaded["database"]["credentials"] == CREDENTIALS
+    assert loaded["defaults"]["keep_dump"] is True
+
+
+def test_choosing_wp_cli_writes_the_project_file_not_the_local_one(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `wp_cli` reads the values from the remote, so there is no secret to keep.
+    _wordpress(project)
+    _runner_whose_remote_listing_is(monkeypatch, [])
+    script(
+        monkeypatch,
+        production_url=("https://acme.example",),
+        remote_env_file=(REMOTE_ENV_NONE,),
+        credentials_source=(WP_CLI_SOURCE,),
+    )
+    stub_checks(monkeypatch, _report(False), _report(True))
+    assert invoke(project, tmp_path) == 0
+    loaded = yaml.safe_load(project_file.read_text(encoding="utf-8"))
+    assert loaded["database"]["remote_credentials"] == "wp_cli"
+    assert not (project / ".ddev" / "ddev-sync" / "local.yaml").exists()
+
+
+def test_no_terminal_while_entering_credentials_by_hand_writes_nothing(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _generic(project)
+    _runner_whose_remote_listing_is(monkeypatch, [])
+    script(
+        monkeypatch,
+        remote_env_file=(REMOTE_ENV_NONE,),
+        credentials_source=(EXPLICIT_SOURCE,),
+        credentials=(None,),
+    )
+    stub_checks(monkeypatch, _report(False))
+    assert invoke(project, tmp_path) == 1
+    assert not (project / ".ddev" / "ddev-sync" / "local.yaml").exists()
+    error = capsys.readouterr().err
+    assert "terminal" in error
+    assert f"is in {PROJECT_LABEL}" in error

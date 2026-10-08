@@ -605,3 +605,46 @@ def test_choose_features_passes_a_missing_terminal_through(
 ) -> None:
     monkeypatch.setattr(prompts, "_checkbox", lambda _q, _c, _d: None)
     assert prompts.choose_features({"horizon": "detected: x"}) is None
+
+
+def test_wp_cli_is_offered_only_for_wordpress(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        prompts, "_select", lambda question, choices: seen.update(c=choices) or choices[0]
+    )
+    prompts.choose_credentials_source(wordpress=True)
+    assert prompts.WP_CLI_SOURCE in seen["c"]
+    prompts.choose_credentials_source(wordpress=False)
+    assert prompts.WP_CLI_SOURCE not in seen["c"]
+
+
+def test_the_credentials_source_question_passes_a_missing_terminal_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompts, "_select", lambda _q, _c: None)
+    assert prompts.choose_credentials_source(wordpress=True) is None
+
+
+def test_the_credentials_question_asks_for_all_five_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    answers = iter(["app", "deploy", "s3cret", "db.internal", "3306"])
+    monkeypatch.setattr(prompts, "_text", lambda *a, **k: next(answers))
+    assert prompts.ask_credentials() == {
+        "name": "app",
+        "user": "deploy",
+        "password": "s3cret",
+        "host": "db.internal",
+        "port": "3306",
+    }
+
+
+def test_ask_credentials_stops_at_the_first_missing_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked = _fake_text_answers(
+        monkeypatch,
+        {"Database name?": "app", "Database user?": None},
+    )
+    assert prompts.ask_credentials() is None
+    assert [question for question, _default in asked] == ["Database name?", "Database user?"]
