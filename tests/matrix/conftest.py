@@ -11,7 +11,7 @@ import os
 import shutil
 import stat
 import subprocess
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -20,7 +20,31 @@ from tests.matrix.cells import Cell
 from tests.matrix.paths import KEYS_DIR, WORK_ROOT, cell_dir, remote_dir, work_dir
 from tests.matrix.stack import Stack, up
 
-MATRIX_IMAGE = os.environ.get("DDEV_SYNC_MATRIX_IMAGE", "ddev-sync:dev")
+DEFAULT_MATRIX_IMAGE = "ddev-sync:dev"
+# The repository root, which is also the build context: this file is
+# <root>/tests/matrix/conftest.py.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def image_under_test(environ: Mapping[str, str]) -> tuple[str, bool]:
+    """The image to run, and whether this harness has to build it first.
+
+    Split out as a pure function so the decision is testable without Docker:
+    the fixture below is session-scoped and runs a build, which is exactly the
+    shape a test cannot reach.
+
+    An empty value counts as unset. `DDEV_SYNC_MATRIX_IMAGE=` in a shell, or
+    an `env:` block whose expression resolved to nothing, leaves the name
+    present and empty; honouring that literally would run `docker build -t ""`
+    and fail a long way from the cause.
+    """
+    configured = environ.get("DDEV_SYNC_MATRIX_IMAGE")
+    if configured:
+        return configured, False
+    return DEFAULT_MATRIX_IMAGE, True
+
+
+MATRIX_IMAGE, _MUST_BUILD_IMAGE = image_under_test(os.environ)
 
 
 @pytest.fixture(scope="session")
@@ -172,7 +196,12 @@ class Stacks:
     with the same error instead of being installed again for every test.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, image: str) -> None:
+        # Taken rather than read from the module global, so that the fixture
+        # which may have just *built* this image is the thing that names it.
+        # Read globally, the build would be a side effect a reader has to go
+        # looking for.
+        self._image = image
         self._running: dict[str, Stack] = {}
         self._failed: dict[str, Exception] = {}
 
@@ -194,7 +223,7 @@ class Stacks:
             _remove_tree(project)
         project.mkdir(parents=True)
         remote_dir(cell.name).mkdir(parents=True, exist_ok=True)
-        stack = up(cell, MATRIX_IMAGE)
+        stack = up(cell, self._image)
         # Registered before the install, so a failing install is still torn down.
         self._running[cell.name] = stack
         _install(stack, cell)
@@ -219,12 +248,43 @@ class Stacks:
 
 
 @pytest.fixture(scope="session")
-def stacks(ssh_key: Path) -> Iterator[Stacks]:
+def matrix_image() -> str:
+    """Build the image under test from this working tree, unless one was given.
+
+    The matrix always runs the *image*, never the checkout. An image older than
+    the tree therefore verifies code nobody is changing - and reports green
+    while doing it, which is the failure mode worth spending a build on: a
+    stale local `ddev-sync:dev` once made a profile change look like a product
+    defect, because the image still carried the profile from before it.
+
+    Building rather than detecting staleness is deliberate. A check could
+    compare `profiles/` and `features/`, which the image bundles as plain
+    files, but `src/` arrives as a built wheel and is not comparable that way -
+    so the half that a check would miss is the half most changes live in.
+    Layer caching makes the common case a few seconds.
+
+    An explicitly set `DDEV_SYNC_MATRIX_IMAGE` is trusted and never rebuilt:
+    that is CI's path, where `.github/workflows/matrix.yaml` builds the
+    candidate itself and hands it over, and where rebuilding would verify a
+    different artifact than the release pipeline is about to publish.
+    """
+    if _MUST_BUILD_IMAGE:
+        subprocess.run(
+            ["docker", "build", "--tag", MATRIX_IMAGE, str(REPO_ROOT)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    return MATRIX_IMAGE
+
+
+@pytest.fixture(scope="session")
+def stacks(ssh_key: Path, matrix_image: str) -> Iterator[Stacks]:
     """The session's stacks. Session-scoped on purpose: `composer
     create-project` dominates the runtime, so a per-test install would make the
     matrix unaffordable."""
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
-    registry = Stacks()
+    registry = Stacks(matrix_image)
     try:
         yield registry
     finally:

@@ -12,6 +12,7 @@ import pytest
 
 from ddev_sync.operations.catalog import LOCAL_ADMIN_PASSWORD
 from tests.matrix.cells import CELLS, Cell
+from tests.matrix.conftest import DEFAULT_MATRIX_IMAGE, image_under_test
 from tests.matrix.paths import cell_dir, remote_dir, work_dir
 from tests.matrix.stack import Stack
 
@@ -557,3 +558,30 @@ def test_the_drupal_admin_holds_the_administrator_role(stack: Stack, cell: Cell)
     assert again.returncode == 0, f"stdout:\n{again.stdout}\n\nstderr:\n{again.stderr}"
     assert "already exists" in again.stdout, again.stdout
     assert stack.sql(roles) == "administrator", "an existing account was not given the role again"
+
+
+def test_an_unset_image_is_built_from_this_tree() -> None:
+    # The local default. The matrix runs the *image*, never the checkout, so an
+    # image older than the tree tests code nobody is changing - and reports
+    # green while doing it, which is worse than reporting red.
+    image, build = image_under_test({})
+    assert image == DEFAULT_MATRIX_IMAGE
+    assert build is True
+
+
+def test_an_image_passed_in_is_trusted_and_never_rebuilt() -> None:
+    # CI's path: `.github/workflows/matrix.yaml` builds the candidate itself
+    # and hands it over. Rebuilding here would throw that artifact away and
+    # verify a different one than the release pipeline is about to publish.
+    image, build = image_under_test({"DDEV_SYNC_MATRIX_IMAGE": "ghcr.io/x/ddev-sync:pr-42"})
+    assert image == "ghcr.io/x/ddev-sync:pr-42"
+    assert build is False
+
+
+def test_an_empty_image_variable_is_treated_as_unset() -> None:
+    # `DDEV_SYNC_MATRIX_IMAGE=` in a shell or a workflow's `env:` block sets
+    # the name to the empty string rather than removing it; running `docker
+    # build -t ''` or `docker run ''` would fail far from the cause.
+    image, build = image_under_test({"DDEV_SYNC_MATRIX_IMAGE": ""})
+    assert image == DEFAULT_MATRIX_IMAGE
+    assert build is True
