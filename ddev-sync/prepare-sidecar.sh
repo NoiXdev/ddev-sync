@@ -45,6 +45,20 @@ new_tmp() {
   tmp_files+=("${tmp}")
 }
 
+# announce_pull IMAGE MESSAGE: say a pull is coming, but only when one is.
+#
+# Both calls below read something out of a container, and a pull's own progress
+# goes into the captured error file - so on the first use the developer would
+# otherwise sit through a multi-hundred-megabyte download with nothing on
+# screen. Printed unconditionally, which is how these started, they were two
+# lines of noise on every single start for a pull that happens once. `docker
+# image inspect` asks the local daemon whether the image is already there and
+# nothing else; measured at 30-50 ms, against the 0.3-0.4 s each of the reads
+# below costs anyway.
+announce_pull() {
+  docker image inspect "$1" >/dev/null 2>&1 || echo "ddev-sync: $2" >&2
+}
+
 # fail MESSAGE [FILE [HINT]]: the message, FILE's content indented under it,
 # and a hint saying what to do about it. The message is printed before DDEV
 # carries on: a failed pre-start hook does not abort the start (that is
@@ -73,7 +87,8 @@ err_file="${tmp}"
 # an empty directory, and `stat` would then report a plausible but bogus gid.
 # ddev/ddev-utilities is the image DDEV itself uses for one-off commands, so it
 # is normally present already.
-echo "ddev-sync: reading the docker socket's group (pulls ddev/ddev-utilities on first use)..." >&2
+announce_pull ddev/ddev-utilities \
+  "pulling ddev/ddev-utilities to read the docker socket's group; this happens once..."
 gid="$(docker run --rm \
   --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
   ddev/ddev-utilities stat -c '%g' /var/run/docker.sock 2>"${err_file}")" \
@@ -233,8 +248,9 @@ passwd_tmp="${tmp}"
 new_tmp "${state_dir}/passwd"
 base_tmp="${tmp}"
 # Pulling can take a while and the pull's own progress goes into the captured
-# error file, so say what is happening before it starts.
-echo "ddev-sync: reading the user database of ${image} (pulls the image on first use)..." >&2
+# error file, so say what is happening before it starts - and only then.
+announce_pull "${image}" \
+  "pulling ${image} to read its user database; this happens once per image..."
 docker run --rm --entrypoint cat "${image}" /etc/passwd > "${passwd_tmp}" 2>"${err_file}" \
   || fail "could not read /etc/passwd from the image ${image}. Docker said:" "${err_file}" \
     "The project cannot start without it. Until the image is published, build it from the ddev-sync checkout (docker build -t ddev-sync:dev .) and put DDEV_SYNC_IMAGE=ddev-sync and DDEV_SYNC_VERSION=dev in .ddev/.env."
