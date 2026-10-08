@@ -3,7 +3,12 @@ name: CI
 on:
   # Every branch, not just main: this repository merges fast-forward without
   # pull requests, so a main-only push trigger would run only after the merge.
+  # The filter is what keeps a bare `push:` from firing on tags as well, as
+  # in addon.yaml: a release tag has nothing to say about the gates that its
+  # branch did not already say, and running them again builds the image for
+  # nothing.
   push:
+    branches: ["**"]
   pull_request:
 
 permissions:
