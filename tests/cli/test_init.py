@@ -1696,6 +1696,7 @@ def test_init_writes_probed_credentials_to_the_local_layer(
     project: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     _generic(project)
     _runner_whose_remote_listing_is(monkeypatch, [])
@@ -1713,6 +1714,9 @@ def test_init_writes_probed_credentials_to_the_local_layer(
     loaded = yaml.safe_load(local.read_text(encoding="utf-8"))
     assert loaded["database"]["credentials"] == CREDENTIALS
     assert loaded["database"]["remote_credentials"] == "explicit"
+    # The new path is already the one the add-on ignores - nothing to warn
+    # about, and a project here has nothing to act on.
+    assert "gitignore" not in capsys.readouterr().out
 
 
 def test_credentials_that_fail_the_probe_are_never_written(
@@ -1746,6 +1750,7 @@ def test_init_appends_to_the_old_local_file_when_it_exists(
     project: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Review Focus 4: writing the new path beside an existing old one would
     # create the both-exist state the loader refuses.
@@ -1765,6 +1770,13 @@ def test_init_appends_to_the_old_local_file_when_it_exists(
     loaded = yaml.safe_load(legacy.read_text(encoding="utf-8"))
     assert loaded["database"]["credentials"] == CREDENTIALS
     assert loaded["defaults"]["keep_dump"] is True
+    # The acute case this fix round closes: a secret just landed on the one
+    # path the add-on's shipped .gitignore does not cover, in silence before
+    # this, and `init` is the only place that knows it just happened.
+    output = capsys.readouterr().out
+    assert ".ddev/ddev-sync.local.yaml" in output
+    assert ".ddev/ddev-sync/local.yaml" in output
+    assert "gitignore" in output
 
 
 def test_choosing_wp_cli_writes_the_project_file_not_the_local_one(

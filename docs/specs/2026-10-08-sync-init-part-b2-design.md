@@ -303,16 +303,29 @@ fixing it is not this task's to do.
 - **"`doctor` says it should move" and "`init` ... says the file should
   move" were asserted three times — twice in "The local layer moves," once
   in "Out of scope" — and implemented nowhere.** No field on `PreflightReport`
-  carries such a verdict, `render_doctor` (`cli/render.py`) has no row for
-  it, and `cli/init.py`'s `_local_path`/`_offer_override` write silently to
-  whichever local file is already in use without printing anything about the
+  carried such a verdict, `render_doctor` (`cli/render.py`) had no row for
+  it, and `cli/init.py`'s `_local_path`/`_offer_override` wrote silently to
+  whichever local file was already in use without printing anything about the
   other one. A search of the whole source tree and test suite for "should
-  move" turns up only this document, the plan it was drafted from, and the
+  move" turned up only this document, the plan it was drafted from, and the
   task brief that quoted both — never an implementation, never a test. All
-  three sentences are corrected above, in place, to say what the code
-  actually does: the old path keeps working, and only the README and the
-  installed template tell the user it should move. Neither `init` nor
-  `doctor` does.
+  three sentences were corrected above, in place, to say what the code
+  actually did at the time: the old path keeps working, and only the README
+  and the installed template tell the user it should move.
+
+  **Implemented since — in `init`, not `doctor`.** The acute case surfaced
+  once the local layer actually moved: a project on the old path has its
+  database password written to the one file the add-on's shipped
+  `.gitignore` does not cover, in silence. `doctor_command` receives a
+  `RunContext` with no `ConfigPaths`, so giving it one just to print this
+  message would be a new seam for a warning that matters most at the moment
+  of writing, not at the next check — which is where `init` already is.
+  `_offer_override` (`cli/init.py`) now `echo`s a line, naming both
+  `LOCAL_LABEL` and `LEGACY_LOCAL_LABEL` (`config/loader.py`), after a
+  successful write, exactly when `_local_path` resolved to the legacy file —
+  a project already on the new path sees nothing, because it has nothing to
+  act on. `doctor` still says nothing about it, and under this design never
+  will.
 
 - **Decision 4 ("`init` writes the credentials only after probing them. A
   password that does not work never reaches the disk.") was false as first

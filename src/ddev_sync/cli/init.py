@@ -67,6 +67,8 @@ from ddev_sync.cli.render import describe_endpoint
 from ddev_sync.config.detect import WORDPRESS_PROFILE
 from ddev_sync.config.loader import (
     GLOBAL_LABEL,
+    LEGACY_LOCAL_LABEL,
+    LOCAL_LABEL,
     PROJECT_LABEL,
     ConfigPaths,
     discover_config_paths,
@@ -663,14 +665,27 @@ def _offer_override(
             "written. Check them and run 'ddev sync init' again."
         )
         return
+    local_path = _local_path(paths)
     write_settings(
-        path=_local_path(paths),
+        path=local_path,
         paths=paths,
         settings={
             "database.remote_credentials": "explicit",
             "database.credentials": values,
         },
     )
+    if local_path == paths.legacy_local_config:
+        # The one path the add-on's shipped `.gitignore` does not cover -
+        # covering it is why the layer moved to `LOCAL_LABEL` in the first
+        # place (`config/loader.py`). Said only here, and only now: a project
+        # on the new path has nothing to act on, and the risk this names only
+        # exists once the secret has actually landed on the old one.
+        echo(
+            f"The credentials were written to {LEGACY_LOCAL_LABEL}. The add-on's shipped "
+            f".gitignore does not cover that path - it covers {LOCAL_LABEL} instead - so "
+            "this file is not ignored and the password it holds would be committed with "
+            f"the project. Move it to {LOCAL_LABEL}."
+        )
 
 
 def _credentials_work(execution: ExecutionContext, values: dict[str, str]) -> bool:
