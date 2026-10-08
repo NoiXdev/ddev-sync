@@ -10,7 +10,12 @@ from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations import preflight
 from ddev_sync.operations.base import ExecutionContext, OperationError
-from ddev_sync.operations.preflight import MIN_FREE_BYTES, PreflightOperation, PreflightReport
+from ddev_sync.operations.preflight import (
+    MIN_FREE_BYTES,
+    PreflightOperation,
+    PreflightReport,
+    verify_credentials,
+)
 from ddev_sync.transport.container import web_command
 from ddev_sync.transport.fake import FakeCommandRunner
 from ddev_sync.transport.runner import CommandResult
@@ -538,6 +543,78 @@ def test_the_remote_credentials_password_is_redacted_from_a_table_listing_failur
     message = str(caught.value)
     assert "hunter2" not in message
     assert "REDACTED" in message
+
+
+# --- `verify_credentials`: the public seam `cli/init.py` probes a candidate
+# `explicit` source through (fix round 1) ------------------------------------
+#
+# Distinct from the sanitize-table probe above even though both run `SHOW
+# TABLES` over the same connection: this one exists to catch a password that
+# merely looks complete, not to check a table exists.
+
+
+def _explicit_context(
+    runner: FakeCommandRunner, root: Path, password: str = "p"
+) -> ExecutionContext:
+    return make_context(
+        runner,
+        root,
+        database={
+            "remote_credentials": "explicit",
+            "credentials": {
+                "name": "db",
+                "user": "u",
+                "password": password,
+                "host": "h",
+                "port": "3306",
+            },
+        },
+    )
+
+
+def test_verify_credentials_passes_when_the_remote_accepts_them(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout="users\n")
+    verify_credentials(_explicit_context(runner, tmp_path))  # must not raise
+    assert len(runner.calls) == 1
+
+
+def test_verify_credentials_raises_when_the_remote_rejects_them(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=1, stderr="Access denied for user 'u'@'h'")
+    with pytest.raises(OperationError) as caught:
+        verify_credentials(_explicit_context(runner, tmp_path))
+    assert "Access denied" in str(caught.value)
+
+
+def test_verify_credentials_redacts_the_password_from_a_failure(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=1, stderr="auth failed with secret hunter2")
+    with pytest.raises(OperationError) as caught:
+        verify_credentials(_explicit_context(runner, tmp_path, password="hunter2"))
+    message = str(caught.value)
+    assert "hunter2" not in message
+    assert "REDACTED" in message
+
+
+def test_verify_credentials_raises_before_any_round_trip_when_a_value_is_missing(
+    tmp_path: Path,
+) -> None:
+    # `_from_config` (the `explicit` source) refuses an empty value on its
+    # own, with no network involved - `verify_credentials` must not mask that
+    # earlier, cheaper failure behind a round trip that was never going to run.
+    runner = FakeCommandRunner()
+    context = make_context(
+        runner,
+        tmp_path,
+        database={
+            "remote_credentials": "explicit",
+            "credentials": {"name": "db", "user": "", "password": "p", "host": "h", "port": "3306"},
+        },
+    )
+    with pytest.raises(OperationError):
+        verify_credentials(context)
+    assert runner.calls == []
 
 
 # --- `doctor` must say *why* the ssh check failed --------------------------

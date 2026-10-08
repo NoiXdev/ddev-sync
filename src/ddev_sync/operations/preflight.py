@@ -36,6 +36,7 @@ from ddev_sync.operations.database import RemoteCredentials, read_remote_credent
 from ddev_sync.operations.files import validate_path_pairs
 from ddev_sync.operations.sanitize import SanitizeRule, parse_rules
 from ddev_sync.transport.container import web_command
+from ddev_sync.transport.runner import CommandResult
 from ddev_sync.transport.ssh import ssh_command
 
 MIN_FREE_BYTES = 2 * 1024**3
@@ -550,15 +551,54 @@ def _first_missing_table_problem(
     return None
 
 
+def verify_credentials(context: ExecutionContext) -> None:
+    """Prove that the credentials `context` resolves actually authenticate.
+
+    Public, unlike the private probes this module otherwise keeps to itself:
+    `cli/init.py`'s credentials override needs to prove a candidate
+    `explicit` source really connects before writing it to disk, and reaching
+    through another module's underscore-prefixed name for that was exactly
+    what the previous task did and review flagged - this gives it a real
+    seam instead.
+
+    Runs the same `SHOW TABLES` round trip `_remote_tables` uses to verify
+    sanitize rules before a dump (`_show_tables_result`, shared by both), but
+    this is not that check: it exists to catch a complete-looking but wrong
+    password, which `read_remote_credentials` itself cannot - the `explicit`
+    source only checks that five values were supplied, not that the remote
+    accepts them. A password typed by hand is far more likely to be a typo
+    than an empty field, which is the one failure that check already catches.
+    """
+    credentials, result = _show_tables_result(context)
+    if not result.ok:
+        raise OperationError(
+            f"the database credentials did not authenticate on {context.target.host}: "
+            f"{redact(result.stderr, credentials.password).strip()}"
+        )
+
+
 def _remote_tables(context: ExecutionContext) -> set[str]:
-    credentials = read_remote_credentials(context)
-    result = context.runner.run(ssh_command(context.target, _show_tables_argv(credentials)))
+    credentials, result = _show_tables_result(context)
     if not result.ok:
         raise OperationError(
             "could not list tables on the remote database to verify sanitize rules "
             f"before the dump: {redact(result.stderr, credentials.password).strip()}"
         )
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _show_tables_result(context: ExecutionContext) -> tuple[RemoteCredentials, CommandResult]:
+    """Run `SHOW TABLES` over the credentials `context` resolves, raw.
+
+    Shared by `_remote_tables` (which reads the table names back) and
+    `verify_credentials` (which only cares whether the command succeeded at
+    all) - one ssh round trip, one place that builds the argv and runs it,
+    so the two callers can never quietly disagree about how the probe itself
+    is made.
+    """
+    credentials = read_remote_credentials(context)
+    result = context.runner.run(ssh_command(context.target, _show_tables_argv(credentials)))
+    return credentials, result
 
 
 def _show_tables_argv(credentials: RemoteCredentials) -> list[str]:

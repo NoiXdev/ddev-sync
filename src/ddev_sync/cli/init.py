@@ -78,17 +78,13 @@ from ddev_sync.config.targets import CollectedTarget, collect_targets, resolve_t
 from ddev_sync.config.writer import WriteRefused, render_target, write_settings, write_target
 from ddev_sync.errors import ConfigError, DdevSyncError, DeployerError
 from ddev_sync.operations.base import ExecutionContext, OperationError
-from ddev_sync.operations.database import (
-    DATABASE_ENV_FILE_KEY,
-    read_remote_credentials,
-    remote_env_candidates,
-)
+from ddev_sync.operations.database import DATABASE_ENV_FILE_KEY, remote_env_candidates
 from ddev_sync.operations.placeholders import (
     PRODUCTION_URL_CONFIG_KEY,
     PRODUCTION_URL_PLACEHOLDER,
     validate_production_url,
 )
-from ddev_sync.operations.preflight import PreflightOperation
+from ddev_sync.operations.preflight import PreflightOperation, verify_credentials
 from ddev_sync.transport.deployer import ProjectDeployer, make_deployer_resolver
 from ddev_sync.transport.runner import CommandRunner
 from ddev_sync.transport.ssh import ssh_command
@@ -678,16 +674,24 @@ def _offer_override(
 
 
 def _credentials_work(execution: ExecutionContext, values: dict[str, str]) -> bool:
-    """Whether `values` actually resolve, without writing them anywhere.
+    """Whether `values` actually authenticate, without writing them anywhere.
 
-    A candidate layer on top of the merged configuration, probed through the
-    same `read_remote_credentials` a real run uses, so what is proved here is
-    what a run will do. `cache` is a plain constructor-settable field on the
-    frozen `ExecutionContext` (`operations/base.py`), so `dataclasses.replace`
-    both builds the candidate and empties it in one call - emptying it
-    matters because the failure that brought the user into this branch is
-    already memoised there, and a reused cache would return that instead of
-    trying the candidate.
+    A candidate layer on top of the merged configuration, probed through
+    `verify_credentials` - the same `SHOW TABLES` round trip a real sanitize
+    run would make - so what is proved here is that the remote actually
+    accepts these values, not merely that five fields were typed in. `cache`
+    is a plain constructor-settable field on the frozen `ExecutionContext`
+    (`operations/base.py`), so `dataclasses.replace` both builds the
+    candidate and empties it in one call - emptying it matters because the
+    failure that brought the user into this branch is already memoised
+    there, and a reused cache would return that instead of trying the
+    candidate.
+
+    `verify_credentials` itself calls `read_remote_credentials` first, so a
+    value left empty (the one thing `_from_config` alone can catch) and a
+    complete-but-wrong password (which it cannot) both surface as the one
+    `OperationError` caught here - there is no reason for this function to
+    call `read_remote_credentials` a second time to learn the same thing.
     """
     candidate = LayerDoc(
         label="answers",
@@ -699,7 +703,7 @@ def _credentials_work(execution: ExecutionContext, values: dict[str, str]) -> bo
         cache={},
     )
     try:
-        read_remote_credentials(probe)
+        verify_credentials(probe)
     except OperationError:
         return False
     return True

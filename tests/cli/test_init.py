@@ -1684,21 +1684,12 @@ def test_a_remote_listing_that_fails_offers_only_the_opt_out(
 # --- `init` falls back to credentials entered by hand (task 6) -------------
 #
 # Reached only when naming a remote file (task 5) does not settle it either -
-# `REMOTE_ENV_NONE` now leads here instead of stopping. As above, every test
-# below stubs `PreflightOperation.check` rather than driving a real probe,
-# and the one real command any of them sends through the runner is
-# `_remote_env_entries`'s `ls`.
-
-
-def _unresolvable(_context: object) -> Any:
-    """Stand in for `read_remote_credentials` when the target rejects every value.
-
-    `_from_config` (the `explicit` source) only checks that all five values
-    were supplied - it has no way to tell a wrong password from a right one
-    on its own, so standing in for "the target rejected it" means replacing
-    the read itself, not scripting a runner underneath it.
-    """
-    raise OperationError("could not connect with those credentials")
+# `REMOTE_ENV_NONE` now leads here instead of stopping. `PreflightOperation.
+# check` is stubbed, as above, but `_credentials_work`'s own probe
+# (`verify_credentials`, `operations/preflight.py`) is not: it is the real
+# `SHOW TABLES` round trip over the fake runner, same as `_remote_env_entries`'s
+# `ls` - the one test below whose candidate must fail scripts that round trip
+# to fail, rather than standing in for the function that runs it.
 
 
 def test_init_writes_probed_credentials_to_the_local_layer(
@@ -1731,10 +1722,14 @@ def test_credentials_that_fail_the_probe_are_never_written(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Review Focus 5. The probe runs first precisely so a wrong password
-    # cannot reach the disk.
+    # cannot reach the disk. Driven through the fake runner - the candidate's
+    # `SHOW TABLES` round trip (`verify_credentials`) really fails here, so
+    # this proves the feature itself, not that some stand-in was called.
     _generic(project)
-    _runner_whose_remote_listing_is(monkeypatch, [])
-    monkeypatch.setattr(init, "read_remote_credentials", _unresolvable)
+    runner = _runner_whose_remote_listing_is(monkeypatch, [])
+    runner.script_prefix(
+        ["ssh"], returncode=1, stderr="ERROR 1045 (28000): Access denied for user 'acme'@'host'"
+    )
     script(
         monkeypatch,
         remote_env_file=(REMOTE_ENV_NONE,),
