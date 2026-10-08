@@ -105,6 +105,20 @@ def test_database_remote_docroot_is_rejected_and_names_layout() -> None:
     assert "layout" in message
 
 
+def test_a_non_list_env_file_is_rejected() -> None:
+    with pytest.raises(ProfileError) as error:
+        validate_profile({"name": "x", "database": {"env_file": 7}})
+    assert "database.env_file" in str(error.value)
+
+
+def test_a_string_env_file_is_accepted() -> None:
+    validate_profile({"name": "x", "database": {"env_file": ".env"}})
+
+
+def test_a_list_env_file_is_accepted() -> None:
+    validate_profile({"name": "x", "database": {"env_file": [".env.local", ".env"]}})
+
+
 def test_files_must_be_a_mapping() -> None:
     with pytest.raises(ProfileError) as caught:
         validate_profile({**MINIMAL, "files": "nope"})

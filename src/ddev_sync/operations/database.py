@@ -30,6 +30,10 @@ MYSQLDUMP_FLAGS: tuple[str, ...] = (
 CREDENTIAL_SOURCES = ("env", "explicit", "wp_cli")
 _REQUIRED = ("name", "user", "password", "host", "port")
 
+DATABASE_ENV_FILE_KEY = "database.env_file"
+
+_DEFAULT_ENV_FILES = (".env.local", ".env")
+
 
 @dataclass(frozen=True)
 class RemoteCredentials:
@@ -109,7 +113,7 @@ def _from_config(context: ExecutionContext) -> RemoteCredentials:
 
 
 def _from_remote_env(context: ExecutionContext) -> RemoteCredentials:
-    candidates = _env_candidates(context)
+    candidates = remote_env_candidates(context)
     path, contents = _fetch_first_env_file(context, candidates)
     parsed = _parse_env(contents)
     mapping = {
@@ -128,14 +132,31 @@ def _default_env_key(field_name: str) -> str:
     return f"DATABASE_{field_name.upper()}"
 
 
-def _env_candidates(context: ExecutionContext) -> list[str]:
-    node = context.merged.data.get("env", {})
-    configured = node.get("file") if isinstance(node, dict) else None
-    if isinstance(configured, str):
-        return [configured]
-    if isinstance(configured, list):
-        return [str(entry) for entry in configured]
-    return [".env.local", ".env"]
+def remote_env_candidates(context: ExecutionContext) -> list[str]:
+    """The file names to look for on the remote, strongest source first.
+
+    `database.env_file` names the file *on the target*; `env.file` is the
+    local project's own, and has historically meant both - this function and
+    `operations/env.py::_find_env_file` read the same key, one joining it onto
+    `ResolvedTarget.data_root` and the other matching it against the project
+    root's entries. The deployer layout's directory difference is handled by
+    `data_root`; the filename was not, and a project whose local and remote
+    files are named differently had no way to say so.
+
+    The fallback to `env.file` is deliberate rather than tidy: a project that
+    set it in order to steer *this* lookup keeps working untouched. Only a
+    project that needs the two to differ has to learn the new key.
+
+    Public, unlike the `_`-prefixed function it replaces, because
+    `cli/init.py` needs to tell the user which names were looked for.
+    """
+    for key in (DATABASE_ENV_FILE_KEY, "env.file"):
+        configured = context.setting(key)
+        if isinstance(configured, str):
+            return [configured]
+        if isinstance(configured, list):
+            return [str(entry) for entry in configured]
+    return list(_DEFAULT_ENV_FILES)
 
 
 def _fetch_first_env_file(context: ExecutionContext, candidates: list[str]) -> tuple[str, str]:

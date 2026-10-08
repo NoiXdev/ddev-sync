@@ -127,25 +127,33 @@ class ExecutionContext:
     # host.
     stdout_is_terminal: bool = False
 
-    def config(self, path: str, *, default: str) -> str:
-        """Read a dotted path from the merged config, or return `default`."""
+    def setting(self, path: str) -> Any:
+        """The raw value at a dotted path in the merged config, or `None`.
+
+        `config` and `config_list` are this walk plus a coercion - a string
+        with a default, and a list of mappings. A caller that needs to tell a
+        string from a list, as `remote_env_candidates` does, can use neither,
+        and a third private copy of the walk is how three readers of one
+        default come to disagree (see `operations/env.py:146`).
+        """
         node: Any = self.merged.data
         for part in path.split("."):
             if not isinstance(node, dict):
-                return default
+                return None
             node = node.get(part)
-        return default if node is None else str(node)
+        return node
+
+    def config(self, path: str, *, default: str) -> str:
+        """Read a dotted path from the merged config, or return `default`."""
+        value = self.setting(path)
+        return default if value is None else str(value)
 
     def config_list(self, path: str) -> list[dict[str, Any]]:
         """Read a dotted path expected to hold a list of mappings."""
-        node: Any = self.merged.data
-        for part in path.split("."):
-            if not isinstance(node, dict):
-                return []
-            node = node.get(part)
-        if not isinstance(node, list):
+        value = self.setting(path)
+        if not isinstance(value, list):
             return []
-        return [entry for entry in node if isinstance(entry, dict)]
+        return [entry for entry in value if isinstance(entry, dict)]
 
     def remote_data(self, relative: str) -> str:
         """Join `relative` onto the target's data root - user files, the env file."""

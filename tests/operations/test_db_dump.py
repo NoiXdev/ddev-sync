@@ -13,6 +13,7 @@ from ddev_sync.operations.database import (
     RemoteCredentials,
     dump_is_complete,
     read_remote_credentials,
+    remote_env_candidates,
 )
 from ddev_sync.transport.fake import FakeCommandRunner
 
@@ -282,6 +283,63 @@ def test_a_non_dict_env_section_falls_back_to_default_candidates(tmp_path: Path)
     probe = runner.calls[0][-1]
     assert "/srv/app/.env.local" in probe
     assert "/srv/app/.env" in probe
+
+
+# --- database.env_file: a key of its own for the remote lookup -------------
+#
+# `env.file` has always meant two things: the file `operations/env.py`
+# rewrites locally, and (joined onto the data root) the file this module
+# reads credentials from on the remote. `database.env_file` gives the remote
+# side its own name, so a project whose local and remote files differ can
+# finally say so - while a project that only ever set `env.file` keeps
+# working untouched.
+
+
+def test_the_remote_env_file_key_wins_over_env_file(tmp_path: Path) -> None:
+    config = {"env": {"file": [".env.ddev"]}, "database": {"env_file": [".env"]}}
+    context = make_context(FakeCommandRunner(), tmp_path, config)
+    assert remote_env_candidates(context) == [".env"]
+
+
+def test_env_file_is_the_fallback(tmp_path: Path) -> None:
+    # Kept deliberately: a project that set `env.file` to steer the *remote*
+    # lookup must keep working.
+    config = {"env": {"file": [".env.ddev"]}}
+    context = make_context(FakeCommandRunner(), tmp_path, config)
+    assert remote_env_candidates(context) == [".env.ddev"]
+
+
+def test_the_default_is_the_last_resort(tmp_path: Path) -> None:
+    context = make_context(FakeCommandRunner(), tmp_path, {})
+    assert remote_env_candidates(context) == [".env.local", ".env"]
+
+
+def test_a_single_name_is_accepted_as_a_string(tmp_path: Path) -> None:
+    config = {"database": {"env_file": ".env.prod"}}
+    context = make_context(FakeCommandRunner(), tmp_path, config)
+    assert remote_env_candidates(context) == [".env.prod"]
+
+
+def test_the_remote_lookup_follows_the_new_key(tmp_path: Path) -> None:
+    # The behaviour the key exists for: the local file is named one thing and
+    # the remote's is named another, and neither breaks the other.
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["ssh"],
+        stdout=(
+            "/srv/app/.env\n"
+            "DATABASE_NAME=app\n"
+            "DATABASE_USER=deploy\n"
+            "DATABASE_PASSWORD=s3cret\n"
+            "DATABASE_HOST=db.internal\n"
+            "DATABASE_PORT=3306\n"
+        ),
+    )
+    config = {"env": {"file": [".env.ddev"]}, "database": {"env_file": [".env"]}}
+    context = make_context(runner, tmp_path, config)
+    assert read_remote_credentials(context).name == "app"
+    assert "/.env" in runner.calls[-1][-1]
+    assert "/.env.ddev" not in runner.calls[-1][-1]
 
 
 COMPLETE_DUMP = "CREATE TABLE a (id int);\n-- Dump completed on 2026-09-30\n"

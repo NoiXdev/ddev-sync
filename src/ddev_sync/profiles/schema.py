@@ -58,6 +58,11 @@ def _validate_database(database: Any) -> None:
         raise ProfileError(
             f"database.remote_credentials {source!r} is not one of {', '.join(CREDENTIAL_SOURCES)}"
         )
+    env_file = database.get("env_file")
+    if env_file is not None and not isinstance(env_file, str | list):
+        raise ProfileError(
+            f"database.env_file must be a file name or a list of file names, got {env_file!r}"
+        )
 
 
 def _validate_files(files: Any) -> None:
