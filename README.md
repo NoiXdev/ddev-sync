@@ -99,9 +99,12 @@ processed-files handling.
 A `generic` fallback covers DDEV project types with no dedicated profile; it
 syncs the database and files but leaves the framework-specific work alone,
 and it needs credentials of its own because there is no convention to read
-them from. They are secrets, so they belong in `.ddev/ddev-sync.local.yaml`
-rather than the project file — and check that your repository ignores that
-path, because nothing here does it for you.
+them from. They are secrets, so they belong in `.ddev/ddev-sync/local.yaml`
+rather than the project file — inside the directory the add-on's shipped
+`.gitignore` already covers, so there is nothing to check yourself. A project
+that still keeps them in the old `.ddev/ddev-sync.local.yaml` continues to
+work — that path is still read — but should move them to the new one; that
+file sits one level up, outside the directory the `.gitignore` covers.
 
 The local database calls speak MariaDB's client protocol. The test suites
 exercise them end to end against a MariaDB 11 server, and they have been

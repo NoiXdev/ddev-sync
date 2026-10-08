@@ -209,13 +209,14 @@ naming both files** — this codebase already refuses to guess when two layers
 define the same target (`cli/init.py`'s check against
 `_other_layers_defining`), and silently preferring one copy of a credentials
 file over another is the same class of mistake with worse consequences.
-When only the old file exists it is read as before, and `doctor` says it
-should move.
+When only the old file exists it is read as before. Neither `doctor` nor
+`init` says anything about it (see "Corrections after the first
+implementation" below).
 
 **`init` writes to whichever file is already in use, and creates only the
 new one.** If `.ddev/ddev-sync.local.yaml` exists, that is the file `init`
-appends credentials to, and it says the file should move; if it does not,
-`init` creates `.ddev/ddev-sync/local.yaml`. Writing to the new path while
+appends credentials to; if it does not, `init` creates
+`.ddev/ddev-sync/local.yaml`. Writing to the new path while
 the old one exists would produce exactly the both-exist state the rule above
 forbids — a command cannot be allowed to create the error it then refuses to
 resolve. This is the one place where "the new path is the path" yields to
@@ -279,7 +280,114 @@ TDD: the failing test first.
 - A non-interactive `init` driven by flags, as in parts A and B1.
 - Any correction offer for a missing sanitize table beyond the one sentence
   above.
-- Migrating an existing `.ddev/ddev-sync.local.yaml` automatically. `init`
-  and `doctor` say it should move; moving someone's credentials file for them
-  is not a thing a wizard should do silently.
+- Migrating an existing `.ddev/ddev-sync.local.yaml` automatically, and
+  prompting the user to do it themselves. Moving someone's credentials file
+  for them is not a thing a wizard should do silently, and neither `init` nor
+  `doctor` nags about where it currently lives — only the README and the
+  installed template say the new path is where it belongs.
 - Reading credentials from anything other than the three existing sources.
+
+## Corrections after the first implementation
+
+Four things needed correcting against the finished code: one false claim,
+stated three times, already corrected in place above; one promise this spec
+made that the obvious implementation did not keep, kept true afterwards by
+changing the code rather than the claim; one implementation detail — not
+this spec's own prose, but the plan's — that could not survive the coverage
+gate as sketched; and one omission, a real operational cost this document
+never mentions. The search for anything beyond those four, across every file
+this plan touched, came back empty. A fifth finding, unrelated to this
+spec's own claims, surfaced in the same sweep and is recorded last because
+fixing it is not this task's to do.
+
+- **"`doctor` says it should move" and "`init` ... says the file should
+  move" were asserted three times — twice in "The local layer moves," once
+  in "Out of scope" — and implemented nowhere.** No field on `PreflightReport`
+  carries such a verdict, `render_doctor` (`cli/render.py`) has no row for
+  it, and `cli/init.py`'s `_local_path`/`_offer_override` write silently to
+  whichever local file is already in use without printing anything about the
+  other one. A search of the whole source tree and test suite for "should
+  move" turns up only this document, the plan it was drafted from, and the
+  task brief that quoted both — never an implementation, never a test. All
+  three sentences are corrected above, in place, to say what the code
+  actually does: the old path keeps working, and only the README and the
+  installed template tell the user it should move. Neither `init` nor
+  `doctor` does.
+
+- **Decision 4 ("`init` writes the credentials only after probing them. A
+  password that does not work never reaches the disk.") was false as first
+  built, on the one path where it matters most.** `_credentials_work`
+  (`cli/init.py`) "probed" a hand-typed `explicit` candidate by calling
+  `read_remote_credentials` directly — but `_from_config`
+  (`operations/database.py`) only checks that the five fields are
+  non-empty; it opens no connection. A complete, well-formed, wrong
+  password passed that check and would have reached disk, which is exactly
+  the failure mode a user typing credentials by hand is most likely to hit.
+  This was found and fixed within this same branch, in `6e9094c` ("fix(cli):
+  make the credentials override probe a real connection check"):
+  `operations/preflight.py` gained a public `verify_credentials`, running
+  the same `SHOW TABLES` round trip `_remote_tables` already uses to verify
+  sanitize rules before a dump, and `_credentials_work` now calls that
+  instead. Decision 4's sentence is unchanged above because it is true
+  again — the gap was closed by changing the code to match the promise, not
+  by narrowing the promise to match the code. Recorded here so that the
+  distance between "first built" and "shipped" is not lost, the way it
+  would have been without this entry.
+
+- **The plan's `_local_layer` sketch typed the function
+  `tuple[Path | None, str]` and gated its caller on `if local is not None`,
+  but the function's own body never returns `None`: both branches of its
+  `if old: ... / return ...` end in a concrete path, and the "neither
+  exists" case is handled by `load_user_layers`'s `is_file()` filter, not by
+  this function.** `if local is not None` was therefore always true — a
+  branch the project's 100 % branch-coverage gate cannot let stand, because
+  no input can ever take the implied `else`. The shipped
+  `config/loader.py::_local_layer` returns `tuple[Path, str]` outright, and
+  `load_user_layers` uses the pair directly; its docstring records why no
+  branch is needed. This spec's own "The local layer moves" section
+  describes the resulting *behaviour* correctly throughout — the dead
+  branch lived only in the plan's code sketch, which is why this entry
+  corrects the plan rather than a line above.
+
+- **An omission: this spec never says `check()` runs twice in a single
+  `init` run.** `init_command` builds one `ExecutionContext` and
+  `_fix_credentials` calls `PreflightOperation().check()` on it to decide
+  whether the credentials row is red; `init_command` then calls
+  `doctor_command`, which builds its *own* `ExecutionContext` (via
+  `_execution_context`, with an empty `cache`) and calls `check()` again —
+  unconditionally, whether or not `_fix_credentials` found anything to
+  offer. The "Cost" paragraph above prices the credentials probe once, as
+  the new cost `doctor` pays for an `env`/`wp_cli` profile with no required
+  table; it says nothing about a full `init` run paying the whole of
+  `check()` — ssh connectivity, credentials, sanitize tables, web
+  container, ssh agent — twice, because the two calls run against two
+  different contexts and `ExecutionContext.cache`'s memoisation cannot see
+  across them. This was an accepted cost, not an oversight caught late:
+  routing the decision through the public `check()` rather than through
+  `_probe`/`_check_credentials` directly was deliberate, because
+  `tests/cli/test_init.py` stubs `check` for roughly twenty existing `init`
+  tests, and reaching past it would have run a real probe through their
+  fake runner where none of them expect one (`_fix_credentials`'s own
+  docstring explains the trade-off). The spec should have priced it; it did
+  not.
+
+- **Nothing else.** Reading `operations/preflight.py`,
+  `operations/database.py`, `operations/base.py`, `config/loader.py`,
+  `cli/init.py` and `cli/prompts.py` against the rest of this document's
+  Design section found no further claim the code does not make true:
+  `database.env_file`'s fallback chain, the guard on connectivity, the
+  question order, the write-to-whichever-file-already-exists rule, and
+  `ExecutionContext` being copyable with a fresh cache for the candidate
+  probe (`dataclasses.replace` in `_credentials_work`) all hold exactly as
+  described.
+
+A fifth thing turned up in the same sweep but is not this document's claim to
+correct: the advice this task's README and template change replaces survives,
+word for word, in three places this task was not scoped to touch —
+`operations/database.py`'s `_from_config` error message,
+`operations/s3.py`'s `_reject_committed_secret` error message, and
+`profiles/generic.yaml`'s own header comment all still tell the reader that
+credentials belong in `.ddev/ddev-sync.local.yaml` and that "nothing here"
+ignores it, which is now wrong twice over: the path moved, and the add-on
+ignores the new one. None of the three is code this task's own rule permits
+changing; they are named here for whichever task picks them up next.

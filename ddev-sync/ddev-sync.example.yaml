@@ -49,8 +49,8 @@ version: 1
 # Where the remote's database credentials come from:
 #   env      - read from a .env on the remote (the default)
 #   explicit - from `database.credentials` below; they are secrets, so put
-#              them in .ddev/ddev-sync.local.yaml and make sure your
-#              repository ignores that file - nothing here does that for you
+#              them in .ddev/ddev-sync/local.yaml, which the add-on's shipped
+#              .gitignore already covers - there is nothing to check yourself
 #   wp_cli   - ask the remote's WP-CLI (WordPress; also reads the table prefix)
 # database:
 #   remote_credentials: env
@@ -60,6 +60,9 @@ version: 1
 #     name: app
 #     user: app
 #     password: change-me
+#   env_file: .env            # the remote .env's name, when it differs from
+#                              # this project's own env.file below; falls back
+#                              # to env.file when unset
 
 # The URL this site serves in production. WordPress rewrites it to the local
 # DDEV address after the import (`wp search-replace`), so a sync cannot do
