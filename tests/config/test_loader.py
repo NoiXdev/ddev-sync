@@ -3,10 +3,13 @@ from pathlib import Path
 import pytest
 
 from ddev_sync.config.loader import (
+    LEGACY_LOCAL_LABEL,
+    LOCAL_LABEL,
     ConfigPaths,
     discover_config_paths,
     load_user_layers,
 )
+from ddev_sync.config.merge import merge_layers
 from ddev_sync.errors import ConfigError
 
 
@@ -17,7 +20,8 @@ def test_discovery_points_at_the_three_user_layers(tmp_path: Path) -> None:
     assert paths == ConfigPaths(
         global_config=home / ".ddev" / "ddev-sync" / "config.yaml",
         project_config=project_root / ".ddev" / "ddev-sync.yaml",
-        local_config=project_root / ".ddev" / "ddev-sync.local.yaml",
+        local_config=project_root / ".ddev" / "ddev-sync" / "local.yaml",
+        legacy_local_config=project_root / ".ddev" / "ddev-sync.local.yaml",
     )
 
 
@@ -93,3 +97,49 @@ def test_an_empty_file_is_an_empty_layer_not_a_crash(tmp_path: Path, content: st
     layers = load_user_layers(paths)
     assert len(layers) == 1
     assert layers[0].data == {}
+
+
+def test_the_new_local_path_is_read(tmp_path: Path) -> None:
+    paths = discover_config_paths(tmp_path / "project", tmp_path / "home")
+    paths.local_config.parent.mkdir(parents=True, exist_ok=True)
+    paths.local_config.write_text("version: 1\ndatabase:\n  credentials:\n    user: a\n")
+    layers = load_user_layers(paths)
+    assert [layer.label for layer in layers] == [LOCAL_LABEL]
+
+
+def test_the_old_local_path_is_still_read(tmp_path: Path) -> None:
+    paths = discover_config_paths(tmp_path / "project", tmp_path / "home")
+    paths.legacy_local_config.parent.mkdir(parents=True, exist_ok=True)
+    paths.legacy_local_config.write_text("version: 1\ndatabase:\n  credentials:\n    user: a\n")
+    layers = load_user_layers(paths)
+    assert [layer.label for layer in layers] == [LEGACY_LOCAL_LABEL]
+
+
+def test_both_local_paths_at_once_is_an_error_naming_both(tmp_path: Path) -> None:
+    # Review Focus 4. Guessing which copy of a credentials file wins is the
+    # one outcome worse than refusing.
+    paths = discover_config_paths(tmp_path / "project", tmp_path / "home")
+    paths.local_config.parent.mkdir(parents=True, exist_ok=True)
+    paths.local_config.write_text("version: 1\n")
+    paths.legacy_local_config.write_text("version: 1\n")
+    with pytest.raises(ConfigError) as error:
+        load_user_layers(paths)
+    assert LOCAL_LABEL in str(error.value)
+    assert LEGACY_LOCAL_LABEL in str(error.value)
+
+
+def test_the_local_layer_is_still_the_strongest(tmp_path: Path) -> None:
+    paths = discover_config_paths(tmp_path / "project", tmp_path / "home")
+    paths.project_config.parent.mkdir(parents=True, exist_ok=True)
+    paths.project_config.write_text("version: 1\ndefaults:\n  keep_dump: false\n")
+    paths.local_config.parent.mkdir(parents=True, exist_ok=True)
+    paths.local_config.write_text("version: 1\ndefaults:\n  keep_dump: true\n")
+    assert merge_layers(load_user_layers(paths)).data["defaults"]["keep_dump"] is True
+
+
+def test_the_old_path_is_also_the_strongest(tmp_path: Path) -> None:
+    paths = discover_config_paths(tmp_path / "project", tmp_path / "home")
+    paths.project_config.parent.mkdir(parents=True, exist_ok=True)
+    paths.project_config.write_text("version: 1\ndefaults:\n  keep_dump: false\n")
+    paths.legacy_local_config.write_text("version: 1\ndefaults:\n  keep_dump: true\n")
+    assert merge_layers(load_user_layers(paths)).data["defaults"]["keep_dump"] is True

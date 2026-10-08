@@ -6,3 +6,8 @@
 # behind should not show up in the developer's `git status`.
 /passwd*
 /home/
+
+# `ddev sync init` writes the local configuration layer here - database
+# credentials among other things - so it is ignored for the same reason the
+# generated files above are: it belongs to this machine, not to the project.
+/local.yaml

@@ -362,6 +362,7 @@ def test_a_stronger_layer_cannot_hide_a_damaged_neighbour(tmp_path: Path) -> Non
     # within the file is what catches it, and this test is the only thing that
     # tells the two comparisons apart.
     path, paths = write_in(tmp_path, CORRUPTING_DOCUMENT)
+    paths.local_config.parent.mkdir(parents=True, exist_ok=True)
     paths.local_config.write_text(
         "version: 1\ntargets:\n  staging:\n    host: s.example\n"
         "    stage: staging\n    path: /srv/s/\n",
