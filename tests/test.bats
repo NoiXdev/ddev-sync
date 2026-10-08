@@ -84,6 +84,11 @@ YAML
   # Plan 8 removes these two steps.
   docker build -q -t ddev-sync:bats "${DIR}" >/dev/null
   printf 'DDEV_SYNC_IMAGE=ddev-sync\nDDEV_SYNC_VERSION=bats\n' >> .ddev/.env
+  # A stale pair in .env, as a project installed before the lines moved to
+  # .env.local has. The hook is expected to take them out of here, and the
+  # value is deliberately not a plausible gid so that finding it later would
+  # mean the migration did not happen rather than that it ran twice.
+  printf 'DDEV_SYNC_DOCKER_GID=999999\nDDEV_SYNC_HOST_HOME=/nowhere\n' >> .ddev/.env
 }
 
 # Unconditional on purpose: it must clean up after a failed assertion and after
@@ -163,12 +168,21 @@ entries_in() {
   echo "${output}"
   [ "${status}" -eq 0 ]
 
-  # The pre-start hook has run: the facts it discovers per machine exist.
-  grep -q '^DDEV_SYNC_DOCKER_GID=[0-9][0-9]*$' .ddev/.env
+  # The pre-start hook has run: the facts it discovers per machine exist, in
+  # .env.local rather than .env, because DDEV's own generated .gitignore covers
+  # /.env.local and so the machine-specific values stay out of the repository.
+  grep -q '^DDEV_SYNC_DOCKER_GID=[0-9][0-9]*$' .ddev/.env.local
   # -F -x: the home directory is matched as a whole line and literally, so a
   # path with a regex metacharacter in it cannot turn the assertion into
   # something else.
-  grep -q -F -x "DDEV_SYNC_HOST_HOME=${HOME}" .ddev/.env
+  grep -q -F -x "DDEV_SYNC_HOST_HOME=${HOME}" .ddev/.env.local
+  # And not in .env, where they used to be written and where git would see
+  # them. The test put DDEV_SYNC_IMAGE there itself, so .env does exist.
+  run grep -c -e '^DDEV_SYNC_DOCKER_GID=' -e '^DDEV_SYNC_HOST_HOME=' .ddev/.env
+  [ "${output}" = 0 ] || false
+  # The file DDEV generates really does ignore the one the hook now writes, so
+  # this holds by DDEV's own doing rather than by the add-on's advice.
+  grep -q -x '/.env.local' .ddev/.gitignore
   [ -s .ddev/ddev-sync/passwd ]
   [ -d .ddev/ddev-sync/home ]
 
@@ -283,6 +297,13 @@ YAML
   [ "$(entries_in .ddev/commands/sync)" = 0 ]
   run grep -c -e '^DDEV_SYNC_DOCKER_GID=' -e '^DDEV_SYNC_HOST_HOME=' .ddev/.env
   [ "${output}" = 0 ]
+  # The same for the file they are actually written to now. It is cleaned
+  # whether or not it is left behind empty, so the count is what is asserted
+  # rather than the file's absence.
+  if [ -f .ddev/.env.local ]; then
+    run grep -c -e '^DDEV_SYNC_DOCKER_GID=' -e '^DDEV_SYNC_HOST_HOME=' .ddev/.env.local
+    [ "${output}" = 0 ]
+  fi
 
   # ...and what is not generated stays: the project's own configuration, and
   # the lines the test itself put into .env.

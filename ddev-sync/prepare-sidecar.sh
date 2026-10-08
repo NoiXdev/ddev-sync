@@ -14,6 +14,19 @@
 set -eu
 
 approot="${DDEV_APPROOT:?this script is meant to run as a DDEV hook}"
+# Two files, and the difference matters. `.ddev/.env.local` is where the two
+# machine-specific lines below are written, because DDEV's own generated
+# `.ddev/.gitignore` covers `/.env.local` - so they stay out of the repository
+# by construction instead of by advice. That DDEV substitutes compose
+# variables from it at all was measured, not assumed, on v1.25.4: a value set
+# only in `.env.local` reaches `ddev debug compose-config`, and when both
+# files set the same key, `.env.local` wins.
+#
+# `.ddev/.env` is still read, because that is where the user's own
+# DDEV_SYNC_IMAGE and DDEV_SYNC_VERSION lines live, and where a project
+# installed before this change still has the two machine lines. It is never
+# written any more, except to take those two lines back out of it.
+env_local_file="${approot}/.ddev/.env.local"
 env_file="${approot}/.ddev/.env"
 state_dir="${approot}/.ddev/ddev-sync"
 
@@ -95,18 +108,42 @@ mkdir -p "${host_home}/.ddev/ddev-sync"
 # holds nothing but these lines, so that is success. Exit 2 is a real failure -
 # an .env that cannot be read - and without a branch of its own `set -e` would
 # kill the script with no message of ours at all.
-new_tmp "${env_file}"
-env_tmp="${tmp}"
-{
-  [ ! -f "${env_file}" ] \
-    || grep -v -e '^DDEV_SYNC_DOCKER_GID=' -e '^DDEV_SYNC_HOST_HOME=' "${env_file}" \
+# Strip the two lines from whichever file holds them, and keep whatever else
+# that file had. `grep -v` exits 1 when it matched every line, which here
+# means a file holding nothing but these two, so that is success. Exit 2 is a
+# real failure - a file that cannot be read - and without a branch of its own
+# `set -e` would kill the script with no message of ours at all.
+strip_machine_lines() {
+  [ ! -f "$1" ] \
+    || grep -v -e '^DDEV_SYNC_DOCKER_GID=' -e '^DDEV_SYNC_HOST_HOME=' "$1" \
     || [ $? -eq 1 ] \
-    || fail "could not read ${env_file}, so the lines ddev-sync keeps there (DDEV_SYNC_DOCKER_GID, DDEV_SYNC_HOST_HOME) cannot be rewritten." "" \
+    || fail "could not read $1, so the lines ddev-sync keeps there (DDEV_SYNC_DOCKER_GID, DDEV_SYNC_HOST_HOME) cannot be rewritten." "" \
       "Check that the file is readable and is a regular file or a symlink to one."
-} > "${env_tmp}"
+}
+
+# Write through the existing file (`cat >`, not `mv`) so that its mode, and a
+# symlink in its place, survive.
+new_tmp "${env_local_file}"
+env_tmp="${tmp}"
+strip_machine_lines "${env_local_file}" > "${env_tmp}"
 printf 'DDEV_SYNC_DOCKER_GID=%s\n' "${gid}" >> "${env_tmp}"
 printf 'DDEV_SYNC_HOST_HOME=%s\n' "${host_home}" >> "${env_tmp}"
-cmp -s "${env_tmp}" "${env_file}" 2>/dev/null || cat "${env_tmp}" > "${env_file}"
+cmp -s "${env_tmp}" "${env_local_file}" 2>/dev/null || cat "${env_tmp}" > "${env_local_file}"
+
+# A project that was started before these lines moved still has them in
+# .ddev/.env, where they are not ignored. Taking them out is the whole point
+# of the move, so it happens here rather than being left to the user - and
+# only when they are actually there, so a project that never had them keeps
+# its .env untouched, mode and symlink included. `.env.local` wins the
+# substitution either way, so a stale pair would be harmless and invisible,
+# which is exactly why nobody would ever remove it.
+if [ -f "${env_file}" ] && grep -q -e '^DDEV_SYNC_DOCKER_GID=' -e '^DDEV_SYNC_HOST_HOME=' "${env_file}"; then
+  new_tmp "${env_file}"
+  legacy_tmp="${tmp}"
+  strip_machine_lines "${env_file}" > "${legacy_tmp}"
+  cat "${legacy_tmp}" > "${env_file}"
+  echo "ddev-sync: moved DDEV_SYNC_DOCKER_GID and DDEV_SYNC_HOST_HOME from .ddev/.env to .ddev/.env.local, which git ignores." >&2
+fi
 
 # --- DDEV's ssh agent ----------------------------------------------------------
 # The sidecar authenticates to remote hosts through the agent DDEV forwards,
@@ -156,11 +193,18 @@ fi
 # would use is to run it, which needs the very values this script produces.
 # Keep the two in step.
 setting() {
-  local value
+  local value candidate
   eval "value=\"\${$1:-}\""
-  if [ -z "${value}" ] && [ -f "${env_file}" ]; then
-    value="$(grep "^$1=" "${env_file}" | tail -n 1 | cut -d= -f2-)"
-  fi
+  # `.env.local` before `.env`, because that is the order compose resolves
+  # them in - measured on DDEV v1.25.4, where a key set in both is taken from
+  # `.env.local`. Reading them the other way round would resolve a different
+  # image here than the compose file uses, which is the drift the comment
+  # above warns about.
+  for candidate in "${env_local_file}" "${env_file}"; do
+    if [ -z "${value}" ] && [ -f "${candidate}" ]; then
+      value="$(grep "^$1=" "${candidate}" | tail -n 1 | cut -d= -f2-)"
+    fi
+  done
   value="${value:-$2}"
   # Compose strips one pair of surrounding quotes, so that is done here too.
   case "${value}" in

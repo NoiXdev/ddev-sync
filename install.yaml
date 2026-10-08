@@ -27,12 +27,16 @@ removal_actions:
     # is still in place here, but nothing will run it again. The passwd file
     # and the sidecar's home directory (which holds its known_hosts) are not in
     # `project_files` because they are generated, so they are removed here, and
-    # the two lines the hook writes go out of the project's own .ddev/.env. The
-    # edit goes through `cat >` to keep that file's mode and any symlink in its
+    # the two lines the hook writes go out of the project's env files. The edit
+    # goes through `cat >` to keep each file's mode and any symlink in its
     # place.
+    #
+    # Both files, because the hook writes `.env.local` and a project installed
+    # before that move still has the two lines in `.env`. Removing the add-on
+    # should leave neither behind, whichever file this project used.
     rm -rf "${DDEV_APPROOT}/.ddev/ddev-sync/passwd" "${DDEV_APPROOT}/.ddev/ddev-sync/home"
-    env_file="${DDEV_APPROOT}/.ddev/.env"
-    if [ -f "${env_file}" ]; then
+    for env_file in "${DDEV_APPROOT}/.ddev/.env.local" "${DDEV_APPROOT}/.ddev/.env"; do
+      [ -f "${env_file}" ] || continue
       tmp="$(mktemp "${env_file}.XXXXXX")" || exit 1
       if { grep -v -e '^DDEV_SYNC_DOCKER_GID=' -e '^DDEV_SYNC_HOST_HOME=' "${env_file}" \
           || [ $? -eq 1 ]; } > "${tmp}" \
@@ -40,10 +44,10 @@ removal_actions:
         rm -f "${tmp}"
       else
         rm -f "${tmp}"
-        echo "Could not remove DDEV_SYNC_DOCKER_GID and DDEV_SYNC_HOST_HOME from .ddev/.env" >&2
+        echo "Could not remove DDEV_SYNC_DOCKER_GID and DDEV_SYNC_HOST_HOME from ${env_file}" >&2
         exit 1
       fi
-    fi
+    done
 
 post_install_actions:
   - |
