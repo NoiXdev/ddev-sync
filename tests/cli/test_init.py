@@ -1630,6 +1630,30 @@ def test_declining_the_remote_file_falls_to_the_override(
     assert f"is in {PROJECT_LABEL}" in error
 
 
+def test_declining_the_remote_file_can_still_succeed_via_the_override(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Unlike the test above, the override this falls to does not raise here -
+    # `_offer_remote_env_file` itself returns normally once `_offer_override`
+    # has written something, rather than the exception propagating through it.
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    _runner_whose_credentials_probe(monkeypatch, ok=True)
+    script(
+        monkeypatch,
+        remote_env_file=(REMOTE_ENV_NONE,),
+        credentials_source=(EXPLICIT_SOURCE,),
+        credentials=(CREDENTIALS,),
+    )
+    stub_checks(monkeypatch, _report(False), _report(True))
+    assert invoke(project, tmp_path) == 0
+    local = project / ".ddev" / "ddev-sync" / "local.yaml"
+    loaded = yaml.safe_load(local.read_text(encoding="utf-8"))
+    assert loaded["database"]["credentials"] == CREDENTIALS
+
+
 def test_no_terminal_at_the_remote_env_file_question_is_folded_into_the_check_error(
     project: Path,
     project_file: Path,
@@ -1681,15 +1705,72 @@ def test_a_remote_listing_that_fails_offers_only_the_opt_out(
     assert seen["present"] == []
 
 
+def test_a_non_env_source_skips_the_remote_file_question(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Review finding 2: the remote-file question's premise - a `.env` on the
+    # target that nothing named - is only ever true for an `env` source.
+    # `_generic` resolves to `explicit` (profiles/generic.yaml), the
+    # headline case this fix closes: asking anyway led straight to a
+    # question that could not fix anything, and only declining it reached
+    # the override that could. `choose_remote_env_file` must not fire at all.
+    _generic(project)
+    monkeypatch.setattr(init, "choose_remote_env_file", _never_called)
+    script(monkeypatch, credentials_source=(None,))  # None ends it harmlessly
+    stub_checks(monkeypatch, _report(False))
+    assert invoke(project, tmp_path) == 1
+
+
+def test_an_env_source_still_asks_which_remote_file(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The mirror of the test above: an `env` source (the Laravel profile's
+    # default) is exactly the case the remote-file question fits, so the
+    # gate must still let it through rather than skipping straight to the
+    # override.
+    _laravel(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    _runner_where_the_remote_env_is(monkeypatch, ".env.production")
+    asked = script(monkeypatch, remote_env_file=(".env.production",))
+    stub_checks(monkeypatch, _report(False), _report(True))
+    assert invoke(project, tmp_path) == 0
+    assert asked["choose_remote_env_file"], "the remote-file question never fired"
+    assert not asked["choose_credentials_source"], "the override must not also have fired"
+
+
 # --- `init` falls back to credentials entered by hand (task 6) -------------
 #
-# Reached only when naming a remote file (task 5) does not settle it either -
-# `REMOTE_ENV_NONE` now leads here instead of stopping. `PreflightOperation.
+# Reached straight away for a non-`env` source (`_fix_credentials`'s gate,
+# review finding 2) - `_generic`'s `explicit` and `_wordpress`'s `wp_cli` both
+# skip the remote-file question entirely, since its premise (a `.env` on the
+# target that nothing named) is only ever true for `env`. `PreflightOperation.
 # check` is stubbed, as above, but `_credentials_work`'s own probe
 # (`verify_credentials`, `operations/preflight.py`) is not: it is the real
-# `SHOW TABLES` round trip over the fake runner, same as `_remote_env_entries`'s
-# `ls` - the one test below whose candidate must fail scripts that round trip
-# to fail, rather than standing in for the function that runs it.
+# `SHOW TABLES` round trip over the fake runner (`_runner_whose_credentials_
+# probe`) - the one test below whose candidate must fail scripts that round
+# trip to fail, rather than standing in for the function that runs it.
+
+
+def _runner_whose_credentials_probe(
+    monkeypatch: pytest.MonkeyPatch, *, ok: bool, stderr: str = ""
+) -> FakeCommandRunner:
+    """Install a fake runner for `_credentials_work`'s own `SHOW TABLES` probe.
+
+    The only ssh round trip left once a non-`env` source skips the remote-file
+    question outright (review finding 2): there is no listing to stub, since
+    `_remote_env_entries` is never reached for `explicit` or `wp_cli`.
+    """
+    runner = FakeCommandRunner()
+    if ok:
+        runner.script_prefix(["ssh"], stdout="")
+    else:
+        runner.script_prefix(["ssh"], returncode=1, stderr=stderr)
+    monkeypatch.setattr("ddev_sync.cli.main.SubprocessRunner", lambda: runner)
+    return runner
 
 
 def test_init_writes_probed_credentials_to_the_local_layer(
@@ -1699,10 +1780,9 @@ def test_init_writes_probed_credentials_to_the_local_layer(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _generic(project)
-    _runner_whose_remote_listing_is(monkeypatch, [])
+    _runner_whose_credentials_probe(monkeypatch, ok=True)
     script(
         monkeypatch,
-        remote_env_file=(REMOTE_ENV_NONE,),
         credentials_source=(EXPLICIT_SOURCE,),
         credentials=(CREDENTIALS,),
     )
@@ -1730,13 +1810,11 @@ def test_credentials_that_fail_the_probe_are_never_written(
     # `SHOW TABLES` round trip (`verify_credentials`) really fails here, so
     # this proves the feature itself, not that some stand-in was called.
     _generic(project)
-    runner = _runner_whose_remote_listing_is(monkeypatch, [])
-    runner.script_prefix(
-        ["ssh"], returncode=1, stderr="ERROR 1045 (28000): Access denied for user 'acme'@'host'"
+    _runner_whose_credentials_probe(
+        monkeypatch, ok=False, stderr="ERROR 1045 (28000): Access denied for user 'acme'@'host'"
     )
     script(
         monkeypatch,
-        remote_env_file=(REMOTE_ENV_NONE,),
         credentials_source=(EXPLICIT_SOURCE,),
         credentials=(CREDENTIALS,),
     )
@@ -1757,10 +1835,9 @@ def test_init_appends_to_the_old_local_file_when_it_exists(
     _generic(project)
     legacy = project / ".ddev" / "ddev-sync.local.yaml"
     legacy.write_text("version: 1\ndefaults:\n  keep_dump: true\n", encoding="utf-8")
-    _runner_whose_remote_listing_is(monkeypatch, [])
+    _runner_whose_credentials_probe(monkeypatch, ok=True)
     script(
         monkeypatch,
-        remote_env_file=(REMOTE_ENV_NONE,),
         credentials_source=(EXPLICIT_SOURCE,),
         credentials=(CREDENTIALS,),
     )
@@ -1777,6 +1854,12 @@ def test_init_appends_to_the_old_local_file_when_it_exists(
     assert ".ddev/ddev-sync.local.yaml" in output
     assert ".ddev/ddev-sync/local.yaml" in output
     assert "gitignore" in output
+    # Review finding 4: this warning used to be echoed immediately, where
+    # `doctor`'s whole checklist and two more closing lines then printed over
+    # it. It must now be the very last thing `init` prints, after both.
+    lines = output.rstrip("\n").splitlines()
+    assert lines[-1].startswith("The credentials were written to")
+    assert "committed with the project" in lines[-2]
 
 
 def test_choosing_wp_cli_writes_the_project_file_not_the_local_one(
@@ -1786,12 +1869,12 @@ def test_choosing_wp_cli_writes_the_project_file_not_the_local_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # `wp_cli` reads the values from the remote, so there is no secret to keep.
+    # No runner stub needed: the `WP_CLI_SOURCE` branch writes a plain setting
+    # and returns without probing anything (`_offer_override`).
     _wordpress(project)
-    _runner_whose_remote_listing_is(monkeypatch, [])
     script(
         monkeypatch,
         production_url=("https://acme.example",),
-        remote_env_file=(REMOTE_ENV_NONE,),
         credentials_source=(WP_CLI_SOURCE,),
     )
     stub_checks(monkeypatch, _report(False), _report(True))
@@ -1808,11 +1891,11 @@ def test_no_terminal_while_entering_credentials_by_hand_writes_nothing(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # No runner stub needed: a missing terminal at `ask_credentials` raises
+    # before `_credentials_work` ever probes anything (`_offer_override`).
     _generic(project)
-    _runner_whose_remote_listing_is(monkeypatch, [])
     script(
         monkeypatch,
-        remote_env_file=(REMOTE_ENV_NONE,),
         credentials_source=(EXPLICIT_SOURCE,),
         credentials=(None,),
     )

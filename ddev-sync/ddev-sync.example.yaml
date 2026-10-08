@@ -61,8 +61,8 @@ version: 1
 #     user: app
 #     password: change-me
 #   env_file: .env            # the remote .env's name, when it differs from
-#                              # this project's own env.file below; falls back
-#                              # to env.file when unset
+#                             # this project's own env.file below; falls back
+#                             # to env.file when unset
 
 # The URL this site serves in production. WordPress rewrites it to the local
 # DDEV address after the import (`wp search-replace`), so a sync cannot do

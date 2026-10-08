@@ -198,7 +198,8 @@ def init_command(
             context, runner=runner, assume_yes=True, secrets=set(), stdout_is_terminal=False
         )
         wordpress = resolution.profile.name == WORDPRESS_PROFILE
-        if _fix_credentials(execution, paths, wordpress, echo):
+        fixed, legacy_warning = _fix_credentials(execution, paths, wordpress, echo)
+        if fixed:
             # `_fix_credentials` may have just written `database.env_file`;
             # `context` above was resolved before that write, so `doctor`
             # would otherwise report on the configuration as it was found,
@@ -252,6 +253,12 @@ def init_command(
         f"{PROJECT_LABEL} is committed with the project. To keep this host and user out of "
         f"the repository, move the target to {GLOBAL_LABEL}."
     )
+    if legacy_warning is not None:
+        # Last, deliberately: this is the most security-relevant sentence
+        # `init` can print, and echoing it when `_offer_override` produced it
+        # would have buried it under `doctor`'s whole checklist and the two
+        # lines above. Nothing after this one prints over it.
+        echo(legacy_warning)
     return code
 
 
@@ -569,7 +576,7 @@ def _fix_credentials(
     paths: ConfigPaths,
     wordpress: bool,
     echo: Callable[[str], None],
-) -> bool:
+) -> tuple[bool, str | None]:
     """Offer to fix a credentials source that does not resolve.
 
     Runs after the target is written because `read_remote_credentials` needs
@@ -594,12 +601,25 @@ def _fix_credentials(
     one `check()` call, and `init_command` uses the return value to decide
     whether the context it hands `doctor` next needs re-resolving from disk -
     cheap next to the ssh round trip `check()` already paid for either way.
+
+    The second element is `_offer_override`'s legacy-path warning, carried
+    all the way back up rather than echoed where it is produced -
+    `init_command` echoes it last, after `doctor`'s checklist and its own
+    closing lines, which is the only place in this command nothing still
+    prints over it.
     """
     report = PreflightOperation().check(execution)
     if report.credentials_ok is not False:
-        return False
-    _offer_remote_env_file(execution, paths, wordpress, echo)
-    return True
+        return False, None
+    if execution.config("database.remote_credentials", default="env") == "env":
+        return True, _offer_remote_env_file(execution, paths, wordpress, echo)
+    # The remote-file question's premise - a `.env` on the target that
+    # nothing named - is only ever true for the `env` source. `explicit`
+    # makes no network call at all, and `wp_cli` asks WordPress's own
+    # `wp-cli`, not a file; asking it anyway led straight to a question that
+    # could not fix anything, and only `REMOTE_ENV_NONE` reached the override
+    # that could.
+    return True, _offer_override(execution, paths, wordpress, echo)
 
 
 def _offer_remote_env_file(
@@ -607,16 +627,21 @@ def _offer_remote_env_file(
     paths: ConfigPaths,
     wordpress: bool,
     echo: Callable[[str], None],
-) -> None:
+) -> str | None:
     """Ask which file on the target really holds the database credentials.
 
-    `present` comes from the target's own data root (`_remote_env_entries`),
-    so the usual cause of a red credentials row - the file is there under a
-    name nobody configured - is one keystroke away rather than a guess.
+    Only reached for an `env` source (`_fix_credentials`'s own gate): that is
+    the one source this question's premise fits, since `present` comes from
+    the target's own data root (`_remote_env_entries`) - so the usual cause
+    of a red credentials row *here* - the file is there under a name nobody
+    configured - is one keystroke away rather than a guess.
 
     `wordpress` is threaded through to `_offer_override` below, which is
     reached when naming a file does not settle it either - the last resort,
-    for setups where nothing on the remote can be read back at all.
+    for setups where nothing on the remote can be read back at all. Returns
+    whatever that call returns - `_offer_override`'s own legacy-path warning,
+    or `None` - unchanged, so `_fix_credentials` has one place to collect it
+    regardless of which of the two questions actually wrote it.
     """
     looked_for = remote_env_candidates(execution)
     present = _remote_env_entries(execution)
@@ -624,11 +649,11 @@ def _offer_remote_env_file(
     if answer is None:
         raise _no_terminal()
     if answer == REMOTE_ENV_NONE:
-        _offer_override(execution, paths, wordpress, echo)
-        return
+        return _offer_override(execution, paths, wordpress, echo)
     write_settings(
         path=paths.project_config, paths=paths, settings={DATABASE_ENV_FILE_KEY: [answer]}
     )
+    return None
 
 
 def _offer_override(
@@ -636,13 +661,21 @@ def _offer_override(
     paths: ConfigPaths,
     wordpress: bool,
     echo: Callable[[str], None],
-) -> None:
+) -> str | None:
     """Offer a credentials source other than the one that failed.
 
     Last resort by design: the credentials normally live on the target, which
     is what the question before this one tries to reach. This is for the
     setups where nothing on the remote can be read back - Bedrock and other
     env-based WordPress installs among them.
+
+    Returns the legacy-path warning's text when the write landed on
+    `LEGACY_LOCAL_LABEL`, `None` otherwise - rather than `echo`ing it here and
+    having it done with. This is the most security-relevant sentence `init`
+    can print, and `echo`ing it immediately used to bury it under `doctor`'s
+    whole checklist and two more closing lines, all printed after it before
+    the command returned. `init_command` echoes the string this returns last,
+    once there is nothing left to print over it.
     """
     source = choose_credentials_source(wordpress)
     if source is None:
@@ -655,7 +688,7 @@ def _offer_override(
             paths=paths,
             settings={"database.remote_credentials": "wp_cli"},
         )
-        return
+        return None
     values = ask_credentials()
     if values is None:
         raise _no_terminal()
@@ -664,7 +697,7 @@ def _offer_override(
             "Those credentials did not work against the target, so they were not "
             "written. Check them and run 'ddev sync init' again."
         )
-        return
+        return None
     local_path = _local_path(paths)
     write_settings(
         path=local_path,
@@ -674,18 +707,19 @@ def _offer_override(
             "database.credentials": values,
         },
     )
-    if local_path == paths.legacy_local_config:
-        # The one path the add-on's shipped `.gitignore` does not cover -
-        # covering it is why the layer moved to `LOCAL_LABEL` in the first
-        # place (`config/loader.py`). Said only here, and only now: a project
-        # on the new path has nothing to act on, and the risk this names only
-        # exists once the secret has actually landed on the old one.
-        echo(
-            f"The credentials were written to {LEGACY_LOCAL_LABEL}. The add-on's shipped "
-            f".gitignore does not cover that path - it covers {LOCAL_LABEL} instead - so "
-            "this file is not ignored and the password it holds would be committed with "
-            f"the project. Move it to {LOCAL_LABEL}."
-        )
+    if local_path != paths.legacy_local_config:
+        return None
+    # The one path the add-on's shipped `.gitignore` does not cover - covering
+    # it is why the layer moved to `LOCAL_LABEL` in the first place
+    # (`config/loader.py`). Relevant only here, and only now: a project on the
+    # new path has nothing to act on, and the risk this names only exists once
+    # the secret has actually landed on the old one.
+    return (
+        f"The credentials were written to {LEGACY_LOCAL_LABEL}. The add-on's shipped "
+        f".gitignore does not cover that path - it covers {LOCAL_LABEL} instead - so "
+        "this file is not ignored and the password it holds would be committed with "
+        f"the project. Move it to {LOCAL_LABEL}."
+    )
 
 
 def _credentials_work(execution: ExecutionContext, values: dict[str, str]) -> bool:
@@ -741,7 +775,8 @@ def _remote_env_entries(execution: ExecutionContext) -> list[str]:
     Filtered in Python rather than with a shell glob: an unmatched `.env*`
     comes back as the literal pattern, which would then be offered as a
     filename that does not exist. One `ls`, over the same connection the
-    credentials probe just proved - through `ssh_command` and
+    `env`-source credentials probe just used (`_fix_credentials`'s gate means
+    this only runs for that source) - through `ssh_command` and
     `context.runner.run`, never `subprocess` (`transport/runner.py`). A
     listing that fails for any reason is an empty list rather than a second
     error: the question still has its opt-out, and the failure that matters
