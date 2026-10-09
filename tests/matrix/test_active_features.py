@@ -8,14 +8,21 @@ purpose, like `test_feature_registry.py`: the `matrix` marker is applied by
 `pytestmark` in `test_matrix.py` alone, and importing that module only defines
 functions, so nothing here brings a stack up.
 
-Every shape the renderer can emit is fed from `render_features`/`render_plan`:
-a hand-built string proves the parser matches an idea of the format, the
-renderer's own output proves it matches the format. The last four tests are
-hand-built because the renderer cannot produce what they feed - text after the
-block that is indented like a continuation, a line shorter than the
-continuation column right after the block, a whitespace-only line, a name a
-column past the label. They are defensive: they pin how the parser behaves on
-input the renderer never emits today, not a format anyone prints.
+The first seven tests feed the parser `render_features`/`render_plan` output,
+so the shapes of the block itself are the ones this renderer prints rather
+than an idea of the format. The last four are hand-built, and not for one
+reason. The first of them,
+`test_the_block_ends_at_the_blank_line_so_later_deep_indentation_is_not_a_name`,
+pins a shape a real project can print: `render_plan` writes `step.detail` raw
+and a hook's `run:` string reaches it unescaped (`engine/plan.py::_hook_detail`),
+so a multi-line `run:` whose later lines are indented past the label width puts
+deeply indented text below the block - and the parser's break at the blank line
+is what keeps it out of the names. The other three feed shapes this renderer
+does not print - a non-blank line shorter than the continuation column directly
+after the block (`render_plan` always appends a blank line there), a
+whitespace-only line inside the block (every line in it is built from a
+feature's name), a name one column past the label (`render_features` indents
+every continuation to exactly the label's width) - and are defensive.
 """
 
 from ddev_sync.cli.render import render_features, render_plan
