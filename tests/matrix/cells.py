@@ -26,6 +26,33 @@ class FlushMarker:
 
 
 @dataclass(frozen=True)
+class FeatureCheck:
+    """What a cell proves about one feature.
+
+    `feature` is the name `features/<name>.yaml` declares, and naming it is
+    itself an assertion: the run must report that feature as active. A check
+    with nothing else set therefore still proves something, which is exactly
+    `inertia`'s case - it declares no commands at all.
+
+    "Active", not "detected": `typo3-processedfiles` has no detect block by
+    design (see the comment at the top of its file), so it is activated by a
+    `features:` key instead. `cli/render.py::render_features` prints both
+    kinds in one block, which is what the assertion reads.
+
+    `appears` are paths that must exist after the sync and must have been
+    removed by the install recipe before it - otherwise the assertion passes
+    against a path the install left behind and proves nothing. `disappears`
+    are paths that must be gone after the sync. `row_marker` reuses
+    `FlushMarker`: a row the cell plants which the sync must have removed.
+    """
+
+    feature: str
+    appears: tuple[str, ...] = ()
+    disappears: tuple[str, ...] = ()
+    row_marker: FlushMarker | None = None
+
+
+@dataclass(frozen=True)
 class Cell:
     """One profile variant, installed for real and synced end to end.
 
@@ -64,6 +91,11 @@ class Cell:
     credentials source runs `wp` over ssh, so its cell adds PHP. It is a field,
     not a shared default, because the packages are installed from the network
     at every start and the other cells should not pay for them.
+
+    `features` is what this cell proves about the *features* the sync
+    activated, as opposed to the profile - see `FeatureCheck`. Defaulted, so
+    the six profile cells state nothing about features and keep asserting
+    exactly what they asserted before this field existed.
     """
 
     # `mx` + letters and digits only, for three independent reasons:
@@ -90,6 +122,7 @@ class Cell:
     seeded_users: tuple[str, ...] = ()
     flush_marker: FlushMarker | None = None
     remote_packages: str = "mariadb-client|rsync"
+    features: tuple[FeatureCheck, ...] = ()
 
 
 # Both TYPO3 cells keep the same cache tables, so they plant the same row.
