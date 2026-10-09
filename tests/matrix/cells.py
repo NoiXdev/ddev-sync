@@ -108,6 +108,12 @@ class Cell:
     #   its argument as an expression and the hyphen is not a substring match.
     # - no underscore: the name ends up in the network alias `ddev-<name>-db`,
     #   which the engine passes to the mysql client as a hostname.
+    # - no name may contain another cell's name: `.github/workflows/matrix.yaml`
+    #   runs one job per cell with `-k "$CELL"`, and `-k` matches a substring of
+    #   the test id - `-k mxtypo312` collects one cell's 25 tests while
+    #   `-k mxtypo31` collects both TYPO3 cells' 50. A feature cell called
+    #   `mxlaravelfeat` would therefore have been swept into the `mxlaravel`
+    #   job, which emits the stock-skeleton `laravel` row; hence `mxfeat*`.
     name: str
     profile: str
     project_type: str
@@ -156,6 +162,71 @@ CELLS: tuple[Cell, ...] = (
         # Not `email`: the profile's sanitize rules rewrite it.
         identity_column="name",
         seeded_users=("Alice Hofer", "Bruno Kalb"),
+    ),
+    Cell(
+        name="mxfeatlaravel",
+        # A second laravel cell, not a change to `mxlaravel`: that cell's row
+        # says "against a fresh laravel/laravel skeleton, profile unchanged",
+        # and installing Filament and Livewire into it would make the sentence
+        # false to save three minutes of runtime.
+        profile="laravel",
+        project_type="laravel",
+        docroot="public",
+        php_image="php:8.3-cli",
+        # The profile-shaped fields are `mxlaravel`'s, verbatim: `Cell`'s
+        # docstring defines `None`/`()` as "the profile has no such rule", so
+        # emptying them here would make that meaning false and print a lying
+        # skip reason. The duplicated profile evidence costs nothing (the same
+        # sync runs either way) and is not what this cell exists to record:
+        # the rows it is here to fill are VERIFIED.md's *feature* rows. Note
+        # that `tools/apply_verified_rows.py` still keys every emitted row by
+        # `profile`, so `--emit mxfeatlaravel` yields a `laravel` row today -
+        # applying one would overwrite `mxlaravel`'s evidence with this cell's.
+        required_tables=("users",),
+        admin_user=None,
+        password_column=("users", "password"),
+        production_url=None,
+        truncated_tables=("sessions", "jobs", "failed_jobs"),
+        identity_column="name",
+        seeded_users=("Alice Hofer", "Bruno Kalb"),
+        features=(
+            FeatureCheck(
+                feature="node-build",
+                # The directory, not a manifest path: where inside it the
+                # manifest lands is the toolchain's choice, so a pinned
+                # filename would break on a version bump without telling
+                # anyone anything true. This build wrote
+                # `public/build/manifest.json` and no `public/build/.vite/`
+                # at all (vite 8.3.4, laravel-vite-plugin 3.2.0).
+                appears=("public/build",),
+            ),
+            FeatureCheck(
+                feature="filament",
+                # `filament:optimize`'s two steps, "Caching components" and
+                # "Caching Blade icons", and the two paths that appear -
+                # measured 2026-10-08 against filament/filament v5.10.1.
+                # `filament:upgrade` is deliberately absent: it reported
+                # success and left no new path, but the probe had not removed
+                # its likely targets under `public/`, so their absence proves
+                # nothing. See the VERIFIED.md row.
+                appears=(
+                    "bootstrap/cache/filament/panels",
+                    "bootstrap/cache/blade-icons.php",
+                ),
+            ),
+            FeatureCheck(
+                feature="livewire",
+                # `livewire:publish --assets` copies
+                # vendor/livewire/livewire/dist into here - eleven files,
+                # the whole of that directory, measured against
+                # livewire/livewire v4.4.7.
+                appears=("public/vendor/livewire",),
+            ),
+            # Detection only. The feature declares no commands at all
+            # ("Detected for reporting; the build itself is node-build's
+            # job"), so that it is reported is the whole of its claim.
+            FeatureCheck(feature="inertia"),
+        ),
     ),
     Cell(
         name="mxtypo313",

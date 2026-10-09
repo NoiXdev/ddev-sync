@@ -1,0 +1,23 @@
+# `remote_credentials: explicit` keeps the cell from depending on a .env on
+# the remote: this cell is about the features' commands, not about credential
+# discovery, which the unit suite already covers exhaustively.
+#
+# No `features:` key on purpose: writing one switches detection off for the
+# whole project (features/resolver.py), and all four features this cell
+# proves are meant to be found by detection.
+version: 1
+targets:
+  production:
+    host: remote
+    user: deploy
+    port: 2222
+    path: /srv/app/
+    stage: production
+database:
+  remote_credentials: explicit
+  credentials:
+    name: acme_prod
+    user: acme
+    password: s3cret
+    host: remote-db
+    port: "3306"
