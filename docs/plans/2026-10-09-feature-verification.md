@@ -20,6 +20,7 @@
 - **And no cell name may contain another cell's name.** `.github/workflows/matrix.yaml` runs one job per cell with `-k "$CELL"`, and `-k` matches substrings of the test id: measured on this registry, `-k mxtypo312` collects 25 tests (one cell) while `-k mxtypo31` collects 50 (both TYPO3 cells). The first draft of this plan named the new cells `mxlaravelfeat` and `mxtypo3feat`; `mxlaravelfeat` contains `mxlaravel`, so CI's existing `mxlaravel` job would have installed and run **both** Laravel cells, doubled its runtime, been able to fail for the other cell's reasons, and then emitted the stock-skeleton `laravel` row from a job that had also run a Filament install — the very provenance decision 1 exists to protect. Hence `mxfeatlaravel` and `mxfeattypo3`: neither contains, nor is contained by, any existing name, while `-k mxfeat` still selects both new cells as a group. Task 4 adds this reason to the comment above `Cell.name`.
 - **A feature cell declares the same profile-shaped fields as its profile sibling.** `Cell`'s docstring defines `admin_user=None` as "the profile has no such rule", and `truncated_tables=()` likewise. A typo3@13 cell that set `admin_user=None` would make that documented meaning false and would print a lying skip reason. So `mxfeatlaravel` copies `mxlaravel`'s field values and `mxfeattypo3` copies `mxtypo313`'s; only `features=(…)` is new. The duplicated profile evidence costs nothing (the same sync runs either way) and is never *claimed*: the rows these cells emit are feature rows (Task 6).
 - **An `appears` path must be absent before the sync, and the install recipe is what makes it absent** (spec decision 4). Forgetting it is silent: the assertion still passes and proves nothing.
+- **A `disappears` path must be *present* before the sync, and the install recipe is what makes it present — and must check that it did.** The mirror of decision 4, and strictly weaker in the test: `appears` has a guard in `test_matrix.py` (the path must not also be in the cell's `remote/` tree, or the files step would create it either way), but a `disappears` path that was never created passes vacuously, and no post-hoc assertion can tell. The recipe's own `test -d` is the only thing that can. Found by Task 3's reviewer.
 - Comments explain *why*, not *what*, and must be **true of the code beside them**. This project treats a comment that states something the adjacent code does not do as a defect in its own right. Read this plan's wording critically and report anything that does not hold rather than copying it.
 - Conventional Commits. Every message ends with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`. Write the message to a file and use `git commit -F <file>`; never nest a heredoc inside another.
 - Git history is linear, fast-forward only. **Do not push.**
@@ -844,6 +845,17 @@ mariadb --skip-ssl --host=ddev-mxfeattypo3-db --user=db --password=db db \
 # setup step can remove it. The feature's command is the only candidate.
 mkdir -p public/fileadmin/_processed_/0/a
 printf 'a stale processed image\n' > public/fileadmin/_processed_/0/a/csm_matrix_abcdef.png
+
+# And checked, because a `disappears` assertion has no attribution guard of
+# its own: `FeatureCheck.appears` is protected by the test refusing a path the
+# cell's remote tree also carries, but a `disappears` path that was never
+# created passes vacuously - the sync would "have removed" something absent.
+# This is the only place that can catch it.
+test -d public/fileadmin/_processed_ || {
+  echo "install.sh did not plant public/fileadmin/_processed_;" \
+       "the cell's disappears-assertion would be vacuous" >&2
+  exit 1
+}
 
 composer show typo3/cms-core | grep -E '^(name|versions) '
 php -v | head -1
