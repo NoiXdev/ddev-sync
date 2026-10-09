@@ -39,11 +39,12 @@ php artisan filament:install --panels --no-interaction
 
 # node-build cannot be activated at all without a lockfile:
 # `features/package_manager.py::detect_package_manager` keys on
-# package-lock.json / yarn.lock / pnpm-lock.yaml and nothing else, and
-# `laravel/laravel` ships none of the three (checked at v13.11.0: all three
-# paths 404). This one install writes package-lock.json - which `npm ci`, the
-# command `${PM_INSTALL}` resolves to, also refuses to run without - and
-# populates node_modules.
+# package-lock.json / yarn.lock / pnpm-lock.yaml and nothing else, and `npm
+# ci` - the command `${PM_INSTALL}` resolves to - refuses to run without one
+# either. The skeleton above is installed unconstrained, so whether the
+# version of the day ships a lockfile is not something this recipe can know;
+# this install writes one regardless, and populates node_modules. The check
+# below is what holds that to account.
 npm install --no-audit --no-fund
 
 # Every path the sync's own feature commands must create, removed again:
@@ -51,14 +52,26 @@ npm install --no-audit --no-fund
 #   public/vendor/livewire           <- livewire:publish --assets
 #   bootstrap/cache/filament         <- filament:optimize, "Caching components"
 #   bootstrap/cache/blade-icons.php  <- filament:optimize, "Caching Blade icons"
-# The npm install above may itself have written public/build, and
-# `filament:install` writes the two caches, so this is a removal and not just
-# a precaution.
+# A precaution, not a removal of anything known to be there: nothing above
+# writes any of the four. `npm install` runs no build - the skeleton's
+# package.json declares only `build` and `dev` and no `postinstall`, and
+# `npm run build` lives in composer's `setup` script, which this recipe never
+# runs - and `filament:install`'s single `call()` is `filament:upgrade`,
+# which reaches `filament:assets` plus config/route/view:clear and nothing
+# that writes bootstrap/cache (the install tail prints "Successfully
+# upgraded!" and no "Caching components"). It stays because a future version
+# that did leave one of these behind would make that path's assertion vacuous
+# with nothing to say so, and `rm -rf` on an absent path costs nothing.
 rm -rf public/build public/vendor/livewire \
        bootstrap/cache/filament bootstrap/cache/blade-icons.php
 
 # The lockfile, on the other hand, must survive: without it the feature is
-# not activated and the whole node-build claim silently becomes a skip.
+# never activated (features/resolver.py yields no layer for a detected
+# feature whose commands use `${PM_*}` when no lockfile is found). Nothing
+# would go quiet if it vanished - `cell.features` is a registry constant, so
+# neither feature body can skip, and both would fail. They would fail four
+# minutes later and read as the sync's fault; this names the cause where the
+# cause is.
 test -f package-lock.json || {
   echo "npm install left no package-lock.json: node-build cannot be activated" >&2
   exit 1

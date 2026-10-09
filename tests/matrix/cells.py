@@ -108,12 +108,14 @@ class Cell:
     #   its argument as an expression and the hyphen is not a substring match.
     # - no underscore: the name ends up in the network alias `ddev-<name>-db`,
     #   which the engine passes to the mysql client as a hostname.
-    # - no name may contain another cell's name: `.github/workflows/matrix.yaml`
-    #   runs one job per cell with `-k "$CELL"`, and `-k` matches a substring of
-    #   the test id - `-k mxtypo312` collects one cell's 25 tests while
-    #   `-k mxtypo31` collects both TYPO3 cells' 50. A feature cell called
-    #   `mxlaravelfeat` would therefore have been swept into the `mxlaravel`
-    #   job, which emits the stock-skeleton `laravel` row; hence `mxfeat*`.
+    #
+    # One further constraint, on the set of names rather than on the charset:
+    # no name may contain another cell's name. `.github/workflows/matrix.yaml`
+    # runs one job per cell with `-k "$CELL"`, and `-k` matches a substring of
+    # the test id - `-k mxtypo312` collects one cell's 25 tests while
+    # `-k mxtypo31` collects both TYPO3 cells' 50. A feature cell called
+    # `mxlaravelfeat` would therefore have been swept into the `mxlaravel`
+    # job, which emits the stock-skeleton `laravel` row; hence `mxfeat*`.
     name: str
     profile: str
     project_type: str
