@@ -1,10 +1,10 @@
-# A real TYPO3 13, built like `mxtypo313` apart from four things: the host
-# name, the `--no-blocking` flag below, the processing folder planted further
-# down and the `test -d` guard that checks it. This cell differs from that one
-# in what it asserts, and the recipe has to keep its premises true because
-# several test bodies here are keyed on the profile or the project type, not
-# on the cell name. `:^13` is explicit because composer's default for this
-# package is the newest major, which is 14.
+# A real TYPO3 13, built like `mxtypo313` apart from three things: the host
+# name, the processing folder planted further down and the `test -d` guard
+# that checks it. This cell differs from that one in what it asserts, and the
+# recipe has to keep its premises true because several test bodies here are
+# keyed on the profile or the project type, not on the cell name. `:^13` is
+# explicit because composer's default for this package is the newest major,
+# which is 14.
 #
 # `--no-blocking` for the same reason `mxtypo312`'s recipe carries it, and
 # with the same scope: composer 2.10.3 refuses to install a package covered by
@@ -20,9 +20,7 @@
 # `mxtypo312`'s recipe, which checked it, and shown again by this cell's sync
 # passing with no override in force by then). On the command rather than in
 # the container's composer config, so nothing is persisted and no later
-# `docker exec` here has advisory blocking quietly switched off. `mxtypo313`
-# carries no such flag and would fail this resolution today; its recipe is
-# left alone here.
+# `docker exec` here has advisory blocking quietly switched off.
 composer create-project --no-interaction --no-blocking --prefer-dist 'typo3/cms-base-distribution:^13' .
 
 # TYPO3's non-interactive installer reads these instead of prompting.
