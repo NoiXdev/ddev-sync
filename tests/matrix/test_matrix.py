@@ -70,7 +70,9 @@ def _active_features(plan: str) -> set[str]:
         elif not (inside and line.startswith(" " * len(FEATURES_LABEL))):
             # Neither the label nor a continuation. Before the block that is
             # just a line to skip; inside it, the block is contiguous and
-            # followed by a blank line, so the first such line ends it.
+            # followed by a blank line, so the first such line ends it. The
+            # renderer's half of that is pinned in `tests/cli/test_render.py`:
+            # `test_render_plan_puts_a_blank_line_below_every_features_block_it_prints`.
             if inside:
                 break
             continue

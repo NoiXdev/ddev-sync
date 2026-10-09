@@ -13,8 +13,7 @@ so the block's own shapes come from the renderer rather than from an idea of
 the format. The last four feed hand-built strings, pinning edges of the parser
 instead: where the block ends, and how a name is read out of a line. Which
 shapes the renderer can or cannot print is deliberately not claimed here -
-that is a statement about `cli/render.py`, and it does not survive being
-maintained in prose over here.
+that is a statement about `cli/render.py`, checked in tests/cli/test_render.py.
 """
 
 from ddev_sync.cli.render import render_features, render_plan

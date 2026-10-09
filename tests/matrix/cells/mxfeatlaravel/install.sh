@@ -1,10 +1,10 @@
 # A real Laravel with four features installed the way a project installs
 # them. The profile side of this cell is `mxlaravel`'s claim, not this one's -
 # what is new here is that `filament`, `livewire`, `inertia` and `node-build`
-# are all activatable afterwards, and that every path their commands have to
-# create is deleted again before the sync runs. Without that deletion an
-# `appears` assertion passes against a path the install left behind, and
-# proves nothing (tests/matrix/cells.py::FeatureCheck).
+# are all activatable afterwards, and that none of the paths their commands
+# create is in place when the sync starts. Otherwise an `appears` assertion
+# passes against a path the install left behind, and proves nothing
+# (tests/matrix/cells.py::FeatureCheck).
 composer create-project --no-interaction --prefer-dist laravel/laravel .
 
 cat > .env <<'ENV'
@@ -47,7 +47,7 @@ php artisan filament:install --panels --no-interaction
 # below is what holds that to account.
 npm install --no-audit --no-fund
 
-# Every path the sync's own feature commands must create, removed again:
+# Every path the sync's own feature commands must create:
 #   public/build                     <- ${PM_RUN} build (node-build)
 #   public/vendor/livewire           <- livewire:publish --assets
 #   bootstrap/cache/filament         <- filament:optimize, "Caching components"
@@ -58,10 +58,11 @@ npm install --no-audit --no-fund
 # `npm run build` lives in composer's `setup` script, which this recipe never
 # runs - and `filament:install`'s single `call()` is `filament:upgrade`,
 # which reaches `filament:assets` plus config/route/view:clear and nothing
-# that writes bootstrap/cache (the install tail prints "Successfully
-# upgraded!" and no "Caching components"). It stays because a future version
-# that did leave one of these behind would make that path's assertion vacuous
-# with nothing to say so, and `rm -rf` on an absent path costs nothing.
+# that writes bootstrap/cache (the tail of `filament:install`'s output prints
+# "Successfully upgraded!" and no "Caching components"). It stays because a
+# future version that did leave one of these behind would make that path's
+# assertion vacuous with nothing to say so, and `rm -rf` on an absent path
+# costs nothing.
 rm -rf public/build public/vendor/livewire \
        bootstrap/cache/filament bootstrap/cache/blade-icons.php
 
@@ -69,9 +70,9 @@ rm -rf public/build public/vendor/livewire \
 # never activated (features/resolver.py yields no layer for a detected
 # feature whose commands use `${PM_*}` when no lockfile is found). Nothing
 # would go quiet if it vanished - `cell.features` is a registry constant, so
-# neither feature body can skip, and both would fail. They would fail four
-# minutes later and read as the sync's fault; this names the cause where the
-# cause is.
+# neither feature body can skip, and both would fail. They would fail only
+# once the whole sync had run, and read as the sync's fault; this names the
+# cause where the cause is.
 test -f package-lock.json || {
   echo "npm install left no package-lock.json: node-build cannot be activated" >&2
   exit 1

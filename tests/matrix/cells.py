@@ -180,8 +180,8 @@ CELLS: tuple[Cell, ...] = (
         # The profile-shaped fields are `mxlaravel`'s, verbatim: `Cell`'s
         # docstring defines `None`/`()` as "the profile has no such rule", so
         # emptying them here would make that meaning false and print a lying
-        # skip reason. The duplicated profile evidence costs nothing (the same
-        # sync runs either way) and is not what this cell exists to record:
+        # skip reason. The duplicated profile evidence costs no extra sync (the
+        # same one runs either way) and is not what this cell exists to record:
         # the rows it is here to fill are VERIFIED.md's *feature* rows, one
         # per `FeatureCheck` below. `tools/apply_verified_rows.py` keys a
         # feature cell's rows by feature name and emits no profile row for
@@ -211,7 +211,7 @@ CELLS: tuple[Cell, ...] = (
                 feature="filament",
                 # `filament:optimize`'s two steps, "Caching components" and
                 # "Caching Blade icons", and the two paths that appear -
-                # measured 2026-10-08 against filament/filament v5.10.1.
+                # measured against filament/filament v5.10.1.
                 # `filament:upgrade` is deliberately absent: it reported
                 # success and left no new path, but the probe had not removed
                 # its likely targets under `public/`, so their absence proves
