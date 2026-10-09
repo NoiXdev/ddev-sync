@@ -29,6 +29,10 @@ PRODUCTION_NAMES = re.compile(r"alice\.hofer|bruno\.kalb")
 # (`cli/render.py::render_header`): the label of the profile variant the engine
 # resolved, which is what `Cell.profile` is the VERIFIED.md row key for.
 PROFILE_HEADER = re.compile(r"^\s*Plan for target '[^']*'\s+(?P<label>\S+)\s*$", re.MULTILINE)
+# `cli/render.py::_FEATURES_LABEL`, and the indent its continuation lines use.
+# The block is "  Features  <name>  <reason>" followed by further names at the
+# same column, and `render_plan` puts a blank line after it.
+FEATURES_LABEL = "  Features  "
 
 
 @pytest.fixture(params=CELLS, ids=lambda cell: cell.name)
@@ -46,6 +50,34 @@ def _admin_rows(stack: Stack, cell: Cell) -> str:
     return stack.sql(
         f"SELECT COUNT(*) FROM `{table}` WHERE `{cell.identity_column}` = '{cell.admin_user}'"
     )
+
+
+def _active_features(plan: str) -> set[str]:
+    """The feature names a dry run's Features block lists.
+
+    Read off the rendered block rather than asked of the resolver, because the
+    block is what a developer sees: a feature that resolved but was not
+    reported is not usefully active. Both activation paths land here - a
+    detected feature and one named by a `features:` key differ only in the
+    reason text beside the name (`features/resolver.py`), which is why the
+    name is all this reads.
+    """
+    names: set[str] = set()
+    inside = False
+    for line in plan.splitlines():
+        if line.startswith(FEATURES_LABEL):
+            inside = True
+        elif not (inside and line.startswith(" " * len(FEATURES_LABEL))):
+            # The block is contiguous and followed by a blank line, so the
+            # first line that is neither the label nor a continuation ends it.
+            if inside:
+                break
+            continue
+        # "(detection disabled by ...)" lands here as one long "name", which
+        # matches no feature and so fails the assertion with the reason in it
+        # rather than passing quietly.
+        names.add(line[len(FEATURES_LABEL) :].split("  ")[0].strip())
+    return names - {""}
 
 
 def test_the_required_tables_exist_where_preflight_looks(stack: Stack, cell: Cell) -> None:
@@ -558,6 +590,75 @@ def test_the_drupal_admin_holds_the_administrator_role(stack: Stack, cell: Cell)
     assert again.returncode == 0, f"stdout:\n{again.stdout}\n\nstderr:\n{again.stderr}"
     assert "already exists" in again.stdout, again.stdout
     assert stack.sql(roles) == "administrator", "an existing account was not given the role again"
+
+
+def test_every_feature_the_cell_names_was_active_in_the_run(stack: Stack, cell: Cell) -> None:
+    # The claim: each feature this cell asserts about was actually activated.
+    # A feature whose commands work while it is never activated is as broken
+    # as one whose commands do not exist - it simply never runs, and every
+    # other assertion in this file would still pass. Only a dry run prints the
+    # block (`render_plan`), and it resolves features exactly as a real run
+    # does; `test_a_whole_sync_succeeds` relies on the same equivalence for
+    # the profile label.
+    if not cell.features:
+        pytest.skip(f"{cell.name} asserts nothing about features")
+    plan = stack.engine("--target", "production", "--steps", "db,sanitize,setup", "--dry-run")
+    assert plan.returncode == 0, f"stdout:\n{plan.stdout}\n\nstderr:\n{plan.stderr}"
+    active = _active_features(plan.stdout)
+    expected = {check.feature for check in cell.features}
+    assert expected <= active, (
+        f"{cell.name} asserts about {sorted(expected - active)}, which this run did not "
+        f"activate; it activated {sorted(active)}\n{plan.stdout}"
+    )
+
+
+def test_each_feature_created_and_removed_the_paths_it_claims(stack: Stack, cell: Cell) -> None:
+    # The claim: every path a feature's commands must create exists after the
+    # sync, and every path they must remove is gone. Asserted on effects
+    # because almost every feature command carries `allow_failure`, which the
+    # engine reports as OK whether or not it worked - the same reason the
+    # profile cells assert `storage:link` and `migrate --force` by effect.
+    paths = [(check, path, True) for check in cell.features for path in check.appears]
+    paths += [(check, path, False) for check in cell.features for path in check.disappears]
+    if not paths:
+        pytest.skip(f"{cell.name} asserts no feature paths")
+    remote = cell_dir(cell.name) / "remote"
+    for check, path, wanted in paths:
+        if wanted:
+            # Attribution: the `files` step pulls the cell's whole `remote/`
+            # tree, so a path that is also on the remote would appear whether
+            # or not the feature ran. The install recipe's removal is the
+            # other half of this precondition (see `FeatureCheck.appears`) and
+            # cannot be checked from here - a recipe that forgot it leaves
+            # this assertion passing vacuously.
+            assert not (remote / path).exists(), (
+                f"{cell.name} claims {check.feature} creates {path}, but the cell's remote "
+                "tree carries it too, so the files step would create it either way"
+            )
+        assert (work_dir(cell.name) / path).exists() == wanted, (
+            f"{path} should {'exist' if wanted else 'be gone'} after the sync: "
+            f"{check.feature}'s command did not take effect"
+        )
+
+
+def test_the_feature_rule_removed_the_planted_row(stack: Stack, cell: Cell) -> None:
+    # The claim: a feature's sanitize rule really empties its table. Same
+    # device as `test_the_flush_cache_rule_removed_the_planted_cache_row`: a
+    # row is planted in a table no other rule touches, and only this rule can
+    # remove it. The remote is never given the row, so the import cannot be
+    # what removes it either.
+    markers = [check.row_marker for check in cell.features if check.row_marker is not None]
+    if not markers:
+        pytest.skip(f"{cell.name} asserts no feature sanitize rule")
+    for marker in markers:
+        count = f"SELECT COUNT(*) FROM `{marker.table}` WHERE {marker.where}"
+        stack.sql(marker.insert)
+        assert stack.sql(count) == "1", f"the row was not planted into {marker.table}"
+        result = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
+        assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+        assert stack.sql(count) == "0", (
+            f"the row survived in {marker.table}: the feature's rule did not take effect"
+        )
 
 
 def test_an_unset_image_is_built_from_this_tree() -> None:
