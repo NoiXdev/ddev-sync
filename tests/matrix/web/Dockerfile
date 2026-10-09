@@ -20,7 +20,15 @@ RUN apt-get update \
  && docker-php-ext-configure gd --with-freetype --with-jpeg \
  && docker-php-ext-install -j"$(nproc)" pdo_mysql mysqli intl zip gd
 
-COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+# Pinned to an exact version rather than `composer:2`: composer's policy
+# defaults are an input to the install recipes, not a detail of the image.
+# 2.10.3 refuses by default to install a package covered by a security
+# advisory, which is why the TYPO3 recipes pass `--no-blocking` to
+# `create-project` and name this version while doing it. A floating `2` moves
+# that behaviour under those comments without anyone choosing it - which is how
+# the blocking arrived here in the first place. Bump it deliberately, and
+# re-read those recipes when doing so.
+COPY --from=composer:2.10.3 /usr/bin/composer /usr/local/bin/composer
 
 # wp-cli, on the PATH rather than downloaded by a recipe: the engine reaches
 # it by `docker exec` (`wp search-replace`, `wp user create`, `wp cache

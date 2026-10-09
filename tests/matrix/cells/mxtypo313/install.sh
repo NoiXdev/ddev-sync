@@ -2,7 +2,23 @@
 # explicit because composer's default for this package is the newest major,
 # which is 14 - the unconstrained command would install a different
 # framework than the profile variant this cell is named for.
-composer create-project --no-interaction --prefer-dist 'typo3/cms-base-distribution:^13' .
+#
+# `--no-blocking` because composer 2.10.3 refuses to install a package covered
+# by a security advisory, and today no TYPO3 13 escapes one: measured
+# 2026-10-09, the solver offered `typo3/cms-core ^13.4 -> satisfiable by
+# typo3/cms-core[v13.4.34, v13.4.35]`, both of which require
+# `enshrined/svg-sanitize ~0.22`, and the one release in that range (0.22.0)
+# carries three advisories (PKSA-8j6w-3kr7-s9xk, PKSA-6j95-1jtb-x6wc,
+# PKSA-cbx2-m9db-bmzd). The one newer svg-sanitize release (1.0.0) is
+# unaffected but outside `~0.22`, so no TYPO3 13 pin avoids them either. A
+# throwaway test installation of an affected release is exactly what this cell
+# is for. Only the resolution needs it: the profile's own `composer install`
+# setup step installs from the lock file this produces and is not blocked
+# (recorded by `mxtypo312`'s recipe, which checked it without any policy
+# override). On the command rather than in the container's composer config, so
+# nothing is persisted and no later `docker exec` here has advisory blocking
+# quietly switched off.
+composer create-project --no-interaction --no-blocking --prefer-dist 'typo3/cms-base-distribution:^13' .
 
 # TYPO3's non-interactive installer reads these instead of prompting.
 TYPO3_DB_DRIVER=mysqli \
