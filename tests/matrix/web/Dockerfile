@@ -41,3 +41,24 @@ COPY --from=composer:2.10.3 /usr/bin/composer /usr/local/bin/composer
 # out of it while extracting WordPress. DDEV's own web container raises it too.
 ADD --chmod=0755 https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar /usr/local/bin/wp
 RUN echo 'memory_limit = 512M' > /usr/local/etc/php/conf.d/zz-matrix-memory.ini
+
+# node and npm, for the same reason as wp-cli above: the engine runs
+# `${PM_INSTALL}` / `${PM_RUN} build` (features/node-build.yaml) by `docker
+# exec`, which sees this image's PATH and not an install recipe's exports. A
+# real DDEV web container ships node too.
+#
+# Copied from the official node image rather than installed from apt, because
+# Debian's `npm` package trails: the Laravel skeleton's package.json pins
+# `vite ^8`, which refuses to run on anything below node 20.19 / 22.12.
+#
+# `bookworm`, while `php:8.3-cli` and `php:8.2-cli` are both trixie: a binary
+# built against an older glibc runs on a newer one, and the reverse does not,
+# so the older base is the safe one to copy from whichever way the php images
+# move next. Measured: node v22.23.3 and npm 10.9.9 run on both php bases.
+#
+# npm is a package under /usr/local/lib/node_modules, not a binary, so the
+# node image's own symlinks are recreated here rather than copied.
+COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
