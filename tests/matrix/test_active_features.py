@@ -1,15 +1,21 @@
 """The parser the feature assertions stand on, checked without a stack.
 
-`_active_features` reads the Features block of a printed plan, and the matrix
-bodies that use it skip until a cell declares a feature - so on their own they
-would never exercise it in an ordinary run. Unmarked on purpose, like
-`test_feature_registry.py`: the `matrix` marker is applied by `pytestmark` in
-`test_matrix.py` alone, and importing that module only defines functions, so
-nothing here brings a stack up.
+`_active_features` reads the Features block of a printed plan. The matrix
+bodies that use it are deselected by the `matrix` marker in an ordinary run,
+and when that marker is selected they skip until a cell declares a feature -
+so on their own they would never exercise it in an ordinary run. Unmarked on
+purpose, like `test_feature_registry.py`: the `matrix` marker is applied by
+`pytestmark` in `test_matrix.py` alone, and importing that module only defines
+functions, so nothing here brings a stack up.
 
-At least one input per case comes from `render_features`/`render_plan` rather
-than a hand-written string: a hand-built string proves the parser matches an
-idea of the format, the renderer's own output proves it matches the format.
+Every shape the renderer can emit is fed from `render_features`/`render_plan`:
+a hand-built string proves the parser matches an idea of the format, the
+renderer's own output proves it matches the format. The last four tests are
+hand-built because the renderer cannot produce what they feed - text after the
+block that is indented like a continuation, a line shorter than the
+continuation column right after the block, a whitespace-only line, a name a
+column past the label. They are defensive: they pin how the parser behaves on
+input the renderer never emits today, not a format anyone prints.
 """
 
 from ddev_sync.cli.render import render_features, render_plan
