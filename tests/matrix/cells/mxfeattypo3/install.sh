@@ -1,27 +1,29 @@
-# A real TYPO3 13, built like `mxtypo313` apart from the host name, the
-# composer-policy line directly below and the processing folder planted
-# further down - this cell differs from it in what it asserts, and the recipe
-# has to keep that cell's premises true because several test bodies here are
-# keyed on the profile or the project type, not on the cell name.
-
-# Without this line the install below cannot resolve at all, so it is not a
-# convenience: this image's composer (2.10.3, from `composer:2`) refuses to
-# install a package covered by a security advisory, and a stock TYPO3 13 is
-# covered today. Measured 2026-10-09 - the solver reported `typo3/cms-core
-# ^13.4 -> satisfiable by typo3/cms-core[v13.4.34, v13.4.35]`, both of which
-# require `enshrined/svg-sanitize ~0.22`, and the one release in that range
-# (0.22.0) carries three advisories (PKSA-8j6w-3kr7-s9xk,
-# PKSA-6j95-1jtb-x6wc, PKSA-cbx2-m9db-bmzd). `mxtypo313` carries the same
-# composer and would fail the same way if it were installed today; this is a
-# divergence from its recipe for that reason and no other. Written to the
-# container's own composer home, which also makes it apply to the engine's
-# `composer install` setup step: every `docker exec` into this container
-# inherits its HOME=/tmp (tests/matrix/docker-compose.yaml).
-composer config --global policy.advisories.block false
-
-# `:^13` is explicit because composer's default for this package is the newest
-# major, which is 14.
-composer create-project --no-interaction --prefer-dist 'typo3/cms-base-distribution:^13' .
+# A real TYPO3 13, built like `mxtypo313` apart from four things: the host
+# name, the `--no-blocking` flag below, the processing folder planted further
+# down and the `test -d` guard that checks it. This cell differs from that one
+# in what it asserts, and the recipe has to keep its premises true because
+# several test bodies here are keyed on the profile or the project type, not
+# on the cell name. `:^13` is explicit because composer's default for this
+# package is the newest major, which is 14.
+#
+# `--no-blocking` for the same reason `mxtypo312`'s recipe carries it, and
+# with the same scope: composer 2.10.3 refuses to install a package covered by
+# a security advisory, so without the flag this project cannot be resolved at
+# all. Measured 2026-10-09 - the solver offered `typo3/cms-core ^13.4 ->
+# satisfiable by typo3/cms-core[v13.4.34, v13.4.35]`, both of which require
+# `enshrined/svg-sanitize ~0.22`, and the one release in that range (0.22.0)
+# carries three advisories (PKSA-8j6w-3kr7-s9xk, PKSA-6j95-1jtb-x6wc,
+# PKSA-cbx2-m9db-bmzd); no TYPO3 13 pin avoids them. A throwaway test
+# installation of an affected release is exactly what this cell is for. Only
+# the resolution needs it: the profile's own `composer install` setup step
+# installs from the lock file this produces and is not blocked (recorded by
+# `mxtypo312`'s recipe, which checked it, and shown again by this cell's sync
+# passing with no override in force by then). On the command rather than in
+# the container's composer config, so nothing is persisted and no later
+# `docker exec` here has advisory blocking quietly switched off. `mxtypo313`
+# carries no such flag and would fail this resolution today; its recipe is
+# left alone here.
+composer create-project --no-interaction --no-blocking --prefer-dist 'typo3/cms-base-distribution:^13' .
 
 # TYPO3's non-interactive installer reads these instead of prompting.
 TYPO3_DB_DRIVER=mysqli \

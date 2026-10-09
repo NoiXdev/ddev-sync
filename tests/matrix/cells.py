@@ -113,7 +113,9 @@ class Cell:
     # no name may contain another cell's name. `.github/workflows/matrix.yaml`
     # runs one job per cell with `-k "$CELL"`, and `-k` matches a substring of
     # the test id - `-k mxtypo312` collects one cell's 25 tests while
-    # `-k mxtypo31` collects both TYPO3 cells' 50. A feature cell called
+    # `-k mxtypo31` collects 50, from `mxtypo312` and `mxtypo313`
+    # both (`mxfeattypo3`, the third TYPO3 cell, does not carry that
+    # substring, which is the point). A feature cell called
     # `mxlaravelfeat` would therefore have been swept into the `mxlaravel`
     # job, which emits the stock-skeleton `laravel` row; hence `mxfeat*`.
     name: str
@@ -133,7 +135,7 @@ class Cell:
     features: tuple[FeatureCheck, ...] = ()
 
 
-# Both TYPO3 cells keep the same cache tables, so they plant the same row.
+# Every TYPO3 cell keeps the same cache tables, so they all plant the same row.
 TYPO3_FLUSH_MARKER = FlushMarker(
     table="cache_hash",
     # `expires` far in the future, so an expiry sweep cannot be what removes the
