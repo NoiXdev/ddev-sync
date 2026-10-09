@@ -1107,7 +1107,26 @@ Expected: PASS, all cases.
 
 The workflow needs no change: `.github/workflows/matrix.yaml` prints whatever `--emit` returns inside a code fence, and `--apply` already skips non-row lines and reads each row independently.
 
-- [ ] **Step 5: Apply the evidence cells**
+- [ ] **Step 5: Retire the two registry comments that only held until now**
+
+Task 4's implementer refused to commit this plan's claim that "the rows this cell
+emits are feature rows", because it was false until the step above. In its place
+it committed, in the `mxfeatlaravel` entry of `tests/matrix/cells.py`, a sentence
+recording the behaviour you have just changed:
+
+> Note that `tools/apply_verified_rows.py` still keys every emitted row by
+> `profile`, so `--emit mxfeatlaravel` yields a `laravel` row today -
+> applying one would overwrite `mxlaravel`'s evidence with this cell's.
+
+That is now wrong, and leaving it would be exactly the defect this repository
+treats as real. Replace those sentences with the plain fact: the rows this cell
+fills are `VERIFIED.md`'s feature rows, one per `FeatureCheck`, and no profile
+row is emitted for it. Check the `mxfeattypo3` entry for the same wording and
+fix it too if Task 5 carried it over. **Verify by running
+`uv run python -m tools.apply_verified_rows --emit mxfeatlaravel` and reading
+its output** — do not take this plan's word for what the tool now does.
+
+- [ ] **Step 6: Apply the evidence cells**
 
 From the repository root, using the run URL or local timestamp as `--run`:
 
@@ -1128,7 +1147,7 @@ and for the TYPO3 row:
 
 `typo3/cms-core <v> (stock cms-base-distribution ^13), PHP <v> (php:8.3-cli), ddev-sync:dev built from <short sha>`
 
-- [ ] **Step 6: Write the five Notes cells**
+- [ ] **Step 7: Write the five Notes cells**
 
 Replace each row's *Notes* cell. These say exactly what the runs showed and no more — the rule the file states in its own header. Substitute `<v>` from the run; change nothing else.
 
@@ -1152,7 +1171,7 @@ Replace each row's *Notes* cell. These say exactly what the runs showed and no m
 
 > Verified against typo3/cms-core <v> (stock `cms-base-distribution ^13`, `mxfeattypo3` cell), activated by a `features:` key because the feature has no detect block by design. **Proven by effect, both halves:** the `clear-processed-files` rule — a row planted in `sys_file_processedfile` after the import is gone after a `sanitize` run, and the remote never carried it, so the import cannot be what removed it; and the setup command `rm -rf ${DDEV_DOCROOT}/fileadmin/_processed_` — the install plants `public/fileadmin/_processed_/0/a/csm_matrix_abcdef.png` and the directory is gone after the sync, with the `files` step ruled out because no profile sets `delete:` on a `files.paths` entry. The second is the first run of the only shipped feature that interpolates `${DDEV_DOCROOT}` into an `rm -rf`, the reason `operations/placeholders.py::_validated_docroot` exists. The rule carries no `tolerate_missing_table`, which is correct: the table is in `typo3/sysext/core/ext_tables.sql` itself (line 120 at v13.4.2). **Not run:** a docroot other than `public`; a `sys_file_storage` with a non-default `processingfolder`, which the feature's own comment already records as out of its reach; TYPO3 9–12 and 14.
 
-- [ ] **Step 7: Run the gates**
+- [ ] **Step 8: Run the gates**
 
 ```bash
 uv run pytest
@@ -1161,7 +1180,7 @@ uv run ruff format --check .
 uv run mypy src tests tools
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 cat > /tmp/ddev-sync-commit-6.txt <<'MSG'

@@ -136,7 +136,7 @@ then removes the paths the sync must recreate.
 |---|---|---|
 | `livewire` | `appears: public/vendor/livewire/` | `livewire:publish --assets` publishes the asset directory; the recipe deletes it first |
 | `filament` | `appears: bootstrap/cache/filament/panels/`, `bootstrap/cache/blade-icons.php` | Measured (see below). `filament:optimize` prints two steps, "Caching components" and "Caching Blade icons", and those are the two paths that appear |
-| `node-build` | `appears: public/build/` | Laravel's `package.json` really ships `"build": "vite build"` (checked against `laravel/laravel` 12.x), so `detect` fires; Vite writes into `public/build/`. The **directory** is asserted, not a manifest path, because Vite 5 moved the manifest into `public/build/.vite/` and a pinned filename would break on a version bump without telling anyone anything true. One precondition, below, is not optional |
+| `node-build` | `appears: public/build/` | Laravel's `package.json` really ships `"build": "vite build"` (checked against `laravel/laravel` 12.x), so `detect` fires; Vite writes into `public/build/`. The **directory** is asserted, not a manifest path, so the claim does not depend on where inside it the manifest lands. One precondition, below, is not optional |
 | `inertia` | detection only | The feature declares no commands — "Detected for reporting; the build itself is node-build's job" |
 
 `node` and `npm` join the web image, beside composer and wp-cli, which are
@@ -154,8 +154,11 @@ with `filament/filament` v5.10.1 and `livewire/livewire` v4.4.7 on a
   as a real project would have, because without a panel there is nothing to
   cache. The cell's recipe does the same, then deletes the caches.
 - `livewire:publish --assets` copies `vendor/livewire/livewire/dist` into
-  `public/vendor/livewire/` - thirteen files, `livewire.js` and
-  `manifest.json` among them.
+  `public/vendor/livewire/` - eleven files, `livewire.js` and `manifest.json`
+  among them. (This entry said *thirteen* until the `mxfeatlaravel` cell ran:
+  that run published eleven at the same v4.4.7, and `dist` itself holds
+  eleven. The earlier probe's count was wrong, and the cell is what caught
+  it - which is the point of the cell.)
 - **`filament:upgrade` is not settled by this measurement.** It printed
   "Successfully upgraded!" and no new path appeared - but its likely outputs
   are assets published under `public/`, which `filament:install` had already
