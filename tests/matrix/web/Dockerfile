@@ -48,8 +48,13 @@ RUN echo 'memory_limit = 512M' > /usr/local/etc/php/conf.d/zz-matrix-memory.ini
 # real DDEV web container ships node too.
 #
 # Copied from the official node image rather than installed from apt, because
-# Debian's `npm` package trails: the Laravel skeleton's package.json pins
-# `vite ^8`, which refuses to run on anything below node 20.19 / 22.12.
+# that pins a known node and npm instead of whatever apt resolves on the day.
+# On trixie that is node 20.19.2 and npm 9.2.0 today. The node does satisfy
+# the Laravel skeleton's `vite ^8` (`^20.19.0 || >=22.12.0`), but only by
+# sitting exactly on the boundary, and apt's version is whatever the base
+# image's Debian release carries, which has moved under this repo once: the
+# php images were bookworm and are trixie now. The npm gap is not on any
+# boundary: 9.2.0 against the 10.9.9 that node 22 ships.
 #
 # `bookworm`, while `php:8.3-cli` and `php:8.2-cli` are both trixie: a binary
 # built against an older glibc runs on a newer one, and the reverse does not,
@@ -57,7 +62,9 @@ RUN echo 'memory_limit = 512M' > /usr/local/etc/php/conf.d/zz-matrix-memory.ini
 # move next. Measured: node v22.23.3 and npm 10.9.9 run on both php bases.
 #
 # npm is a package under /usr/local/lib/node_modules, not a binary, so the
-# node image's own symlinks are recreated here rather than copied.
+# node image's npm and npx symlinks are recreated here rather than copied. The
+# copy also brings corepack's package along; its symlink is deliberately not
+# recreated, as nothing in this image or the matrix uses corepack.
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
