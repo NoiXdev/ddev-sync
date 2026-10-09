@@ -52,9 +52,8 @@ RUN echo 'memory_limit = 512M' > /usr/local/etc/php/conf.d/zz-matrix-memory.ini
 # On trixie that is node 20.19.2 and npm 9.2.0 today. The node does satisfy
 # the Laravel skeleton's `vite ^8` (`^20.19.0 || >=22.12.0`), but only by
 # sitting exactly on the boundary, and apt's version is whatever the base
-# image's Debian release carries, which has moved under this repo once: the
-# php images were bookworm and are trixie now. The npm gap is not on any
-# boundary: 9.2.0 against the 10.9.9 that node 22 ships.
+# image's Debian release carries, which this repo does not control. The npm
+# gap is not on any boundary: 9.2.0 against the 10.9.9 that node 22 ships.
 #
 # `bookworm`, while `php:8.3-cli` and `php:8.2-cli` are both trixie: a binary
 # built against an older glibc runs on a newer one, and the reverse does not,
