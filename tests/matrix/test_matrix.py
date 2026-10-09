@@ -68,8 +68,9 @@ def _active_features(plan: str) -> set[str]:
         if line.startswith(FEATURES_LABEL):
             inside = True
         elif not (inside and line.startswith(" " * len(FEATURES_LABEL))):
-            # The block is contiguous and followed by a blank line, so the
-            # first line that is neither the label nor a continuation ends it.
+            # Neither the label nor a continuation. Before the block that is
+            # just a line to skip; inside it, the block is contiguous and
+            # followed by a blank line, so the first such line ends it.
             if inside:
                 break
             continue
@@ -597,12 +598,14 @@ def test_every_feature_the_cell_names_was_active_in_the_run(stack: Stack, cell: 
     # A feature whose commands work while it is never activated is as broken
     # as one whose commands do not exist - it simply never runs, and every
     # other assertion in this file would still pass. Only a dry run prints the
-    # block (`render_plan`), and it resolves features exactly as a real run
-    # does; `test_a_whole_sync_succeeds` relies on the same equivalence for
-    # the profile label.
+    # block (`render_plan`), and it resolves features through the same code as
+    # a real run - but against the project tree as it stands after the sync,
+    # not the tree the sync itself resolved against. The step selection is the
+    # sync's, as in `test_a_whole_sync_succeeds`.
     if not cell.features:
         pytest.skip(f"{cell.name} asserts nothing about features")
-    plan = stack.engine("--target", "production", "--steps", "db,sanitize,setup", "--dry-run")
+    steps = "db,files,sanitize,setup"
+    plan = stack.engine("--target", "production", "--steps", steps, "--dry-run")
     assert plan.returncode == 0, f"stdout:\n{plan.stdout}\n\nstderr:\n{plan.stderr}"
     active = _active_features(plan.stdout)
     expected = {check.feature for check in cell.features}
@@ -625,12 +628,15 @@ def test_each_feature_created_and_removed_the_paths_it_claims(stack: Stack, cell
     remote = cell_dir(cell.name) / "remote"
     for check, path, wanted in paths:
         if wanted:
-            # Attribution: the `files` step pulls the cell's whole `remote/`
-            # tree, so a path that is also on the remote would appear whether
-            # or not the feature ran. The install recipe's removal is the
-            # other half of this precondition (see `FeatureCheck.appears`) and
-            # cannot be checked from here - a recipe that forgot it leaves
-            # this assertion passing vacuously.
+            # Attribution: the `files` step pulls what `files.paths` maps from
+            # the cell's `remote/` tree, so a path that is also on the remote
+            # would appear whether or not the feature ran. The guard is
+            # deliberately conservative: a `remote/` file outside a mapped path
+            # trips it although the files step would not have created it,
+            # which refuses a cell rather than passing one wrongly. The install
+            # recipe's removal is the other half of this precondition (see
+            # `FeatureCheck.appears`) and cannot be checked from here - a
+            # recipe that forgot it leaves this assertion passing vacuously.
             assert not (remote / path).exists(), (
                 f"{cell.name} claims {check.feature} creates {path}, but the cell's remote "
                 "tree carries it too, so the files step would create it either way"
