@@ -639,7 +639,8 @@ def test_each_feature_created_and_removed_the_paths_it_claims(stack: Stack, cell
             # recipe that forgot it leaves this assertion passing vacuously.
             assert not (remote / path).exists(), (
                 f"{cell.name} claims {check.feature} creates {path}, but the cell's remote "
-                "tree carries it too, so the files step would create it either way"
+                "tree carries it too, so the files step could create it whether or not "
+                "the feature ran"
             )
         assert (work_dir(cell.name) / path).exists() == wanted, (
             f"{path} should {'exist' if wanted else 'be gone'} after the sync: "
