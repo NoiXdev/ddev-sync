@@ -8,21 +8,13 @@ purpose, like `test_feature_registry.py`: the `matrix` marker is applied by
 `pytestmark` in `test_matrix.py` alone, and importing that module only defines
 functions, so nothing here brings a stack up.
 
-The first seven tests feed the parser `render_features`/`render_plan` output,
-so the shapes of the block itself are the ones this renderer prints rather
-than an idea of the format. The last four are hand-built, and not for one
-reason. The first of them,
-`test_the_block_ends_at_the_blank_line_so_later_deep_indentation_is_not_a_name`,
-pins a shape a real project can print: `render_plan` writes `step.detail` raw
-and a hook's `run:` string reaches it unescaped (`engine/plan.py::_hook_detail`),
-so a multi-line `run:` whose later lines are indented past the label width puts
-deeply indented text below the block - and the parser's break at the blank line
-is what keeps it out of the names. The other three feed shapes this renderer
-does not print - a non-blank line shorter than the continuation column directly
-after the block (`render_plan` always appends a blank line there), a
-whitespace-only line inside the block (every line in it is built from a
-feature's name), a name one column past the label (`render_features` indents
-every continuation to exactly the label's width) - and are defensive.
+The first seven tests take their input from `render_features`/`render_plan`,
+so the block's own shapes come from the renderer rather than from an idea of
+the format. The last four feed hand-built strings, pinning edges of the parser
+instead: where the block ends, and how a name is read out of a line. Which
+shapes the renderer can or cannot print is deliberately not claimed here -
+that is a statement about `cli/render.py`, and it does not survive being
+maintained in prose over here.
 """
 
 from ddev_sync.cli.render import render_features, render_plan
@@ -104,6 +96,15 @@ def test_a_whole_plan_yields_only_the_features_not_the_header_notices_or_steps()
 
 
 def test_the_block_ends_at_the_blank_line_so_later_deep_indentation_is_not_a_name() -> None:
+    """Deeply indented text below the block is not hypothetical. A hook's
+    `run:` string reaches the rendered plan unescaped
+    (`engine/plan.py::_hook_detail`), so a multi-line `run:` in a project's
+    config carries its own later lines down there; rendering a plan from one
+    such hook put a 14-space line below the block. The fixture is trimmed
+    rather than copied from that plan, because what the parser has to get
+    right is just this: the blank line ended the block, so a deep indentation
+    after it is not a name.
+    """
     plan = "\n".join(
         [
             "  Features  node-build  detected: package.json",
