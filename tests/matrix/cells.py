@@ -254,6 +254,63 @@ CELLS: tuple[Cell, ...] = (
         flush_marker=TYPO3_FLUSH_MARKER,
     ),
     Cell(
+        name="mxfeattypo3",
+        # A second typo3@13 cell for the same reason `mxfeatlaravel` is a
+        # second laravel cell: the typo3@13 row rests on a stock install, and
+        # this one is not stock.
+        profile="typo3@13",
+        project_type="typo3",
+        docroot="public",
+        php_image="php:8.3-cli",
+        # `mxtypo313`'s profile-shaped fields, verbatim - see the note on
+        # `mxfeatlaravel` for why they are not emptied.
+        required_tables=("be_sessions", "sys_log", "be_users"),
+        admin_user="ddev",
+        password_column=("be_users", "password"),
+        production_url=None,
+        truncated_tables=("be_sessions", "sys_log", "fe_sessions"),
+        identity_column="username",
+        seeded_users=("editor.hofer", "editor.kalb"),
+        flush_marker=TYPO3_FLUSH_MARKER,
+        features=(
+            FeatureCheck(
+                feature="typo3-processedfiles",
+                # The feature contributes both a sanitize rule and a setup
+                # command, so both get evidence.
+                #
+                # The rule is `TRUNCATE TABLE sys_file_processedfile` with no
+                # `tolerate_missing_table`, and that is correct: the table is
+                # defined in typo3/cms-core's own ext_tables.sql - line 123 of
+                # vendor/typo3/cms-core/ext_tables.sql in the v13.4.35 this
+                # cell installed - so a core install always has it. Every
+                # column of the table the run actually created is
+                # auto-increment (`uid`), nullable (`name`, `processing_url`,
+                # `configuration`) or carries a DEFAULT; read off
+                # `SHOW CREATE TABLE` rather than off that .sql file, since
+                # TYPO3's schema migrator is what turns the one into the
+                # other. That is why this two-column INSERT is valid under the
+                # local database's strict mode (`@@sql_mode` was
+                # STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,
+                # NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION).
+                row_marker=FlushMarker(
+                    table="sys_file_processedfile",
+                    insert=(
+                        "INSERT INTO sys_file_processedfile (identifier, task_type) "
+                        "VALUES ('matrix_marker', 'Image.CropScaleMask')"
+                    ),
+                    where="identifier = 'matrix_marker'",
+                ),
+                # The setup command is
+                # `rm -rf ${DDEV_DOCROOT}/fileadmin/_processed_`, and this is
+                # the only shipped feature that interpolates a placeholder
+                # into an `rm -rf` - the reason
+                # `operations/placeholders.py::_validated_docroot` exists.
+                # Until this cell, no run had exercised it.
+                disappears=("public/fileadmin/_processed_",),
+            ),
+        ),
+    ),
+    Cell(
         name="mxtypo312",
         profile="typo3@12",
         project_type="typo3",

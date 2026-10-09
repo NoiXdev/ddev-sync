@@ -1,0 +1,27 @@
+# `remote_credentials: explicit` keeps the cell from depending on a .env on
+# the remote: this cell is about the feature's commands, not about credential
+# discovery, which the unit suite already covers exhaustively.
+version: 1
+targets:
+  production:
+    host: remote
+    user: deploy
+    port: 2222
+    path: /srv/app/
+    stage: production
+database:
+  remote_credentials: explicit
+  credentials:
+    name: acme_prod
+    user: acme
+    password: s3cret
+    host: remote-db
+    port: "3306"
+# Requested, not detected: `typo3-processedfiles` has no detect block on
+# purpose - "whether you care is a judgement, not a property of the project"
+# (features/typo3-processedfiles.yaml) - so a `features:` key is the only way
+# it can be active. Writing one also switches detection off for this project
+# (features/resolver.py), which costs nothing here: this is the only feature
+# the cell is about.
+features:
+  - typo3-processedfiles
