@@ -99,9 +99,14 @@ class FeatureCheck:
     """What a cell proves about one feature.
 
     `feature` is the name `features/<name>.yaml` declares, and naming it is
-    itself an assertion: the run must report that feature as detected. A
+    itself an assertion: the run must report that feature as active. A
     check with nothing else set therefore still proves something, which is
     exactly `inertia`'s case - it declares no commands at all.
+
+    "Active", not "detected": `typo3-processedfiles` has no detect block by
+    design (see the comment at the top of its file), so it is activated by a
+    `features:` key instead. `cli/render.py::render_features` prints both
+    kinds in one block, which is what the assertion reads.
 
     `appears` are paths that must exist after the sync and must have been
     removed by the install recipe before it (see decision 4).
@@ -124,7 +129,7 @@ and on `Cell`:
 Defaulted, so the six existing cells are unchanged and keep asserting exactly
 what they assert today.
 
-### `mxlaravelfeat` — four features on one Laravel
+### `mxfeatlaravel` — four features on one Laravel
 
 `profile: laravel`, `php_image: php:8.3-cli`, same stand-in remote and
 credentials as `mxlaravel`. Its `install.sh` builds the same
@@ -165,7 +170,11 @@ with `filament/filament` v5.10.1 and `livewire/livewire` v4.4.7 on a
   created and the probe did not remove, so their absence from the diff says
   nothing. The cell asserts `filament:optimize`'s two files only, and the
   `VERIFIED.md` row records `filament:upgrade` as **exercised, effect not
-  observed**, in the same words the wordpress row uses for `wp cache flush`.
+  observed**, on that reasoning alone. (This asked for "the same words the
+  wordpress row uses for `wp cache flush`" until 88e52ee dropped the
+  comparison from the row as backwards: `wp cache flush` does have effect
+  evidence, with the object-cache drop-in that cell installs, and is unproven
+  only on a stock site.)
   An implementer who removes what `filament:assets` publishes and finds an
   attributable effect may add it; nobody should invent one.
 
@@ -190,7 +199,7 @@ directory afterwards, which is the same precondition decision 4 describes,
 and the sync's own `${PM_RUN} build` is then the only thing that can bring it
 back.
 
-### `mxtypo3feat` — one feature on TYPO3 13
+### `mxfeattypo3` — one feature on TYPO3 13
 
 `profile: typo3@13`, `php_image: php:8.3-cli`, built like `mxtypo313`.
 `typo3-processedfiles` contributes both a sanitize rule and a setup command,

@@ -30,7 +30,7 @@
 
 Both are narrowings, found while reading the code the spec describes. They are listed here so a reviewer does not read them as drift.
 
-1. **The spec's `FeatureCheck` docstring says the run must report the feature "as detected".** `typo3-processedfiles` has **no detect block, on purpose** (see the comment at the top of `features/typo3-processedfiles.yaml`: "whether you care is a judgement, not a property of the project"), so it can only ever be *requested*. `cli/render.py::render_features` prints requested and detected features in the same block, with the reason text differing (`from <source>` versus `detected: <what matched>`). The assertion is therefore **"active in this run"**, read off that block, and the docstring in the code says so.
+1. **The spec's `FeatureCheck` docstring said the run must report the feature "as detected".** `typo3-processedfiles` has **no detect block, on purpose** (see the comment at the top of `features/typo3-processedfiles.yaml`: "whether you care is a judgement, not a property of the project"), so it can only ever be *requested*. `cli/render.py::render_features` prints requested and detected features in the same block, with the reason text differing (`from <source>` versus `detected: <what matched>`). The assertion is therefore **"active in this run"**, read off that block, and the docstring in the code says so.
 
 2. **The spec says "`node` and `npm` join the web image".** The exact lines are measured in Task 2: the `php:*-cli` images are now Debian 13 (trixie), and the node binaries are copied from `node:22-bookworm-slim` — older glibc, which runs on a newer one, not the reverse.
 
@@ -42,7 +42,7 @@ Do not re-measure these; do not contradict them without measuring.
 |---|---|
 | `filament/filament` v5.10.1, `livewire/livewire` v4.4.7, `inertiajs/inertia-laravel` v3.5.1 are the current releases | packagist, 2026-10-09 |
 | `filament:optimize` prints `Caching components` and `Caching Blade icons`, and exactly two paths appear: `bootstrap/cache/filament/panels/admin.php` and `bootstrap/cache/blade-icons.php` — after `filament:install --panels`, because without a panel there is nothing to cache | spec, measured 2026-10-08 in the matrix web image |
-| `livewire:publish --assets` copies `vendor/livewire/livewire/dist` into `public/vendor/livewire/` — thirteen files | spec, measured 2026-10-08 |
+| `livewire:publish --assets` copies `vendor/livewire/livewire/dist` into `public/vendor/livewire/` — eleven files | spec, as corrected by the `mxfeatlaravel` run (b5c98dd); the 2026-10-08 probe said thirteen and was wrong |
 | **`filament:upgrade` is not settled.** It printed "Successfully upgraded!" and no new path appeared, but its likely outputs are assets under `public/` that `filament:install` had already created and the probe did not remove. Nothing may be asserted for it | spec, measured 2026-10-08 |
 | Filament cannot be installed on a bare `php:8.3-cli`: its dependency tree needs `ext-intl` (`filament/filament`'s own `require` block does not name it — it is transitive). The matrix web image already builds `intl` for TYPO3's sake | spec, 2026-10-08; the `require` block checked on packagist 2026-10-09 |
 | `laravel/laravel` v13.11.0 ships `"build": "vite build"` and **none** of `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` (all three 404 at that tag). `detect_package_manager` keys on the lockfile and nothing else; `require_package_manager` raises without one; `${PM_INSTALL}` resolves to `npm ci`, which also refuses to run without one | checked 2026-10-09 |
@@ -700,10 +700,12 @@ In `tests/matrix/cells.py`, add this entry to `CELLS` immediately after the `mxl
         features=(
             FeatureCheck(
                 feature="node-build",
-                # The directory, not a manifest path: Vite 5 moved the
-                # manifest into `public/build/.vite/`, so a pinned filename
-                # would break on a version bump without telling anyone
-                # anything true.
+                # The directory, not a manifest path: where inside it the
+                # manifest lands is the toolchain's choice, so a pinned
+                # filename would break on a version bump without telling
+                # anyone anything true. This build wrote
+                # `public/build/manifest.json` and no `public/build/.vite/`
+                # at all (vite 8.3.4, laravel-vite-plugin 3.2.0).
                 appears=("public/build",),
             ),
             FeatureCheck(
@@ -723,8 +725,9 @@ In `tests/matrix/cells.py`, add this entry to `CELLS` immediately after the `mxl
             FeatureCheck(
                 feature="livewire",
                 # `livewire:publish --assets` copies
-                # vendor/livewire/livewire/dist into here - thirteen files,
-                # measured against livewire/livewire v4.4.7.
+                # vendor/livewire/livewire/dist into here - eleven files,
+                # the whole of that directory, measured against
+                # livewire/livewire v4.4.7.
                 appears=("public/vendor/livewire",),
             ),
             # Detection only. The feature declares no commands at all
@@ -1153,11 +1156,11 @@ Replace each row's *Notes* cell. These say exactly what the runs showed and no m
 
 **`node-build`:**
 
-> Verified against a `laravel/laravel` skeleton (`mxfeatlaravel` cell), npm <v> on node <v>. **Proven by effect:** detection fires on this project's real `package.json` (`file_exists: package.json` and `npm_script: build`, both required), and `${PM_RUN} build` writes `public/build/` — the install deletes that directory first and the cell's remote tree does not carry it, so only the build can have created it. The directory is asserted, not a manifest path: Vite 5 moved the manifest into `public/build/.vite/`, so a pinned filename would break on a version bump without saying anything true. **Found, and the recipe works around it rather than the engine:** `detect_package_manager` keys on a lockfile and nothing else, and `laravel/laravel` ships none of `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` (all three 404 at v13.11.0), so the feature cannot be activated on a fresh skeleton at all until something runs an install — the cell's recipe runs `npm install` once for exactly that reason, and `${PM_INSTALL}` (`npm ci`) then has the lockfile it also requires. **Not run:** yarn and pnpm, which the unit suite covers but no install does; a non-default `script` setting; a project whose build writes somewhere other than `public/build/`.
+> Verified against a `laravel/laravel` skeleton (`mxfeatlaravel` cell), npm <v> on node <v>. **Proven by effect:** detection fires on this project's real `package.json` (`file_exists: package.json` and `npm_script: build`, both required), and `${PM_RUN} build` writes `public/build/` — the install deletes that directory first and the cell's remote tree does not carry it, so only the build can have created it. The directory is asserted, not a manifest path, so the claim does not depend on where inside it the manifest lands: this build wrote `public/build/manifest.json` and no `public/build/.vite/` at all (vite 8.3.4, laravel-vite-plugin 3.2.0), which is what disproved the spec's earlier justification that Vite 5 had moved the manifest there. **Found, and the recipe works around it rather than the engine:** `detect_package_manager` keys on a lockfile and nothing else, and `laravel/laravel` ships none of `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` (all three 404 at v13.11.0), so the feature cannot be activated on a fresh skeleton at all until something runs an install — the cell's recipe runs `npm install` once for exactly that reason, and `${PM_INSTALL}` (`npm ci`) then has the lockfile it also requires. **Not run:** yarn and pnpm, which the unit suite covers but no install does; a non-default `script` setting; a project whose build writes somewhere other than `public/build/`.
 
 **`filament`:**
 
-> Verified against filament/filament <v> on a `laravel/laravel` skeleton with a panel installed (`mxfeatlaravel` cell). **Proven by effect:** `filament:optimize` — the install deletes `bootstrap/cache/filament/` and `bootstrap/cache/blade-icons.php`, and both are back after the sync. Needed as effect evidence rather than exit status because the command is `allow_failure`, which the engine reports as OK whether or not it worked. **`filament:upgrade` was exercised, effect not observed** — the same standing as `wp cache flush` in the wordpress row: it runs and reports success, but its likely outputs are assets published under `public/` which `filament:install --panels` had already created and nothing removed, so their presence afterwards is not attributable to it. **Precondition worth recording:** a panel has to exist or there is nothing to cache, so the cell runs `filament:install --panels` as a real project would; and Filament's dependency tree needs `ext-intl`, which a bare `php:*-cli` lacks — the matrix web image builds it for TYPO3's sake. **Not run:** Filament 3 and 4; a project with several panels; `filament:upgrade`'s own effect.
+> Verified against filament/filament <v> on a `laravel/laravel` skeleton with a panel installed (`mxfeatlaravel` cell). **Proven by effect:** `filament:optimize` — the install deletes `bootstrap/cache/filament/` and `bootstrap/cache/blade-icons.php`, and both are back after the sync. Needed as effect evidence rather than exit status because the command is `allow_failure`, which the engine reports as OK whether or not it worked. **`filament:upgrade` was exercised, effect not observed:** it runs and reports success, but its likely outputs are assets published under `public/` which `filament:install --panels` had already created and nothing removed, so their presence afterwards is not attributable to it. **Precondition worth recording:** a panel has to exist or there is nothing to cache, so the cell runs `filament:install --panels` as a real project would; and Filament's dependency tree needs `ext-intl`, which a bare `php:*-cli` lacks — the matrix web image builds it for TYPO3's sake. **Not run:** Filament 3 and 4; a project with several panels; `filament:upgrade`'s own effect.
 
 **`livewire`:**
 
@@ -1194,10 +1197,9 @@ and setup commands with one that asserts almost none of it. A feature
 cell now emits one row per feature and no profile row.
 
 Five of the feature table's eight rows are filled from the two runs.
-filament:upgrade is recorded as exercised with no effect observed, in the
-same words the wordpress row uses for `wp cache flush`: it reports
-success, but its likely outputs were already on disk and nothing removed
-them first, so nothing about it is attributable.
+filament:upgrade is recorded as exercised with no effect observed: it
+reports success, but its likely outputs were already on disk and nothing
+removed them first, so nothing about it is attributable.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
