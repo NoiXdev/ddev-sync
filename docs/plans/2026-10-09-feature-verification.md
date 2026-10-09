@@ -4,7 +4,7 @@
 
 **Goal:** Give the matrix a way to prove what a *feature* claims, and use it on the five features that need no service of their own — `node-build`, `filament`, `livewire`, `inertia`, `typo3-processedfiles`.
 
-**Architecture:** One dataclass (`FeatureCheck`) and one defaulted field (`Cell.features`) carry the assertions, so a feature cell stays "a registry entry plus recipe files, not a new test" — the premise `cells.py`'s own docstring states. Three new bodies in `test_matrix.py` read that field: one proves the feature was active in the run, one checks the paths its commands must create and remove, one plants and re-reads a database row. Two new cells (`mxlaravelfeat`, `mxtypo3feat`) declare the checks; the six existing cells are untouched and keep asserting exactly what they assert today.
+**Architecture:** One dataclass (`FeatureCheck`) and one defaulted field (`Cell.features`) carry the assertions, so a feature cell stays "a registry entry plus recipe files, not a new test" — the premise `cells.py`'s own docstring states. Three new bodies in `test_matrix.py` read that field: one proves the feature was active in the run, one checks the paths its commands must create and remove, one plants and re-reads a database row. Two new cells (`mxfeatlaravel`, `mxfeattypo3`) declare the checks; the six existing cells are untouched and keep asserting exactly what they assert today.
 
 **Tech Stack:** Python 3.12, pytest, Docker Compose, composer, npm/Vite, MariaDB 11.
 
@@ -17,7 +17,8 @@
 - `subprocess` may only be imported in `src/ddev_sync/transport/runner.py`; an AST-parsing test (`tests/test_subprocess_is_isolated.py`) enforces it. Its `SOURCE_ROOT` is `src/ddev_sync`, so it never scans `tests/` — which is why `tests/matrix/stack.py` may shell out. **No task in this plan adds a `subprocess` import anywhere under `src/`.**
 - **No engine code changes.** Nothing under `src/ddev_sync/` is modified by this plan. If a cell finds a defect in a feature definition, the fix is a change to `features/*.yaml` and the cell that found it is the regression test — report it rather than working around it.
 - **Cell names are `mx` + lowercase letters and digits only.** No hyphen (`pytest -k` parses its argument as an expression), no underscore (the name becomes the network alias `ddev-<name>-db`, a hostname). See the comment above `Cell.name`.
-- **A feature cell declares the same profile-shaped fields as its profile sibling.** `Cell`'s docstring defines `admin_user=None` as "the profile has no such rule", and `truncated_tables=()` likewise. A typo3@13 cell that set `admin_user=None` would make that documented meaning false and would print a lying skip reason. So `mxlaravelfeat` copies `mxlaravel`'s field values and `mxtypo3feat` copies `mxtypo313`'s; only `features=(…)` is new. The duplicated profile evidence costs nothing (the same sync runs either way) and is never *claimed*: the rows these cells emit are feature rows (Task 6).
+- **And no cell name may contain another cell's name.** `.github/workflows/matrix.yaml` runs one job per cell with `-k "$CELL"`, and `-k` matches substrings of the test id: measured on this registry, `-k mxtypo312` collects 25 tests (one cell) while `-k mxtypo31` collects 50 (both TYPO3 cells). The first draft of this plan named the new cells `mxlaravelfeat` and `mxtypo3feat`; `mxlaravelfeat` contains `mxlaravel`, so CI's existing `mxlaravel` job would have installed and run **both** Laravel cells, doubled its runtime, been able to fail for the other cell's reasons, and then emitted the stock-skeleton `laravel` row from a job that had also run a Filament install — the very provenance decision 1 exists to protect. Hence `mxfeatlaravel` and `mxfeattypo3`: neither contains, nor is contained by, any existing name, while `-k mxfeat` still selects both new cells as a group. Task 4 adds this reason to the comment above `Cell.name`.
+- **A feature cell declares the same profile-shaped fields as its profile sibling.** `Cell`'s docstring defines `admin_user=None` as "the profile has no such rule", and `truncated_tables=()` likewise. A typo3@13 cell that set `admin_user=None` would make that documented meaning false and would print a lying skip reason. So `mxfeatlaravel` copies `mxlaravel`'s field values and `mxfeattypo3` copies `mxtypo313`'s; only `features=(…)` is new. The duplicated profile evidence costs nothing (the same sync runs either way) and is never *claimed*: the rows these cells emit are feature rows (Task 6).
 - **An `appears` path must be absent before the sync, and the install recipe is what makes it absent** (spec decision 4). Forgetting it is silent: the assertion still passes and proves nothing.
 - Comments explain *why*, not *what*, and must be **true of the code beside them**. This project treats a comment that states something the adjacent code does not do as a defect in its own right. Read this plan's wording critically and report anything that does not hold rather than copying it.
 - Conventional Commits. Every message ends with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`. Write the message to a file and use `git commit -F <file>`; never nest a heredoc inside another.
@@ -60,8 +61,8 @@ Do not re-measure these; do not contradict them without measuring.
 | `tests/matrix/test_feature_registry.py` | **Create.** One unmarked guard: every `FeatureCheck.feature` names a file in `features/`. Runs in the ordinary unit suite — `pytestmark = pytest.mark.matrix` lives in `test_matrix.py` alone and `tests/matrix/conftest.py` has no autouse fixtures, so nothing here starts a stack. |
 | `tests/matrix/web/Dockerfile` | **Modify.** node and npm, beside composer and wp-cli. |
 | `tests/matrix/test_matrix.py` | **Modify.** `_active_features` helper and three new test bodies, inserted after `test_the_drupal_admin_holds_the_administrator_role` and before `test_an_unset_image_is_built_from_this_tree`. |
-| `tests/matrix/cells/mxlaravelfeat/` | **Create.** `install.sh`, `ddev-sync.yaml`, `seed.sql`, `keep-data.txt`, `remote/storage/app/public/matrix-upload.txt`. |
-| `tests/matrix/cells/mxtypo3feat/` | **Create.** `install.sh`, `ddev-sync.yaml`, `seed.sql`, `remote/public/fileadmin/matrix-upload.txt`, `remote/public/uploads/matrix-upload.txt`. |
+| `tests/matrix/cells/mxfeatlaravel/` | **Create.** `install.sh`, `ddev-sync.yaml`, `seed.sql`, `keep-data.txt`, `remote/storage/app/public/matrix-upload.txt`. |
+| `tests/matrix/cells/mxfeattypo3/` | **Create.** `install.sh`, `ddev-sync.yaml`, `seed.sql`, `remote/public/fileadmin/matrix-upload.txt`, `remote/public/uploads/matrix-upload.txt`. |
 | `tools/apply_verified_rows.py` | **Modify.** `emit_row` emits one row per feature for a feature cell, and **no** profile row. |
 | `tests/test_apply_verified_rows.py` | **Modify.** Two new cases for that split. |
 | `profiles/VERIFIED.md` | **Modify.** The five feature rows, from the two green runs. |
@@ -433,8 +434,12 @@ def test_the_feature_rule_removed_the_planted_row(stack: Stack, cell: Cell) -> N
 
 - [ ] **Step 3: Verify collection and that they skip**
 
-Run: `uv run pytest -m matrix -k "mxlaravel and not feat" --no-cov --collect-only -q`
-Expected: the three new names appear in the collected list.
+Run: `uv run pytest -m matrix -k "feature and mxlaravel" --no-cov --collect-only -q`
+Expected: the three new names appear in the collected list, for the `mxlaravel` cell.
+
+(An earlier draft of this step said `-k "mxlaravel and not feat"`, which cannot
+work: all three new test names contain "feature", so `and not feat` deselects
+exactly the tests the step is meant to show. Task 3's implementer caught it.)
 
 Run: `uv run pytest -m matrix -k "nothingmatchesthis" --no-cov -q`
 Expected: exit 5 ("no tests ran") — proving the selection expression works and nothing started a stack.
@@ -477,25 +482,25 @@ git commit -F /tmp/ddev-sync-commit-3.txt
 
 ---
 
-### Task 4: `mxlaravelfeat` — four features on one Laravel
+### Task 4: `mxfeatlaravel` — four features on one Laravel
 
 **Files:**
-- Create: `tests/matrix/cells/mxlaravelfeat/install.sh`
-- Create: `tests/matrix/cells/mxlaravelfeat/ddev-sync.yaml`
-- Create: `tests/matrix/cells/mxlaravelfeat/seed.sql`
-- Create: `tests/matrix/cells/mxlaravelfeat/keep-data.txt`
-- Create: `tests/matrix/cells/mxlaravelfeat/remote/storage/app/public/matrix-upload.txt`
+- Create: `tests/matrix/cells/mxfeatlaravel/install.sh`
+- Create: `tests/matrix/cells/mxfeatlaravel/ddev-sync.yaml`
+- Create: `tests/matrix/cells/mxfeatlaravel/seed.sql`
+- Create: `tests/matrix/cells/mxfeatlaravel/keep-data.txt`
+- Create: `tests/matrix/cells/mxfeatlaravel/remote/storage/app/public/matrix-upload.txt`
 - Modify: `tests/matrix/cells.py` (one `Cell` entry)
 
 **Interfaces:**
 - Consumes: `FeatureCheck` and `Cell.features` (Task 1); node and npm in the web image (Task 2); the three assertions (Task 3).
-- Produces: the cell name `mxlaravelfeat`, which Task 6 emits rows for.
+- Produces: the cell name `mxfeatlaravel`, which Task 6 emits rows for.
 
 **Why a new cell and not `mxlaravel` with packages added:** the filled laravel row says "against a fresh `laravel/laravel` skeleton, profile unchanged". Installing Filament and Livewire into that cell would make the sentence false, and the row would have to be weakened to buy three minutes of runtime (spec decision 1).
 
 - [ ] **Step 1: Write the install recipe**
 
-Create `tests/matrix/cells/mxlaravelfeat/install.sh`:
+Create `tests/matrix/cells/mxfeatlaravel/install.sh`:
 
 ```sh
 # A real Laravel with four features installed the way a project installs
@@ -509,9 +514,9 @@ composer create-project --no-interaction --prefer-dist laravel/laravel .
 
 cat > .env <<'ENV'
 APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-APP_URL=https://mxlaravelfeat.ddev.site
+APP_URL=https://mxfeatlaravel.ddev.site
 DB_CONNECTION=mysql
-DB_HOST=ddev-mxlaravelfeat-db
+DB_HOST=ddev-mxfeatlaravel-db
 DB_PORT=3306
 DB_DATABASE=db
 DB_USERNAME=db
@@ -580,7 +585,7 @@ composer --version
 
 - [ ] **Step 2: Write the three remaining recipe files**
 
-`tests/matrix/cells/mxlaravelfeat/ddev-sync.yaml` — identical to `mxlaravel`'s, with **no** `features:` key, because a `features:` key switches detection off for good (`features/resolver.py`) and all four of this cell's features are meant to be *detected*:
+`tests/matrix/cells/mxfeatlaravel/ddev-sync.yaml` — identical to `mxlaravel`'s, with **no** `features:` key, because a `features:` key switches detection off for good (`features/resolver.py`) and all four of this cell's features are meant to be *detected*:
 
 ```yaml
 # `remote_credentials: explicit` keeps the cell from depending on a .env on
@@ -608,7 +613,7 @@ database:
     port: "3306"
 ```
 
-`tests/matrix/cells/mxlaravelfeat/seed.sql` — the same rows `mxlaravel` seeds, for the same reasons (this cell declares the same profile-shaped fields, so the same bodies read them):
+`tests/matrix/cells/mxfeatlaravel/seed.sql` — the same rows `mxlaravel` seeds, for the same reasons (this cell declares the same profile-shaped fields, so the same bodies read them):
 
 ```sql
 -- Production-shaped data: addresses that look real and bcrypt hashes that
@@ -635,25 +640,41 @@ INSERT INTO failed_jobs (uuid, connection, queue, payload, exception, failed_at)
   ('6f0b5c8e-1a2b-4c3d-9e4f-a1b2c3d4e5f6', 'database', 'default', '{"job":"SendInvoice"}', 'RuntimeException: boom', NOW());
 ```
 
-`tests/matrix/cells/mxlaravelfeat/keep-data.txt`:
+`tests/matrix/cells/mxfeatlaravel/keep-data.txt`:
 
 ```
 migrations
 ```
 
-`tests/matrix/cells/mxlaravelfeat/remote/storage/app/public/matrix-upload.txt` — the laravel profile maps `storage/app/public/`, and the files step fails outright (rsync exit 23) when the remote path is missing:
+`tests/matrix/cells/mxfeatlaravel/remote/storage/app/public/matrix-upload.txt` — the laravel profile maps `storage/app/public/`, and the files step fails outright (rsync exit 23) when the remote path is missing:
 
 ```
 a file production serves from storage/app/public
 ```
 
-- [ ] **Step 3: Register the cell**
+- [ ] **Step 3: Record the naming rule this cell is the first to need**
+
+The comment above `Cell.name` in `tests/matrix/cells.py` gives three reasons the
+names are `mx` + letters and digits. This cell adds a fourth, which the first
+draft of this plan got wrong and CI would have paid for. Append a bullet to that
+comment list, in its existing voice:
+
+```python
+    # - no name may contain another cell's name: `.github/workflows/matrix.yaml`
+    #   runs one job per cell with `-k "$CELL"`, and `-k` matches a substring of
+    #   the test id - `-k mxtypo312` collects one cell's 25 tests while
+    #   `-k mxtypo31` collects both TYPO3 cells' 50. A feature cell called
+    #   `mxlaravelfeat` would therefore have been swept into the `mxlaravel`
+    #   job, which emits the stock-skeleton `laravel` row; hence `mxfeat*`.
+```
+
+- [ ] **Step 4: Register the cell**
 
 In `tests/matrix/cells.py`, add this entry to `CELLS` immediately after the `mxlaravel` entry:
 
 ```python
     Cell(
-        name="mxlaravelfeat",
+        name="mxfeatlaravel",
         # A second laravel cell, not a change to `mxlaravel`: that cell's row
         # says "against a fresh laravel/laravel skeleton, profile unchanged",
         # and installing Filament and Livewire into it would make the sentence
@@ -713,19 +734,19 @@ In `tests/matrix/cells.py`, add this entry to `CELLS` immediately after the `mxl
     ),
 ```
 
-- [ ] **Step 4: Run the cell**
+- [ ] **Step 5: Run the cell**
 
 ```bash
-uv run pytest -m matrix -k mxlaravelfeat --no-cov -v -s
+uv run pytest -m matrix -k mxfeatlaravel --no-cov -v -s
 ```
 
-Expected: every test either passes or skips, nothing fails. Keep the output: the `[mxlaravelfeat] installed:` block names the versions Task 6 records.
+Expected: every test either passes or skips, nothing fails. Keep the output: the `[mxfeatlaravel] installed:` block names the versions Task 6 records.
 
 If a path assertion fails, read it as a finding first (spec decision 6): the feature's command may genuinely leave nothing behind, or leave it somewhere else. **Do not invent an assertion to make a feature look proven**, and do not relax one to make the cell green. Report what the run showed.
 
 If the run is slow on macOS, note that `node_modules` lives in the bind-mounted project directory; that is a host-filesystem cost, not a defect.
 
-- [ ] **Step 5: Run the gates**
+- [ ] **Step 6: Run the gates**
 
 ```bash
 uv run pytest
@@ -736,7 +757,7 @@ uv run mypy src tests tools
 
 The unit suite now exercises Task 1's guard loop for the first time, against four real feature names.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 cat > /tmp/ddev-sync-commit-4.txt <<'MSG'
@@ -758,31 +779,31 @@ install node-build is never even activated.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
-git add tests/matrix/cells.py tests/matrix/cells/mxlaravelfeat
+git add tests/matrix/cells.py tests/matrix/cells/mxfeatlaravel
 git commit -F /tmp/ddev-sync-commit-4.txt
 ```
 
 ---
 
-### Task 5: `mxtypo3feat` — one feature on TYPO3 13
+### Task 5: `mxfeattypo3` — one feature on TYPO3 13
 
 **Files:**
-- Create: `tests/matrix/cells/mxtypo3feat/install.sh`
-- Create: `tests/matrix/cells/mxtypo3feat/ddev-sync.yaml`
-- Create: `tests/matrix/cells/mxtypo3feat/seed.sql`
-- Create: `tests/matrix/cells/mxtypo3feat/remote/public/fileadmin/matrix-upload.txt`
-- Create: `tests/matrix/cells/mxtypo3feat/remote/public/uploads/matrix-upload.txt`
+- Create: `tests/matrix/cells/mxfeattypo3/install.sh`
+- Create: `tests/matrix/cells/mxfeattypo3/ddev-sync.yaml`
+- Create: `tests/matrix/cells/mxfeattypo3/seed.sql`
+- Create: `tests/matrix/cells/mxfeattypo3/remote/public/fileadmin/matrix-upload.txt`
+- Create: `tests/matrix/cells/mxfeattypo3/remote/public/uploads/matrix-upload.txt`
 - Modify: `tests/matrix/cells.py` (one `Cell` entry)
 
 **Interfaces:**
 - Consumes: `FeatureCheck`, `FlushMarker` and `TYPO3_FLUSH_MARKER` from `tests/matrix/cells.py`; the three assertions (Task 3).
-- Produces: the cell name `mxtypo3feat`, which Task 6 emits a row for.
+- Produces: the cell name `mxfeattypo3`, which Task 6 emits a row for.
 
 **What is worth more than it looks:** `typo3-processedfiles` is the only shipped feature that interpolates a placeholder into an `rm -rf`. `${DDEV_DOCROOT}` reaches that `run:` string through `operations/placeholders.py::_validated_docroot`, which exists because a docroot of `../../etc` would otherwise turn the command into `rm -rf ../../etc/fileadmin/_processed_`. No run has ever exercised it.
 
 - [ ] **Step 1: Write the install recipe**
 
-Create `tests/matrix/cells/mxtypo3feat/install.sh` — `mxtypo313`'s recipe with the host name changed and one directory planted:
+Create `tests/matrix/cells/mxfeattypo3/install.sh` — `mxtypo313`'s recipe with the host name changed and one directory planted:
 
 ```sh
 # A real TYPO3 13, built exactly like `mxtypo313` - this cell differs from it
@@ -797,7 +818,7 @@ TYPO3_DB_DRIVER=mysqli \
 TYPO3_DB_USERNAME=db \
 TYPO3_DB_PASSWORD=db \
 TYPO3_DB_PORT=3306 \
-TYPO3_DB_HOST=ddev-mxtypo3feat-db \
+TYPO3_DB_HOST=ddev-mxfeattypo3-db \
 TYPO3_DB_DBNAME=db \
 TYPO3_SETUP_ADMIN_EMAIL=admin@example.invalid \
 TYPO3_SETUP_ADMIN_USERNAME=installer \
@@ -811,7 +832,7 @@ TYPO3_SERVER_TYPE=other \
 # on `project_type == "typo3"` and therefore runs for this cell too - has its
 # premise. `--skip-ssl`: local-db runs with no certificate, while this image's
 # client requires a verified TLS connection by default.
-mariadb --skip-ssl --host=ddev-mxtypo3feat-db --user=db --password=db db \
+mariadb --skip-ssl --host=ddev-mxfeattypo3-db --user=db --password=db db \
   -e 'ALTER TABLE tt_content DROP COLUMN header_link'
 
 # The stale processing folder a real TYPO3 accumulates, planted here rather
@@ -831,7 +852,7 @@ composer --version
 
 - [ ] **Step 2: Write the remaining recipe files**
 
-`tests/matrix/cells/mxtypo3feat/ddev-sync.yaml` — `mxtypo313`'s, plus the `features:` key this feature needs:
+`tests/matrix/cells/mxfeattypo3/ddev-sync.yaml` — `mxtypo313`'s, plus the `features:` key this feature needs:
 
 ```yaml
 # `remote_credentials: explicit` keeps the cell from depending on a .env on
@@ -863,7 +884,7 @@ features:
   - typo3-processedfiles
 ```
 
-`tests/matrix/cells/mxtypo3feat/seed.sql` — a copy of `mxtypo313`'s file. Read that file and copy it verbatim, then replace its first comment block with:
+`tests/matrix/cells/mxfeattypo3/seed.sql` — a copy of `mxtypo313`'s file. Read that file and copy it verbatim, then replace its first comment block with:
 
 ```sql
 -- A copy of mxtypo313's seed, because this cell declares the same
@@ -884,13 +905,13 @@ carry the same premise.
 after the import, which is what makes its disappearance attributable to the
 rule rather than to the import.
 
-`tests/matrix/cells/mxtypo3feat/remote/public/fileadmin/matrix-upload.txt`:
+`tests/matrix/cells/mxfeattypo3/remote/public/fileadmin/matrix-upload.txt`:
 
 ```
 a file production serves from fileadmin
 ```
 
-`tests/matrix/cells/mxtypo3feat/remote/public/uploads/matrix-upload.txt`:
+`tests/matrix/cells/mxfeattypo3/remote/public/uploads/matrix-upload.txt`:
 
 ```
 a file production serves from uploads
@@ -904,8 +925,8 @@ In `tests/matrix/cells.py`, add this entry to `CELLS` immediately after the `mxt
 
 ```python
     Cell(
-        name="mxtypo3feat",
-        # A second typo3@13 cell for the same reason `mxlaravelfeat` is a
+        name="mxfeattypo3",
+        # A second typo3@13 cell for the same reason `mxfeatlaravel` is a
         # second laravel cell: the typo3@13 row rests on a stock install, and
         # this one is not stock.
         profile="typo3@13",
@@ -913,7 +934,7 @@ In `tests/matrix/cells.py`, add this entry to `CELLS` immediately after the `mxt
         docroot="public",
         php_image="php:8.3-cli",
         # `mxtypo313`'s profile-shaped fields, verbatim - see the note on
-        # `mxlaravelfeat` for why they are not emptied.
+        # `mxfeatlaravel` for why they are not emptied.
         required_tables=("be_sessions", "sys_log", "be_users"),
         admin_user="ddev",
         password_column=("be_users", "password"),
@@ -958,10 +979,10 @@ In `tests/matrix/cells.py`, add this entry to `CELLS` immediately after the `mxt
 - [ ] **Step 4: Run the cell**
 
 ```bash
-uv run pytest -m matrix -k mxtypo3feat --no-cov -v -s
+uv run pytest -m matrix -k mxfeattypo3 --no-cov -v -s
 ```
 
-Expected: every test either passes or skips, nothing fails. Keep the output: the `[mxtypo3feat] installed:` block names the TYPO3 and PHP versions Task 6 records.
+Expected: every test either passes or skips, nothing fails. Keep the output: the `[mxfeattypo3] installed:` block names the TYPO3 and PHP versions Task 6 records.
 
 Same rule as Task 4: a failing assertion is a finding to report, not an assertion to soften.
 
@@ -996,7 +1017,7 @@ rests on a stock install.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
-git add tests/matrix/cells.py tests/matrix/cells/mxtypo3feat
+git add tests/matrix/cells.py tests/matrix/cells/mxfeattypo3
 git commit -F /tmp/ddev-sync-commit-5.txt
 ```
 
@@ -1013,7 +1034,7 @@ git commit -F /tmp/ddev-sync-commit-5.txt
 - Consumes: `Cell.features` and `FeatureCheck.feature` (Task 1); the two green runs (Tasks 4 and 5).
 - Produces: nothing later depends on.
 
-**The defect this task exists to prevent:** `emit_row` keys its row by `cell.profile`. `mxlaravelfeat.profile` is `"laravel"`, so as the tool stands today a green feature cell would emit a row that `--apply` writes into the **profile** `laravel` row — replacing a run that verified the profile's credentials, env step, sanitize rules and setup commands with one that asserts almost none of it. The feature table's rows are keyed by feature name, which is what a feature cell has to emit.
+**The defect this task exists to prevent:** `emit_row` keys its row by `cell.profile`. `mxfeatlaravel.profile` is `"laravel"`, so as the tool stands today a green feature cell would emit a row that `--apply` writes into the **profile** `laravel` row — replacing a run that verified the profile's credentials, env step, sanitize rules and setup commands with one that asserts almost none of it. The feature table's rows are keyed by feature name, which is what a feature cell has to emit.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1021,12 +1042,12 @@ Add to `tests/test_apply_verified_rows.py`:
 
 ```python
 def test_a_feature_cell_emits_one_row_per_feature_and_no_profile_row() -> None:
-    # The silent failure this guards: `mxlaravelfeat` runs the laravel
+    # The silent failure this guards: `mxfeatlaravel` runs the laravel
     # profile, so a row keyed by the profile would be applied to the
     # *profile* laravel row - replacing a run that verified that profile's
     # credentials, env step, sanitize rules and setup commands with one that
     # asserts almost none of it.
-    rows = emit_row("mxlaravelfeat", image="ddev-sync:ci", run="r").splitlines()
+    rows = emit_row("mxfeatlaravel", image="ddev-sync:ci", run="r").splitlines()
     keys = [row.strip().strip("|").split("|")[0].strip() for row in rows]
     assert keys == ["node-build", "filament", "livewire", "inertia"]
     assert "laravel" not in keys
@@ -1056,7 +1077,7 @@ Replace the body of `emit_row` in `tools/apply_verified_rows.py` (keep the `KeyE
     # strings differ.
     #
     # A feature cell fills one row per feature it checks, keyed by the
-    # feature name, and *no* profile row. `mxlaravelfeat` runs the laravel
+    # feature name, and *no* profile row. `mxfeatlaravel` runs the laravel
     # profile, so a profile-keyed row would be applied to the profile
     # `laravel` row and replace a run that verified that profile's
     # credentials, env step, sanitize rules and setup commands with one that
@@ -1079,15 +1100,15 @@ The workflow needs no change: `.github/workflows/matrix.yaml` prints whatever `-
 From the repository root, using the run URL or local timestamp as `--run`:
 
 ```bash
-uv run python -m tools.apply_verified_rows --emit mxlaravelfeat \
+uv run python -m tools.apply_verified_rows --emit mxfeatlaravel \
   --image ddev-sync:dev --run "local pytest -m matrix run <ISO timestamp>" > /tmp/ddev-sync-rows.md
-uv run python -m tools.apply_verified_rows --emit mxtypo3feat \
+uv run python -m tools.apply_verified_rows --emit mxfeattypo3 \
   --image ddev-sync:dev --run "local pytest -m matrix run <ISO timestamp>" >> /tmp/ddev-sync-rows.md
 uv run python -m tools.apply_verified_rows --apply /tmp/ddev-sync-rows.md
 git diff profiles/VERIFIED.md
 ```
 
-Then replace the *Verified against* cell of each of the five rows by hand with the versions the run printed — `--emit` yields only `<image> on <php image>`, and the six filled profile rows say more than that. Take the versions from the `[mxlaravelfeat] installed:` and `[mxtypo3feat] installed:` blocks of Tasks 4 and 5, in the shape the laravel row uses:
+Then replace the *Verified against* cell of each of the five rows by hand with the versions the run printed — `--emit` yields only `<image> on <php image>`, and the six filled profile rows say more than that. Take the versions from the `[mxfeatlaravel] installed:` and `[mxfeattypo3] installed:` blocks of Tasks 4 and 5, in the shape the laravel row uses:
 
 `laravel/framework <v>, filament/filament <v>, livewire/livewire <v>, inertiajs/inertia-laravel <v>, node <v> with npm <v>, PHP <v> (php:8.3-cli), ddev-sync:dev built from <short sha>`
 
@@ -1101,23 +1122,23 @@ Replace each row's *Notes* cell. These say exactly what the runs showed and no m
 
 **`node-build`:**
 
-> Verified against a `laravel/laravel` skeleton (`mxlaravelfeat` cell), npm <v> on node <v>. **Proven by effect:** detection fires on this project's real `package.json` (`file_exists: package.json` and `npm_script: build`, both required), and `${PM_RUN} build` writes `public/build/` — the install deletes that directory first and the cell's remote tree does not carry it, so only the build can have created it. The directory is asserted, not a manifest path: Vite 5 moved the manifest into `public/build/.vite/`, so a pinned filename would break on a version bump without saying anything true. **Found, and the recipe works around it rather than the engine:** `detect_package_manager` keys on a lockfile and nothing else, and `laravel/laravel` ships none of `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` (all three 404 at v13.11.0), so the feature cannot be activated on a fresh skeleton at all until something runs an install — the cell's recipe runs `npm install` once for exactly that reason, and `${PM_INSTALL}` (`npm ci`) then has the lockfile it also requires. **Not run:** yarn and pnpm, which the unit suite covers but no install does; a non-default `script` setting; a project whose build writes somewhere other than `public/build/`.
+> Verified against a `laravel/laravel` skeleton (`mxfeatlaravel` cell), npm <v> on node <v>. **Proven by effect:** detection fires on this project's real `package.json` (`file_exists: package.json` and `npm_script: build`, both required), and `${PM_RUN} build` writes `public/build/` — the install deletes that directory first and the cell's remote tree does not carry it, so only the build can have created it. The directory is asserted, not a manifest path: Vite 5 moved the manifest into `public/build/.vite/`, so a pinned filename would break on a version bump without saying anything true. **Found, and the recipe works around it rather than the engine:** `detect_package_manager` keys on a lockfile and nothing else, and `laravel/laravel` ships none of `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` (all three 404 at v13.11.0), so the feature cannot be activated on a fresh skeleton at all until something runs an install — the cell's recipe runs `npm install` once for exactly that reason, and `${PM_INSTALL}` (`npm ci`) then has the lockfile it also requires. **Not run:** yarn and pnpm, which the unit suite covers but no install does; a non-default `script` setting; a project whose build writes somewhere other than `public/build/`.
 
 **`filament`:**
 
-> Verified against filament/filament <v> on a `laravel/laravel` skeleton with a panel installed (`mxlaravelfeat` cell). **Proven by effect:** `filament:optimize` — the install deletes `bootstrap/cache/filament/` and `bootstrap/cache/blade-icons.php`, and both are back after the sync. Needed as effect evidence rather than exit status because the command is `allow_failure`, which the engine reports as OK whether or not it worked. **`filament:upgrade` was exercised, effect not observed** — the same standing as `wp cache flush` in the wordpress row: it runs and reports success, but its likely outputs are assets published under `public/` which `filament:install --panels` had already created and nothing removed, so their presence afterwards is not attributable to it. **Precondition worth recording:** a panel has to exist or there is nothing to cache, so the cell runs `filament:install --panels` as a real project would; and Filament's dependency tree needs `ext-intl`, which a bare `php:*-cli` lacks — the matrix web image builds it for TYPO3's sake. **Not run:** Filament 3 and 4; a project with several panels; `filament:upgrade`'s own effect.
+> Verified against filament/filament <v> on a `laravel/laravel` skeleton with a panel installed (`mxfeatlaravel` cell). **Proven by effect:** `filament:optimize` — the install deletes `bootstrap/cache/filament/` and `bootstrap/cache/blade-icons.php`, and both are back after the sync. Needed as effect evidence rather than exit status because the command is `allow_failure`, which the engine reports as OK whether or not it worked. **`filament:upgrade` was exercised, effect not observed** — the same standing as `wp cache flush` in the wordpress row: it runs and reports success, but its likely outputs are assets published under `public/` which `filament:install --panels` had already created and nothing removed, so their presence afterwards is not attributable to it. **Precondition worth recording:** a panel has to exist or there is nothing to cache, so the cell runs `filament:install --panels` as a real project would; and Filament's dependency tree needs `ext-intl`, which a bare `php:*-cli` lacks — the matrix web image builds it for TYPO3's sake. **Not run:** Filament 3 and 4; a project with several panels; `filament:upgrade`'s own effect.
 
 **`livewire`:**
 
-> Verified against livewire/livewire <v> on a `laravel/laravel` skeleton (`mxlaravelfeat` cell). **Proven by effect:** `livewire:publish --assets` — the install deletes `public/vendor/livewire/` and the directory is back after the sync. Effect rather than exit status because the command is `allow_failure`. **Not run:** Livewire 2 and 3; the contents of the published directory are not asserted file by file, only that it was published.
+> Verified against livewire/livewire <v> on a `laravel/laravel` skeleton (`mxfeatlaravel` cell). **Proven by effect:** `livewire:publish --assets` — the install deletes `public/vendor/livewire/` and the directory is back after the sync. Effect rather than exit status because the command is `allow_failure`. **Not run:** Livewire 2 and 3; the contents of the published directory are not asserted file by file, only that it was published.
 
 **`inertia`:**
 
-> Verified against inertiajs/inertia-laravel <v> on a `laravel/laravel` skeleton (`mxlaravelfeat` cell). The feature declares no commands — "Detected for reporting; the build itself is node-build's job" — so being reported is the whole of its claim, and that is what was checked: the dry run's `Features` block names it, detected from the real `composer.json`. A feature whose detect block never fires is as broken as one whose commands do not exist, which is why this is asserted at all rather than left as "nothing to verify".
+> Verified against inertiajs/inertia-laravel <v> on a `laravel/laravel` skeleton (`mxfeatlaravel` cell). The feature declares no commands — "Detected for reporting; the build itself is node-build's job" — so being reported is the whole of its claim, and that is what was checked: the dry run's `Features` block names it, detected from the real `composer.json`. A feature whose detect block never fires is as broken as one whose commands do not exist, which is why this is asserted at all rather than left as "nothing to verify".
 
 **`typo3-processedfiles`:**
 
-> Verified against typo3/cms-core <v> (stock `cms-base-distribution ^13`, `mxtypo3feat` cell), activated by a `features:` key because the feature has no detect block by design. **Proven by effect, both halves:** the `clear-processed-files` rule — a row planted in `sys_file_processedfile` after the import is gone after a `sanitize` run, and the remote never carried it, so the import cannot be what removed it; and the setup command `rm -rf ${DDEV_DOCROOT}/fileadmin/_processed_` — the install plants `public/fileadmin/_processed_/0/a/csm_matrix_abcdef.png` and the directory is gone after the sync, with the `files` step ruled out because no profile sets `delete:` on a `files.paths` entry. The second is the first run of the only shipped feature that interpolates `${DDEV_DOCROOT}` into an `rm -rf`, the reason `operations/placeholders.py::_validated_docroot` exists. The rule carries no `tolerate_missing_table`, which is correct: the table is in `typo3/sysext/core/ext_tables.sql` itself (line 120 at v13.4.2). **Not run:** a docroot other than `public`; a `sys_file_storage` with a non-default `processingfolder`, which the feature's own comment already records as out of its reach; TYPO3 9–12 and 14.
+> Verified against typo3/cms-core <v> (stock `cms-base-distribution ^13`, `mxfeattypo3` cell), activated by a `features:` key because the feature has no detect block by design. **Proven by effect, both halves:** the `clear-processed-files` rule — a row planted in `sys_file_processedfile` after the import is gone after a `sanitize` run, and the remote never carried it, so the import cannot be what removed it; and the setup command `rm -rf ${DDEV_DOCROOT}/fileadmin/_processed_` — the install plants `public/fileadmin/_processed_/0/a/csm_matrix_abcdef.png` and the directory is gone after the sync, with the `files` step ruled out because no profile sets `delete:` on a `files.paths` entry. The second is the first run of the only shipped feature that interpolates `${DDEV_DOCROOT}` into an `rm -rf`, the reason `operations/placeholders.py::_validated_docroot` exists. The rule carries no `tolerate_missing_table`, which is correct: the table is in `typo3/sysext/core/ext_tables.sql` itself (line 120 at v13.4.2). **Not run:** a docroot other than `public`; a `sys_file_storage` with a non-default `processingfolder`, which the feature's own comment already records as out of its reach; TYPO3 9–12 and 14.
 
 - [ ] **Step 7: Run the gates**
 
@@ -1135,7 +1156,7 @@ cat > /tmp/ddev-sync-commit-6.txt <<'MSG'
 docs(profiles): record what the two feature cells verified
 
 emit_row keyed every row by the cell's profile, which for a feature cell
-is the wrong table: mxlaravelfeat runs the laravel profile, so its green
+is the wrong table: mxfeatlaravel runs the laravel profile, so its green
 run would have been applied to the *profile* laravel row - replacing a
 run that verified that profile's credentials, env step, sanitize rules
 and setup commands with one that asserts almost none of it. A feature
@@ -1168,7 +1189,7 @@ Named so a reviewer does not read their absence as an omission (spec decision 5 
 ## Final check before handing the branch on
 
 - [ ] `uv run pytest` green; `ruff check`, `ruff format --check`, `mypy src tests tools` clean.
-- [ ] `uv run pytest -m matrix -k "mxlaravelfeat or mxtypo3feat" --no-cov -v` green in one run, both cells together.
+- [ ] `uv run pytest -m matrix -k "mxfeatlaravel or mxfeattypo3" --no-cov -v` green in one run, both cells together.
 - [ ] `git log --oneline` shows six commits, linear, no merges, each message ending with the `Co-Authored-By` line.
 - [ ] `git status` clean.
 - [ ] Nothing pushed.
