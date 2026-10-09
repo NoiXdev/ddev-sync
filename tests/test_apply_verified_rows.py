@@ -41,7 +41,10 @@ def test_a_feature_cell_emits_one_row_per_feature_and_no_profile_row() -> None:
 
 
 def test_a_profile_cell_still_emits_exactly_one_row() -> None:
-    assert emit_row("mxlaravel", image="i", run="r").count("\n") == 0
+    row = emit_row("mxlaravel", image="i", run="r")
+    assert row.count("\n") == 0
+    # The count alone would pass for a single row keyed by anything at all.
+    assert row.startswith("| laravel ")
 
 
 def test_apply_fills_only_the_matching_rows_evidence_cells(tmp_path: Path) -> None:
