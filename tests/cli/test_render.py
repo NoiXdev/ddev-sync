@@ -326,6 +326,49 @@ def test_render_plan_shows_the_detection_disabled_notice_above_the_steps() -> No
     assert notice_line < first_step
 
 
+def _line_below_the_features_block(plan: Plan) -> str:
+    """The line `render_plan` prints directly under the whole Features block."""
+    rendered = render_plan(plan).splitlines()
+    block = render_features(plan).splitlines()
+    assert block, "this plan renders no Features block to look under"
+    return rendered[rendered.index(block[0]) + len(block)]
+
+
+def test_render_plan_puts_a_blank_line_below_every_features_block_it_prints() -> None:
+    """The renderer's half of the contract `_active_features` parses against.
+
+    `tests/matrix/test_matrix.py::_active_features` ends the block at the
+    first line that is not indented to the continuation column, and this
+    blank line is that line. Dropping it does not fail a single test in
+    `tests/matrix/test_active_features.py`: a step line is indented two or
+    three columns, so the block would end there instead and the same names
+    would come back. Both shapes `render_features` can emit are checked,
+    because the golden files carry only the active list.
+    """
+    active = Plan(
+        target=small_plan().target,
+        profile_label="typo3@12",
+        project_name="acme",
+        steps=small_plan().steps,
+        features=(
+            activated("node-build", "detected: package.json"),
+            activated("filament", "detected: filament/filament"),
+        ),
+    )
+    disabled = Plan(
+        target=small_plan().target,
+        profile_label="typo3@12",
+        project_name="acme",
+        steps=small_plan().steps,
+        features_detection_enabled=False,
+        features_disabled_reason="--no-features",
+    )
+    for shape, plan in (("active list", active), ("disabled notice", disabled)):
+        assert _line_below_the_features_block(plan) == "", (
+            f"the {shape} block is not followed by a blank line"
+        )
+
+
 def write_or_compare(name: str, actual: str) -> None:
     """Compare against the golden file, or create it when UPDATE_GOLDEN is set.
 
