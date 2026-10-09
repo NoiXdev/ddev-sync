@@ -182,10 +182,13 @@ CELLS: tuple[Cell, ...] = (
         # emptying them here would make that meaning false and print a lying
         # skip reason. The duplicated profile evidence costs nothing (the same
         # sync runs either way) and is not what this cell exists to record:
-        # the rows it is here to fill are VERIFIED.md's *feature* rows. Note
-        # that `tools/apply_verified_rows.py` still keys every emitted row by
-        # `profile`, so `--emit mxfeatlaravel` yields a `laravel` row today -
-        # applying one would overwrite `mxlaravel`'s evidence with this cell's.
+        # the rows it is here to fill are VERIFIED.md's *feature* rows, one
+        # per `FeatureCheck` below. `tools/apply_verified_rows.py` keys a
+        # feature cell's rows by feature name and emits no profile row for
+        # it, so applying them cannot reach `mxlaravel`'s row - which
+        # `tests/test_apply_verified_rows.py` holds to account, on this cell
+        # by name because it is the one whose profile row a regression would
+        # overwrite.
         required_tables=("users",),
         admin_user=None,
         password_column=("users", "password"),

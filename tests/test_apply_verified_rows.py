@@ -27,6 +27,23 @@ def test_emit_rejects_a_cell_that_is_not_in_the_registry() -> None:
         emit_row("nosuchcell", image="x", run="y")
 
 
+def test_a_feature_cell_emits_one_row_per_feature_and_no_profile_row() -> None:
+    # The silent failure this guards: `mxfeatlaravel` runs the laravel
+    # profile, so a row keyed by the profile would be applied to the
+    # *profile* laravel row - replacing a run that verified that profile's
+    # credentials, env step, sanitize rules and setup commands with one that
+    # asserts almost none of it.
+    rows = emit_row("mxfeatlaravel", image="ddev-sync:ci", run="r").splitlines()
+    keys = [row.strip().strip("|").split("|")[0].strip() for row in rows]
+    assert keys == ["node-build", "filament", "livewire", "inertia"]
+    assert "laravel" not in keys
+    assert all("ddev-sync:ci on php:8.3-cli" in row for row in rows)
+
+
+def test_a_profile_cell_still_emits_exactly_one_row() -> None:
+    assert emit_row("mxlaravel", image="i", run="r").count("\n") == 0
+
+
 def test_apply_fills_only_the_matching_rows_evidence_cells(tmp_path: Path) -> None:
     verified = tmp_path / "VERIFIED.md"
     verified.write_text(

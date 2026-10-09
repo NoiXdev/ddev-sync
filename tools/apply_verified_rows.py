@@ -23,18 +23,25 @@ _BY_NAME = {cell.name: cell for cell in CELLS}
 
 
 def emit_row(name: str, *, image: str, run: str) -> str:
-    """One Markdown row recording that `name`'s cell passed."""
+    """The Markdown row or rows recording that `name`'s cell passed."""
     if name not in _BY_NAME:
         raise KeyError(f"{name} is not a cell in the matrix registry")
     cell = _BY_NAME[name]
     today = datetime.now(UTC).date().isoformat()
-    # The first column is the **profile** label, not the cell name, because
-    # that is what `VERIFIED.md`'s rows are keyed by (`typo3@13`, while the
-    # cell is `mxtypo313`). The cell name is the input; the profile is the
-    # output. Swapping them fills no rows and fails silently, which is the
-    # worst outcome for this tool - hence the test using the one pair where
-    # the two strings differ.
-    return f"| {cell.profile} | {image} on {cell.php_image} | {today} | {run} |"
+    # A profile cell fills one row, keyed by its **profile** label, not its
+    # own name (`typo3@13`, while the cell is `mxtypo313`): the cell name is
+    # the input, the profile is the output, and swapping them fills no rows
+    # and fails silently - hence the test using the one pair where the two
+    # strings differ.
+    #
+    # A feature cell fills one row per feature it checks, keyed by the
+    # feature name, and *no* profile row. `mxfeatlaravel` runs the laravel
+    # profile, so a profile-keyed row would be applied to the profile
+    # `laravel` row and replace a run that verified that profile's
+    # credentials, env step, sanitize rules and setup commands with one that
+    # asserts almost none of it.
+    keys = [check.feature for check in cell.features] or [cell.profile]
+    return "\n".join(f"| {key} | {image} on {cell.php_image} | {today} | {run} |" for key in keys)
 
 
 def apply_rows(verified: Path, rows: list[tuple[str, str, str, str]]) -> None:
