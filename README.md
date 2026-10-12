@@ -93,8 +93,8 @@ Nothing is pushed, ever. The remote is only ever read.
 
 Profiles ship for **TYPO3** (9 through 13), **Laravel**, **Symfony**,
 **WordPress**, **Drupal** and **Shopware 6**, plus optional features for
-Horizon, Filament, Livewire, Inertia, node builds and TYPO3's Solr and
-processed-files handling.
+Horizon, Filament, Livewire, Inertia, node builds, Symfony search
+reindexing and TYPO3's processed-files handling.
 
 A `generic` fallback covers DDEV project types with no dedicated profile; it
 syncs the database and files but leaves the framework-specific work alone,
