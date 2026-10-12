@@ -1,0 +1,39 @@
+# `remote_credentials: explicit` keeps the cell from depending on a .env on
+# the remote: this cell is about one feature's command, not about credential
+# discovery, which the unit suite already covers exhaustively.
+#
+# No `features:` key: a key switches detection off for the whole project
+# (features/resolver.py), and `horizon` is meant to be found by detection,
+# from the composer package the recipe installs.
+version: 1
+targets:
+  production:
+    host: remote
+    user: deploy
+    port: 2222
+    path: /srv/app/
+    stage: production
+# `QUEUE_CONNECTION: redis`, overriding the profile. This is not a test
+# convenience: a real Horizon project has to do exactly this.
+# `profiles/laravel.yaml`'s env step sets `QUEUE_CONNECTION: sync` on every
+# sync that includes the `db` group (`engine/steps.py` puts ENV in that
+# selection group), and `strategy: patch_keys` rewrites the key in place in the
+# project's own `.env` - so a Horizon project synced against the stock profile
+# comes out the other side with its queue driver switched to `sync`, which runs
+# jobs inline and takes Horizon's queue out of use entirely. A project layer
+# beats the profile layer (`config/merge.py::merge_layers` merges
+# weakest-to-strongest and recurses into mappings), so this keeps the queue on
+# Redis across the sync. Without it the marker could not be planted at all: the
+# plant runs after a whole sync, and `dispatch()` on the `sync` driver executes
+# the job inline and leaves Redis empty.
+env:
+  set:
+    QUEUE_CONNECTION: redis
+database:
+  remote_credentials: explicit
+  credentials:
+    name: acme_prod
+    user: acme
+    password: s3cret
+    host: remote-db
+    port: "3306"

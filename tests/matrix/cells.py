@@ -283,6 +283,69 @@ CELLS: tuple[Cell, ...] = (
         ),
     ),
     Cell(
+        name="mxfeathorizon",
+        # A third Laravel cell rather than Horizon added to `mxfeatlaravel`:
+        # that cell's four rows state the environment they were measured
+        # against, and adding Horizon and Redis makes that statement stale
+        # until it re-runs and all four are rewritten. A cell of its own also
+        # keeps Redis out of their runs, which is what `services` is for.
+        profile="laravel",
+        project_type="laravel",
+        docroot="public",
+        php_image="php:8.3-cli",
+        services=("redis",),
+        # `mxlaravel`'s profile-shaped values, verbatim: `Cell`'s docstring
+        # defines None/() as "the profile has no such rule", so emptying them
+        # would make that meaning false and print a lying skip reason.
+        required_tables=("users",),
+        admin_user=None,
+        password_column=("users", "password"),
+        production_url=None,
+        truncated_tables=("sessions", "jobs", "failed_jobs"),
+        identity_column="name",
+        seeded_users=("Alice Hofer", "Bruno Kalb"),
+        features=(
+            FeatureCheck(
+                feature="horizon",
+                redis_marker=RedisMarker(
+                    # The prefix is Laravel's, not this cell's invention:
+                    # config/database.php sets the Redis prefix to
+                    # `Str::slug((string) env('APP_NAME', 'laravel'))` plus
+                    # `-database-`, and no .env here sets APP_NAME, so the
+                    # default `laravel` is slugged.
+                    # Illuminate\Queue\RedisQueue then builds `queues:default`
+                    # under it - `default` being
+                    # `queue.connections.redis.queue`, which is also the queue
+                    # `horizon:clear` resolves with no `--queue` option. A
+                    # marker naming the unprefixed key would find nothing at
+                    # plant time.
+                    key="laravel-database-queues:default",
+                    # A dispatched job **class**, not a closure: a queued
+                    # closure is serialized by reading the file it was written
+                    # in, and `tinker --execute=` evals its argument, so a
+                    # dispatched closure dies with
+                    # "file_get_contents(eval()'d code)" and never reaches
+                    # Redis (measured against laravel/framework v13.35.0).
+                    # The install recipe generates the class for that reason,
+                    # and its `handle()` is empty: what is asserted is that one
+                    # job sits in the queue Horizon is about to clear, not what
+                    # the job would have done.
+                    #
+                    # A plain `dispatch` reaches Redis only because the cell's
+                    # `ddev-sync.yaml` overrides the profile's
+                    # `QUEUE_CONNECTION: sync` back to `redis` - see the
+                    # comment there, which is where that interaction is
+                    # documented. The feature's own command does not depend on
+                    # that override: `horizon:clear` takes its connection from
+                    # the first entry of `horizon.defaults`, which is `redis`
+                    # (vendor/laravel/horizon/src/Console/ClearCommand.php),
+                    # not from `queue.default`.
+                    push="php artisan tinker --execute='dispatch(new App\\Jobs\\MatrixMarkerJob);'",
+                ),
+            ),
+        ),
+    ),
+    Cell(
         name="mxtypo313",
         profile="typo3@13",
         project_type="typo3",
