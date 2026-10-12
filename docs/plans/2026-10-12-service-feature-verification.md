@@ -1504,7 +1504,10 @@ git commit -F /tmp/ddev-sync-commit-7.txt
 
 - [ ] `uv run pytest` green; `ruff check`, `ruff format --check`, `mypy src tests tools` clean.
 - [ ] `DDEV_SYNC_MATRIX_KEEP=1 uv run pytest -m matrix -k "mxfeathorizon or mxfeatsymfony" --no-cov -vv -rA` green in one run, both cells together.
-- [ ] One existing cell re-run to show nothing regressed: `uv run pytest -m matrix -k mxfeatlaravel --no-cov -vv -rA`, and its four `VERIFIED.md` rows still true of it.
+- [ ] One existing cell re-run to show nothing regressed: `uv run pytest -m matrix -k mxfeatlaravel
+      --no-cov -vv -rA`. That, and nothing more: the re-run does not re-verify that cell's four
+      `VERIFIED.md` rows. Those rows record a run whose image was built from `dd29a31`'s engine, and
+      a re-run builds from the tree it is run on, so a green run cannot confirm a pin it did not use.
 - [ ] `grep -rn "typo3-solr" features profiles src tests tools` returns only `profiles/VERIFIED.md`'s removal record.
 - [ ] `git log --oneline` since the merge base is linear, with no merges, and every commit ends with
       the `Co-Authored-By` line. No count is given on purpose: every fix round changes it, so a number
