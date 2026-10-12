@@ -145,6 +145,14 @@ services:
         aliases:
           - ddev-${MATRIX_CELL}-es
     healthcheck:
+      # `start_period` rather than more retries: during it a failing probe
+      # does not count against `retries`, so a slow runner gets time to boot
+      # without the ceiling being spent on the boot itself. Measured here:
+      # this configuration answered 11 seconds after `docker run`, so 60
+      # seconds is roughly five times the observed start and the 2s/60 retry
+      # budget then covers a service that answered once and stopped - which is
+      # a different failure, and the one the retries are for.
+      start_period: 60s
       test: ["CMD-SHELL", "curl -sf localhost:9200/_cluster/health || exit 1"]
       interval: 2s
       timeout: 5s
