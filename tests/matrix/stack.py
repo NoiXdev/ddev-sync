@@ -142,6 +142,21 @@ class Stack:
         """Run a command in the web container, where the framework lives."""
         return self.compose("exec", "-T", "web", *argv)
 
+    def service_exec(self, service: str, *argv: str) -> subprocess.CompletedProcess[str]:
+        """Run a command in a service this cell asked for, naming its profile.
+
+        `--profile` goes before the subcommand, as it does in `up` and `down`.
+        It is passed for the same reason it is passed there: a profiled service
+        compose was not told about is not part of the project it computes, and
+        compose has refused `exec` on such a service in the past. Current
+        versions resolve it anyway - measured against the version this ran on,
+        where the readers worked without it - so this is not a fix for an
+        observed failure but the removal of a dependency on one compose
+        version's leniency, which `tests/matrix/stack.py` has no way to pin.
+        """
+        profiles = ["--profile", service] if service in self.cell.services else []
+        return self.compose(*profiles, "exec", "-T", service, *argv)
+
     def sql(self, query: str) -> str:
         """Query the cell's local database. `-N` strips the column headers.
 
@@ -178,7 +193,7 @@ class Stack:
         empty result as "no entries", and a call that errored must not pass
         for that.
         """
-        result = self.compose("exec", "-T", "redis", "redis-cli", *args)
+        result = self.service_exec("redis", "redis-cli", *args)
         if result.returncode != 0:
             raise RuntimeError(f"redis-cli {' '.join(args)} failed:\n{result.stderr}")
         return result.stdout.strip()
@@ -196,9 +211,7 @@ class Stack:
         stderr is never parsed: `docker compose exec` can write its own
         warnings there, and they must not break a call that succeeded.
         """
-        result = self.compose(
-            "exec",
-            "-T",
+        result = self.service_exec(
             "elasticsearch",
             "curl",
             "-s",
@@ -222,9 +235,7 @@ class Stack:
         afterwards, not that it existed before. Any other failure raises, as
         in `sql`.
         """
-        result = self.compose(
-            "exec",
-            "-T",
+        result = self.service_exec(
             "elasticsearch",
             "curl",
             "-s",

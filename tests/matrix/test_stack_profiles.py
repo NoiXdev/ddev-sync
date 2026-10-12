@@ -1,4 +1,4 @@
-"""That `up` and `down` really pass `--profile` for every service a cell names.
+"""That `up`, `down` and `service_exec` really pass `--profile` for a cell's services.
 
 Unmarked on purpose, like `test_feature_registry.py`: nothing here starts a
 container, and the regression it guards against is invisible at run time.
@@ -78,6 +78,28 @@ def test_a_stack_that_fails_to_come_up_is_torn_down_with_its_profiles(
     with pytest.raises(RuntimeError, match=f"{cell.name}: the stack did not come up"):
         up(cell, "unused")
     assert calls[-1] == [*_profiles(cell), "down", "-v", "--remove-orphans"]
+
+
+@pytest.mark.parametrize("cell", CELLS, ids=CELL_IDS)
+def test_service_exec_profiles_only_a_service_the_cell_declared(
+    cell: Cell, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The readers reach their service through here, and the unit tests in
+    # `test_stack_readers.py` stub `compose` - so they exercise the readers'
+    # parsing while saying nothing about this argv. Asserted for a service the
+    # cell declares AND for one it does not: passing `--profile` for a service
+    # outside the cell's list would name a profile its stack never enabled.
+    for service in cell.services:
+        calls = _recorder(monkeypatch)
+        Stack(cell=cell, image="unused").service_exec(service, "true")
+        assert calls == [["--profile", service, "exec", "-T", service, "true"]]
+
+    calls = _recorder(monkeypatch)
+    Stack(cell=cell, image="unused").service_exec("web", "true")
+    assert calls == [["exec", "-T", "web", "true"]], (
+        "`web` is in the compose file for every cell and behind no profile, so naming a "
+        "profile for it would be wrong"
+    )
 
 
 def test_some_cell_declares_a_service_so_the_assertions_above_can_fail() -> None:
