@@ -204,9 +204,23 @@ execs into. One name per service, or a reader has to hold two.
 builds the same skeleton as `mxfeatlaravel`, then `composer require
 laravel/horizon predis/predis`, and writes a `.env` that differs from
 `mxfeatlaravel`'s in three keys the measurements above demand:
-`APP_ENV=local` (without it the command refuses and clears nothing),
-`QUEUE_CONNECTION=redis` (without it the queue Horizon clears is not the one a
-job lands in), and `REDIS_CLIENT=predis` (the image has no `redis` extension).
+`APP_ENV=local` (what the real skeleton ships, so the cell's `.env` does not
+depend on the profile), `QUEUE_CONNECTION=redis` (without it the queue Horizon
+clears is not the one a job lands in), and `REDIS_CLIENT=predis` (the image has
+no `redis` extension).
+
+**Corrected after the run, by the cell this design describes.** The first
+wording here read "`APP_ENV=local` (without it the command refuses and clears
+nothing)", and that is false on the default sync path: `profiles/laravel.yaml`'s
+`env.set` carries `APP_ENV: local`, `patch_keys` appends keys a file does not
+have (`operations/env.py:33`), and `engine/steps.py` puts ENV in the `db` group
+ordered before SETUP — so any sync including `db` supplies the key before
+`horizon:clear` runs, whether the project set it or not. The cell proved the
+appending half of that chain itself, when six lines the recipe never wrote
+turned up below the thirteen it did. The refusal is real but reachable only on
+a `--steps setup` run against a never-synced tree, under `env: strategy: none`,
+or with a project override. The conclusion the sentence supports — that the
+cell writes `APP_ENV=local` — is unaffected; only the reason is.
 Evidence: a `redis_marker` keyed `laravel-database-queues:default` — the
 measured key, prefix included, with a comment saying where the prefix comes
 from so the string does not read as a mystery. The recipe pushes one job, the
@@ -290,7 +304,10 @@ the standard the previous pass set with `filament:upgrade`.
 - Redis or Elasticsearch anywhere in the engine. `ddev-sync` does not sync
   either, and nothing here changes that.
 - The `horizon:clear` behaviour on a project that genuinely runs
-  `APP_ENV=production` locally. The measurement above shows the command would
-  refuse there; whether the feature should pass `--force` is a question about
-  the feature, and the cell models a real project instead (`APP_ENV=local`, as
-  the skeleton ships). It belongs in the row's "not run", not in this design.
+  `APP_ENV=production` locally — which, per the correction above, means one of
+  the three windows in which the profile's env step does not supply
+  `APP_ENV=local` first, not simply a project whose own `.env` says
+  `production`. The measurement above shows the command would refuse there;
+  whether the feature should pass `--force` is a question about the feature, and
+  the cell models a real project instead (`APP_ENV=local`, as the skeleton
+  ships). It belongs in the row's "not run", not in this design.
