@@ -1506,5 +1506,7 @@ git commit -F /tmp/ddev-sync-commit-7.txt
 - [ ] `DDEV_SYNC_MATRIX_KEEP=1 uv run pytest -m matrix -k "mxfeathorizon or mxfeatsymfony" --no-cov -vv -rA` green in one run, both cells together.
 - [ ] One existing cell re-run to show nothing regressed: `uv run pytest -m matrix -k mxfeatlaravel --no-cov -vv -rA`, and its four `VERIFIED.md` rows still true of it.
 - [ ] `grep -rn "typo3-solr" features profiles src tests tools` returns only `profiles/VERIFIED.md`'s removal record.
-- [ ] `git log --oneline` shows seven commits, linear, no merges, each ending with the `Co-Authored-By` line.
+- [ ] `git log --oneline` since the merge base is linear, with no merges, and every commit ends with
+      the `Co-Authored-By` line. No count is given on purpose: every fix round changes it, so a number
+      here is stale by construction - these three invariants are what the check is for.
 - [ ] `git status` clean. Nothing pushed.
