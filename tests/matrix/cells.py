@@ -346,6 +346,40 @@ CELLS: tuple[Cell, ...] = (
         ),
     ),
     Cell(
+        name="mxfeatsymfony",
+        # The first feature cell for symfony; `mxsymfony` stays a stock
+        # skeleton plus orm-pack, which is what its row says it is.
+        profile="symfony",
+        project_type="symfony",
+        docroot="public",
+        php_image="php:8.3-cli",
+        services=("elasticsearch",),
+        # `mxsymfony`'s profile-shaped values, verbatim - `Cell`'s docstring
+        # defines None/() as "the profile has no such rule".
+        required_tables=("app_user",),
+        admin_user=None,
+        password_column=("app_user", "password"),
+        production_url=None,
+        identity_column="id",
+        seeded_users=("1", "2"),
+        features=(
+            FeatureCheck(
+                feature="symfony-search",
+                index_marker=IndexMarker(
+                    # The configured name, verbatim. Measured against bundle
+                    # v7.2.0: `_cat/indices` reports `app` and `_cat/aliases`
+                    # is empty - no date suffix and no alias, because that is
+                    # `use_alias`'s behaviour and it defaults to off.
+                    index="app",
+                    # Three rows in seed.sql, so three documents. A floor
+                    # rather than an exact count, so a growing seed does not
+                    # break the marker.
+                    minimum_after=3,
+                ),
+            ),
+        ),
+    ),
+    Cell(
         name="mxtypo313",
         profile="typo3@13",
         project_type="typo3",

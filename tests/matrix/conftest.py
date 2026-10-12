@@ -102,6 +102,29 @@ def _remove_tree(path: Path) -> None:
 def _install(stack: Stack, cell: Cell) -> None:
     """Run the cell's install recipe inside its web container."""
     recipe = (cell_dir(cell.name) / "install.sh").read_text(encoding="utf-8")
+    # A cell's `app/` directory is application files its recipe installs -
+    # FOSElasticaBundle's configuration and the entity it indexes, for
+    # `mxfeatsymfony`. They are files rather than heredocs inside `install.sh`
+    # because a YAML block and a PHP class with attributes and namespaces are
+    # reviewable as files and unreadable as shell quoting.
+    #
+    # Copied into the container at /tmp, not into the bind-mounted project:
+    # a recipe whose first line is `composer create-project .` refuses to run
+    # at all if the project directory holds anything, dot entries included,
+    # because `Composer\Util\Filesystem::isDirEmpty` builds its Finder with
+    # `ignoreVCS(false)->ignoreDotFiles(false)`. Most of this matrix's recipes
+    # start that way (`mxwordpress`'s `wp core download` is the exception), so
+    # the project directory is the one place staged recipe inputs cannot live.
+    # Measured against the composer this image pins: a `.matrix-app/` in the
+    # project fails the very first line of the recipe with
+    # `Project directory "/var/www/html/." is not empty.`
+    staged = cell_dir(cell.name) / "app"
+    if staged.is_dir():
+        copied = stack.compose("cp", str(staged), "web:/tmp/matrix-app")
+        if copied.returncode != 0:
+            raise RuntimeError(
+                f"{cell.name}: staging app/ into the web container failed:\n{copied.stderr}"
+            )
     result = stack.web(["sh", "-euc", recipe])
     if result.returncode != 0:
         raise RuntimeError(

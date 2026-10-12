@@ -1,0 +1,20 @@
+# The minimal configuration under which `fos:elastica:populate` exits 0,
+# established by iterating in the matrix web image against elasticsearch:9.0.0
+# (bundle v7.2.0, ruflin/elastica 9.0.0).
+#
+# `hosts`, a list - not `url`, which v7 rejects outright. The host is the
+# compose alias this cell's stack gives the service.
+#
+# `persistence` is what makes the command able to do anything: without a
+# driver and a model it has no source to read documents from.
+fos_elastica:
+    clients:
+        default: { hosts: ['http://ddev-mxfeatsymfony-es:9200'] }
+    indexes:
+        app:
+            properties:
+                title:
+                    type: text
+            persistence:
+                driver: orm
+                model: App\Entity\Doc

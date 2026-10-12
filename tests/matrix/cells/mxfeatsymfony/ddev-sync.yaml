@@ -1,0 +1,26 @@
+# `remote_credentials: explicit` keeps the cell from depending on a .env on
+# the remote: this cell is about one feature's command, not about credential
+# discovery, which the unit suite already covers exhaustively.
+#
+# No `features:` key: a key switches detection off for the whole project
+# (features/resolver.py), and `symfony-search` is meant to be found by
+# detection, from the composer package the recipe installs.
+version: 1
+targets:
+  production:
+    host: remote
+    user: deploy
+    port: 2222
+    path: /srv/app/
+    stage: production
+database:
+  remote_credentials: explicit
+  # The override the placeholder exists for: this installation's user table
+  # is `app_user`, not MakerBundle's conventional `user`.
+  symfony_user_table: app_user
+  credentials:
+    name: acme_prod
+    user: acme
+    password: s3cret
+    host: remote-db
+    port: "3306"
