@@ -226,34 +226,41 @@ through `tools/apply_verified_rows.py` as the other feature cells are.
 `typo3-solr`'s row records the removal and the four pieces of evidence behind
 it, so the conclusion is checkable without re-deriving it.
 
-## What must be measured before the recipes are written
+## What the plan measured, so nothing was written from a guess
 
-The Elasticsearch half carries most of this spec's unknowns. Naming them is
-not a placeholder — it is the work the plan has to do first, and no recipe line
-may be written from a guess:
+This section listed six unknowns. **All of them are now measured.** The
+Elasticsearch image, version, startup environment and cost; the Redis key a
+job lands under and what `horizon:clear` resolves — those moved up into
+"Measured for this design". The Symfony application side, which this section
+said could not be settled without standing the bundle up, was settled by
+standing the bundle up: the plan's Task 6 carries the resolved versions, the
+working configuration, the entity, the index name as Elasticsearch reports it,
+and the document count.
 
-Four items this section first listed are now measured and moved up into
-"Measured for this design": the Elasticsearch image and version, its startup
-environment and cost, the Redis key a job lands under, and what
-`horizon:clear` resolves. What remains open is the Symfony application side,
-which cannot be settled without standing the bundle up — so the plan's
-`mxfeatsymfony` task begins by measuring it and writes its recipe from what it
-found, rather than a later task inheriting a guess.
+Two of those findings are worth repeating here, because each would have failed
+a cell run and neither appears in any documentation this design consulted:
 
-1. The minimal `fos_elastica` configuration and the Doctrine entity plus
-   mapping that make `fos:elastica:populate` a command that can succeed. This
-   is app code in a cell recipe, which no existing cell has. **It goes in
-   recipe files beside `seed.sql`, not in a heredoc inside `install.sh`** —
-   a YAML config and a PHP entity are reviewable as files and unreadable as
-   shell quoting. Only if it turns out to be two or three lines does the
-   heredoc win, and the plan says which it was.
-2. What `fos:elastica:populate` leaves behind that a test can read — a document
-   count on a named index is the expectation, but the index name comes from the
-   configuration in (1).
+- **FOSElasticaBundle does not register itself.** After `composer require`,
+  `config/bundles.php` holds only what the skeleton and `orm-pack` put there.
+  Without a hand-added entry Symfony does not know the `fos_elastica`
+  namespace, so *every* console call dies on the configuration file — not just
+  `populate`.
+- **The client key is `hosts`, a list.** `url` — the obvious guess, and the one
+  this design's own sketch implied — is rejected outright by v7, and the error
+  names the whole schema.
 
-3. That `predis/predis` serves Horizon with no `redis` extension present. This
-   is Horizon's own documented alternative, so the risk is low, but the image
-   has neither driver today and nothing here has run with either.
+Also measured, and it changes a test rather than a recipe: `populate` resets
+and recreates its index, and before it has ever run the index does not exist.
+So `Stack.es_count` reading a 404 as zero is on the main path, not a defensive
+branch — and the index has to be deleted before the run a test means to
+attribute, because by file order an earlier whole-sync has already populated
+it once.
+
+One item remains open, and it is small: **that `predis/predis` serves Horizon
+with no `redis` extension present.** It is Horizon's own documented
+alternative, so the risk is low, but the image has neither driver today and
+nothing here has run with either. The plan's Task 5 installs it, and that
+cell's run is what settles it.
 
 ## Testing
 

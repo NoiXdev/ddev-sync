@@ -31,7 +31,7 @@ Five conditions the spec implies that no task's happy path exercises. Each has i
 
 1. **A `Cell.services` entry naming a compose profile that does not exist** must fail in the ordinary suite, not at `compose up`. A typo should cost a collection error, not a cell run. (Task 3)
 2. **`Stack.redis` and `Stack.es` must raise on a failed call, never return something that reads as "zero".** `Stack.sql` already raises for exactly this reason: several assertions read an empty result as "no rows", and a query that errored must not pass for that. (Task 4)
-3. **`Stack.es` reading an index that does not exist yet** is the normal pre-sync state, and Elasticsearch answers 404. That must read as **absent, count 0** — not as an error — or `IndexMarker.expected_before = 0` can never be asserted. (Task 4)
+3. **`Stack.es_count` reading an index that does not exist yet** must read as **absent, count 0**, not as an error, or `IndexMarker.expected_before = 0` can never be asserted. This is **not** a defensive branch: measured, `fos:elastica:populate` resets and recreates its index, and before it has ever run `_cat/indices` is empty — so an absent index is the ordinary pre-sync state and the 404 is on the main path. (Task 4)
 4. **A cell declaring `services=()` must start exactly the four services it starts today.** Six profile cells and two feature cells depend on this; decision 2 exists for it. (Task 3)
 5. **`pcntl` in the shared web image must change no existing cell's plan.** The previous branch set the pattern for proving this: it grepped every recipe to show no other cell touches npm, so `node-build` could not activate elsewhere. The same evidence is owed here. (Task 2)
 
@@ -554,6 +554,33 @@ In `tests/matrix/stack.py`, beside `sql`:
         if status != "200":
             raise RuntimeError(f"counting {index} returned HTTP {status}:\n{result.stderr}")
         return int(json.loads(result.stderr)["count"])
+
+    def es_delete(self, index: str) -> None:
+        """Remove `index` if it is there, so a later count is this run's work.
+
+        A 404 counts as success: what matters is that the index is absent
+        afterwards, not that it existed before. Any other failure raises, as
+        in `sql`.
+        """
+        result = self.compose(
+            "exec",
+            "-T",
+            "elasticsearch",
+            "curl",
+            "-s",
+            "-o",
+            "/dev/stderr",
+            "-w",
+            "%{http_code}",
+            "-X",
+            "DELETE",
+            f"localhost:9200/{index}",
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"deleting {index} failed:\n{result.stderr}")
+        status = result.stdout.strip()
+        if status not in {"200", "404"}:
+            raise RuntimeError(f"deleting {index} returned HTTP {status}:\n{result.stderr}")
 ```
 
 Add `import json` to the module's imports.
@@ -586,15 +613,23 @@ def test_the_feature_command_emptied_the_planted_queue(stack: Stack, cell: Cell)
 
 
 def test_the_feature_command_populated_the_index(stack: Stack, cell: Cell) -> None:
-    # The claim: a feature that rebuilds a search index really fills it. The
-    # index is absent or empty before the sync - `es_count` reads a 404 as 0 -
-    # so a count above the floor afterwards is the command's own work.
+    # The claim: a feature that rebuilds a search index really fills it.
+    #
+    # The index is deleted first, the way the Drupal role test takes its role
+    # away before the run it means to attribute. By file order the whole sync
+    # has already run once, and that sync's own setup step already populated
+    # this index - so without the delete, "the index has documents" would be
+    # the earlier run's work and the before-count could never be 0. Measured:
+    # `fos:elastica:populate` resets and recreates the index itself, so
+    # removing it costs the run nothing.
     markers = [check.index_marker for check in cell.features if check.index_marker is not None]
     if not markers:
         pytest.skip(f"{cell.name} asserts no feature search index")
     for marker in markers:
+        stack.es_delete(marker.index)
         assert stack.es_count(marker.index) == marker.expected_before, (
-            f"{marker.index} does not hold {marker.expected_before} documents before the sync"
+            f"{marker.index} does not hold {marker.expected_before} documents after being "
+            "deleted: something other than the feature is writing it"
         )
         result = stack.engine("--target", "production", "--steps", "setup", "--yes")
         assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
@@ -692,6 +727,19 @@ def test_a_failed_redis_call_raises_rather_than_returning_empty(
     stack = _stack(monkeypatch, _Reply(1, "", "no such service: redis"))
     with pytest.raises(RuntimeError, match="redis-cli LLEN k failed"):
         stack.redis("LLEN", "k")
+
+
+def test_deleting_an_absent_index_is_not_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The delete exists to guarantee absence, so finding the index already
+    # absent is the outcome it wanted, not a failure.
+    stack = _stack(monkeypatch, _Reply(0, "404", '{"error":"index_not_found_exception"}'))
+    stack.es_delete("app")
+
+
+def test_a_refused_delete_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    stack = _stack(monkeypatch, _Reply(0, "403", "forbidden"))
+    with pytest.raises(RuntimeError, match="deleting app returned HTTP 403"):
+        stack.es_delete("app")
 ```
 
 This file is **unmarked**, so it runs in the ordinary suite — `pytestmark = pytest.mark.matrix` is in `test_matrix.py` alone, and importing `tests.matrix.stack` only defines things.
@@ -978,71 +1026,344 @@ git commit -F /tmp/ddev-sync-commit-5.txt
 - Create: `tests/matrix/cells/mxfeatsymfony/install.sh`
 - Create: `tests/matrix/cells/mxfeatsymfony/ddev-sync.yaml`
 - Create: `tests/matrix/cells/mxfeatsymfony/seed.sql`
+- Create: `tests/matrix/cells/mxfeatsymfony/app/fos_elastica.yaml`
+- Create: `tests/matrix/cells/mxfeatsymfony/app/Doc.php`
 - Create: `tests/matrix/cells/mxfeatsymfony/remote/public/uploads/matrix-upload.txt`
-- Create: the `fos_elastica` configuration and the indexed entity, as recipe files in the cell directory
 - Modify: `tests/matrix/cells.py` (one `Cell` entry)
 
 **Interfaces:**
-- Consumes: `Cell.services`, the `elasticsearch` compose profile (Task 3); `IndexMarker`, `Stack.es_count`, `test_the_feature_command_populated_the_index` (Task 4).
+- Consumes: `Cell.services`, the `elasticsearch` compose profile (Task 3); `IndexMarker`, `Stack.es_count`, `Stack.es_delete`, `test_the_feature_command_populated_the_index` (Task 4).
 - Produces: the cell name `mxfeatsymfony`, which Task 7 emits a row for.
 
-**This task begins with a measurement, because the spec leaves it open on purpose.** What `fos:elastica:populate` needs in order to be a command that can succeed — the minimal `fos_elastica` configuration, the Doctrine entity and its mapping, and what the run leaves behind for a count — cannot be settled without standing the bundle up. Steps 1 and 2 do that; everything after is written from what they found. Do not write a recipe line from this plan's guesses about Elastica.
+**Measured 2026-10-12**, in the matrix web image against `elasticsearch:9.0.0`
+and `mariadb:11`, by standing the bundle up and iterating until
+`fos:elastica:populate` exited 0. Three runs were needed; the first two failed,
+and both failures are the reason this task carries code rather than
+instructions:
 
-- [ ] **Step 1: Stand the bundle up by hand and find the minimum**
+- **Resolved:** `friendsofsymfony/elastica-bundle` **v7.2.0**, `ruflin/elastica`
+  **9.0.0**, `doctrine/orm` **3.7.5**, `symfony/framework-bundle` **v7.4.20**.
+- **The bundle does not register itself.** After `composer require`,
+  `config/bundles.php` held only `FrameworkBundle`, `DoctrineBundle` and
+  `DoctrineMigrationsBundle`. Without the entry, Symfony does not know the
+  `fos_elastica` config namespace and **every** console call dies on the
+  configuration file — `cache:clear`, `doctrine:schema:create`, `populate`.
+  The recipe must add it.
+- **The client key is `hosts`, a list — not `url`.** `url` is rejected, and the
+  error names the whole schema: `api_key`, `client_config`, `client_options`,
+  `cloud_id`, `connection_strategy`, `headers`, `hosts`, `http_client`,
+  `http_error_codes`, `logger`, `password`, `retries`, `retry_on_conflict`,
+  `timeout`, `username`.
+- **The index is named exactly as configured: `app`.** `_cat/indices` reports
+  `app` and `_cat/aliases` is **empty** — no date suffix and no alias, because
+  that is `use_alias`'s behaviour and it is off by default. An `IndexMarker`
+  can name the configured string directly.
+- **`populate` resets and recreates the index**, printing `Resetting app`,
+  `Populating app 3/3`, `Refreshing app`. Before it ran, `_cat/indices` was
+  empty — the index does not exist at all. That is why `es_count` reads a 404
+  as 0: the pre-sync state is an absent index, not an empty one, so the 404
+  branch is on this task's main path rather than defensive.
+- **Three seeded rows yielded three documents**, in both `app/_count` and the
+  bare index.
 
-Start a throwaway stack with the `elasticsearch` profile and a Symfony skeleton, in the matrix web image, and work out the smallest configuration under which `php bin/console fos:elastica:populate` exits 0 and leaves documents behind. The pieces to establish, in this order:
+- [ ] **Step 1: Write the two app files the bundle needs**
 
-1. Which `ruflin/elastica` and `friendsofsymfony/elastica-bundle` versions composer resolves against `symfony/skeleton` plus `symfony/orm-pack` (the spec measured the bundle at v7.2.0 requiring `ruflin/elastica ^8.0 || ^9.0`, and elastica 9.0.0 wrapping `elasticsearch/elasticsearch ^9.0`; confirm what *this* install resolves rather than assuming).
-2. The `fos_elastica` configuration: the client's host and port, one index, and its `persistence` block binding a Doctrine entity with a driver and provider.
-3. The entity, its Doctrine mapping, and a migration that creates its table — the cell's existing `mxsymfony` recipe writes migrations by hand rather than using MakerBundle, and this cell should follow it.
-4. The index name as the bundle actually creates it. FOSElasticaBundle may prefix or suffix the configured name; the `IndexMarker` needs what Elasticsearch reports, which `curl localhost:9200/_cat/indices` gives you.
-5. How many documents a seeded table yields, so `minimum_after` is a floor the run actually clears.
+Create `tests/matrix/cells/mxfeatsymfony/app/fos_elastica.yaml`:
 
-Record each answer with the command that produced it. **If any step reveals that `fos:elastica:populate` cannot be made to succeed in this environment, stop and report it** — the spec's decision 6 records that the owner chose to keep both features in one pass against a recommendation to split, with the agreement that a dead end here is reported and the halves split then, rather than the whole plan being lost.
+```yaml
+# The minimal configuration under which `fos:elastica:populate` exits 0,
+# established by iterating in the matrix web image against elasticsearch:9.0.0
+# (bundle v7.2.0, ruflin/elastica 9.0.0).
+#
+# `hosts`, a list - not `url`, which v7 rejects outright. The host is the
+# compose alias this cell's stack gives the service.
+#
+# `persistence` is what makes the command able to do anything: without a
+# driver and a model it has no source to read documents from.
+fos_elastica:
+    clients:
+        default: { hosts: ['http://ddev-mxfeatsymfony-es:9200'] }
+    indexes:
+        app:
+            properties:
+                title:
+                    type: text
+            persistence:
+                driver: orm
+                model: App\Entity\Doc
+```
 
-- [ ] **Step 2: Decide where the app code lives, and say which**
+Create `tests/matrix/cells/mxfeatsymfony/app/Doc.php`:
 
-The spec's ruling: the configuration and entity go in **recipe files beside `seed.sql`**, not in a heredoc inside `install.sh` — a YAML config and a PHP entity are reviewable as files and unreadable as shell quoting. Only if it turns out to be two or three lines does the heredoc win. State in your report which it was and why, and name the files you created.
+```php
+<?php
 
-Note that `tests/matrix/conftest.py` copies only `remote/` and `remote-only/` onto the stand-in host; everything else in a cell directory is read by the recipe, so `install.sh` must copy these files into place itself.
+// The indexed entity. Deliberately the smallest thing with a mapped id and
+// one text field: this cell proves that `fos:elastica:populate` reads a
+// Doctrine source and writes documents, not that Elastica maps a rich schema.
 
-- [ ] **Step 3: Write the install recipe**
+namespace App\Entity;
 
-Build it on `mxsymfony/install.sh`, which this cell's profile-shaped assertions mirror: `composer create-project symfony/skeleton`, `composer require symfony/orm-pack`, the exported `DATABASE_URL`, the hand-written `app_user` migration, and the deliberately unapplied `matrix_marker` migration. Read that file and keep those premises — this cell runs the `symfony` profile, so the profile-keyed bodies run for it too, including the one that asserts a pending Doctrine migration was applied.
+use Doctrine\ORM\Mapping as ORM;
 
-On top of it: `composer require friendsofsymfony/elastica-bundle`, the configuration and entity from Step 1 copied into place, the entity's table migrated, rows seeded into it so there is something to index, and **the index left empty or absent** — because `IndexMarker.expected_before` is 0 and the sync's own `fos:elastica:populate` must be the only thing that fills it. If the bundle creates the index at install time, the recipe deletes it again, and says so in a comment.
+#[ORM\Entity]
+#[ORM\Table(name: 'doc')]
+class Doc
+{
+    #[ORM\Id]
+    #[ORM\Column]
+    public int $id = 0;
 
-End with the version block, as every recipe does: `composer show symfony/framework-bundle`, `doctrine/orm`, `friendsofsymfony/elastica-bundle`, `ruflin/elastica`, then `php bin/console --version`, `php -v | head -1`, `composer --version`.
+    #[ORM\Column(length: 255)]
+    public string $title = '';
+}
+```
 
-- [ ] **Step 4: Write the remaining recipe files**
+They are recipe files rather than heredocs inside `install.sh`, as the spec
+rules: a YAML config and a PHP class with attributes and backslashes are
+reviewable as files and unreadable as shell quoting. They live under `app/` so
+nothing confuses them with `remote/`, which `conftest.py` copies onto the
+stand-in host.
 
-`ddev-sync.yaml` — `mxsymfony`'s, with the host names changed. Keep its `database.symfony_user_table: app_user` setting if it has one: the symfony profile's `${SYMFONY_USER_TABLE}` placeholder resolves from it, and dropping it would fail the preflight probe.
+- [ ] **Step 2: Write the install recipe**
 
-`seed.sql` — `mxsymfony`'s SQL body, copied verbatim, plus rows in the indexed entity's table so `fos:elastica:populate` has documents to create. Replace the leading comment to say what this cell adds.
+Create `tests/matrix/cells/mxfeatsymfony/install.sh`:
 
-`remote/public/uploads/matrix-upload.txt` — the symfony profile maps `public/uploads/`, and the files step fails with rsync exit 23 when a remote path is missing:
+```sh
+# A real Symfony with Doctrine and FOSElasticaBundle against a real
+# Elasticsearch. Built like `mxsymfony` - same skeleton, same explicit
+# `app_user` migration, same deliberately unapplied second migration - because
+# this cell runs the symfony profile and the profile-keyed assertions run for
+# it too. What it adds is the one feature, `symfony-search`.
+composer create-project --no-interaction --prefer-dist symfony/skeleton .
+composer require --no-interaction symfony/orm-pack
+
+# Exported rather than written to `.env.local`, exactly as `mxsymfony` does:
+# the stock `.env` stays untouched so the profile's env step has to patch that
+# very file. Symfony's Dotenv never overrides a variable already in the
+# process environment.
+export DATABASE_URL='mysql://db:db@ddev-mxfeatsymfony-db:3306/db?serverVersion=mariadb-11.0.0'
+
+mkdir -p migrations
+cat > migrations/Version20260101000000.php <<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace DoctrineMigrations;
+
+use Doctrine\DBAL\Schema\Schema;
+use Doctrine\Migrations\AbstractMigration;
+
+final class Version20260101000000 extends AbstractMigration
+{
+    public function up(Schema $schema): void
+    {
+        $this->addSql('CREATE TABLE app_user (
+            id INT AUTO_INCREMENT NOT NULL,
+            email VARCHAR(180) NOT NULL,
+            roles JSON NOT NULL,
+            password VARCHAR(255) NOT NULL,
+            PRIMARY KEY(id)
+        ) DEFAULT CHARACTER SET utf8mb4 ENGINE = InnoDB');
+        $this->addSql('CREATE TABLE doc (
+            id INT NOT NULL,
+            title VARCHAR(255) NOT NULL,
+            PRIMARY KEY(id)
+        ) DEFAULT CHARACTER SET utf8mb4 ENGINE = InnoDB');
+    }
+
+    public function down(Schema $schema): void
+    {
+        $this->addSql('DROP TABLE app_user');
+        $this->addSql('DROP TABLE doc');
+    }
+}
+PHP
+
+php bin/console doctrine:migrations:migrate --no-interaction
+
+# The same deliberately unapplied migration `mxsymfony` leaves, written after
+# the migrate above so the dump that seeds the remote lacks its table.
+cat > migrations/Version20260102000000.php <<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace DoctrineMigrations;
+
+use Doctrine\DBAL\Schema\Schema;
+use Doctrine\Migrations\AbstractMigration;
+
+final class Version20260102000000 extends AbstractMigration
+{
+    public function up(Schema $schema): void
+    {
+        $this->addSql('CREATE TABLE matrix_marker (id INT NOT NULL, PRIMARY KEY(id))');
+    }
+
+    public function down(Schema $schema): void
+    {
+        $this->addSql('DROP TABLE matrix_marker');
+    }
+}
+PHP
+
+composer require --no-interaction friendsofsymfony/elastica-bundle
+
+# The bundle does not register itself: measured, `composer require` leaves
+# config/bundles.php holding only FrameworkBundle, DoctrineBundle and
+# DoctrineMigrationsBundle. Without this entry Symfony does not know the
+# `fos_elastica` namespace, and every console call - cache:clear,
+# doctrine:migrations:migrate, populate - dies on the config file instead.
+php -r '
+$f = "config/bundles.php";
+$s = file_get_contents($f);
+$add = "    FOS\\ElasticaBundle\\FOSElasticaBundle::class => [\"all\" => true],\n";
+file_put_contents($f, preg_replace("/\n\];\s*$/", "\n" . $add . "];\n", $s));
+'
+grep -q FOSElasticaBundle config/bundles.php || {
+  echo "install.sh failed to register FOSElasticaBundle; every console call would die on config" >&2
+  exit 1
+}
+
+# The configuration and the indexed entity, from the cell's own recipe files.
+mkdir -p src/Entity
+cp /var/www/html/.matrix-app/fos_elastica.yaml config/packages/fos_elastica.yaml
+cp /var/www/html/.matrix-app/Doc.php src/Entity/Doc.php
+
+# Proof the configuration loads at all, before anything depends on it: a bad
+# `fos_elastica` block fails here with the option named, rather than three
+# steps later with the same message attached to an unrelated command.
+php bin/console cache:clear --no-interaction
+
+# Rows for populate to index. They go in the LOCAL database only so the dump
+# that seeds the remote carries the `doc` schema; the rows the sync will index
+# come from seed.sql on the remote side.
+php bin/console dbal:run-sql "INSERT INTO doc (id, title) VALUES (1,'alpha-local')"
+
+# The index must not exist before the sync: `IndexMarker.expected_before` is 0
+# and `es_count` reads an absent index as 0. Measured: the bundle creates
+# nothing at install time and `populate` resets the index itself, so there is
+# normally nothing here to remove - this is a precaution, not a removal of
+# anything known to be there.
+curl -s -X DELETE "http://ddev-mxfeatsymfony-es:9200/app" >/dev/null || true
+
+composer show symfony/framework-bundle | grep -E '^(name|versions) '
+composer show doctrine/orm | grep -E '^(name|versions) '
+composer show friendsofsymfony/elastica-bundle | grep -E '^(name|versions) '
+composer show ruflin/elastica | grep -E '^(name|versions) '
+php bin/console --version
+php -v | head -1
+composer --version
+```
+
+**`conftest.py` copies only `remote/` and `remote-only/`**, so the recipe
+cannot read `app/` from the cell directory directly — the two files have to
+reach the container another way. Add the copy to `tests/matrix/conftest.py`'s
+`_install`, beside the recipe read, so a cell directory's `app/` lands at
+`<project>/.matrix-app/` before `install.sh` runs:
+
+```python
+    staged = cell_dir(cell.name) / "app"
+    if staged.is_dir():
+        shutil.copytree(staged, work_dir(cell.name) / ".matrix-app", dirs_exist_ok=True)
+```
+
+Put it immediately before `result = stack.web(["sh", "-euc", recipe])`, with a
+comment saying why: application files a recipe installs are reviewable as
+files, and a heredoc holding a PHP class with attributes and namespaces is
+not.
+
+- [ ] **Step 3: Write the remaining recipe files**
+
+`tests/matrix/cells/mxfeatsymfony/ddev-sync.yaml` — `mxsymfony`'s, with the
+host names changed to this cell's. Keep its `database.symfony_user_table`
+setting: the symfony profile's `${SYMFONY_USER_TABLE}` placeholder resolves
+from it, and without it the preflight probe looks for a `user` table this
+install does not have. Read `tests/matrix/cells/mxsymfony/ddev-sync.yaml` and
+copy it, changing only the two host values and the leading comment.
+
+`tests/matrix/cells/mxfeatsymfony/seed.sql` — `mxsymfony`'s SQL body verbatim,
+plus the rows `populate` will index. Replace the leading comment to say this
+cell declares the same profile-shaped registry fields, so the same test bodies
+read it, and that the `doc` rows are what the feature's evidence rests on:
+
+```sql
+INSERT INTO doc (id, title) VALUES
+  (11, 'production alpha'),
+  (12, 'production beta'),
+  (13, 'production gamma');
+```
+
+Three rows, which is what `minimum_after` is set against. They are distinct
+from the one row the install seeded locally, so a `doc` table that still held
+the install's row would be visible as a wrong count rather than passing.
+
+`tests/matrix/cells/mxfeatsymfony/remote/public/uploads/matrix-upload.txt` —
+the symfony profile maps `public/uploads/`, and the files step fails with
+rsync exit 23 when a remote path is missing:
 
 ```
 a file production serves from public/uploads
 ```
 
-- [ ] **Step 5: Register the cell**
+- [ ] **Step 4: Register the cell**
 
-In `tests/matrix/cells.py`, after the `mxfeathorizon` entry, with `profile="symfony"`, `project_type="symfony"`, `docroot="public"`, `php_image="php:8.3-cli"`, `services=("elasticsearch",)`, and `mxsymfony`'s profile-shaped field values verbatim (`required_tables=("app_user",)`, `admin_user=None`, `password_column=("app_user", "password")`, `production_url=None`, `identity_column="id"`, `seeded_users=("1", "2")`) — the same reasoning as every feature cell before it: `Cell`'s docstring defines `None`/`()` as "the profile has no such rule", so emptying them would make that meaning false.
+In `tests/matrix/cells.py`, after the `mxfeathorizon` entry:
 
-Its one `FeatureCheck` names `feature="symfony-search"` and carries an `IndexMarker` whose `index` is **the name Elasticsearch reports** from Step 1.4 and whose `minimum_after` is the floor from Step 1.5. Comment the index name with where it came from, so a reader does not have to re-derive the bundle's naming.
+```python
+    Cell(
+        name="mxfeatsymfony",
+        # The first feature cell for symfony; `mxsymfony` stays a stock
+        # skeleton plus orm-pack, which is what its row says it is.
+        profile="symfony",
+        project_type="symfony",
+        docroot="public",
+        php_image="php:8.3-cli",
+        services=("elasticsearch",),
+        # `mxsymfony`'s profile-shaped values, verbatim - `Cell`'s docstring
+        # defines None/() as "the profile has no such rule".
+        required_tables=("app_user",),
+        admin_user=None,
+        password_column=("app_user", "password"),
+        production_url=None,
+        identity_column="id",
+        seeded_users=("1", "2"),
+        features=(
+            FeatureCheck(
+                feature="symfony-search",
+                index_marker=IndexMarker(
+                    # The configured name, verbatim. Measured against bundle
+                    # v7.2.0: `_cat/indices` reports `app` and `_cat/aliases`
+                    # is empty - no date suffix and no alias, because that is
+                    # `use_alias`'s behaviour and it defaults to off.
+                    index="app",
+                    # Three rows in seed.sql, so three documents. A floor
+                    # rather than an exact count, so a growing seed does not
+                    # break the marker.
+                    minimum_after=3,
+                ),
+            ),
+        ),
+    ),
+```
 
-- [ ] **Step 6: Run the cell**
+- [ ] **Step 5: Run the cell**
 
 ```bash
 DDEV_SYNC_MATRIX_KEEP=1 uv run pytest -m matrix -k mxfeatsymfony --no-cov -vv -rA -s
 ```
 
-Expected: every test passed or skipped, nothing failed. Keep the output and the version block for Task 7.
+Expected: every test passed or skipped, nothing failed. Keep the output — the
+`[mxfeatsymfony] installed:` block names the versions Task 7 records.
 
-Same rule as Task 5: a feature with no observable effect is a finding. If `fos:elastica:populate` exits 0 and the index stays empty, report what you observed — do not lower `minimum_after` to whatever the run produced.
+If `populate` exits 0 and the index stays empty, report what you observed:
+a feature with no observable effect is a finding, not something to work
+around, and lowering `minimum_after` to whatever the run produced is the one
+response the spec rules out.
 
-- [ ] **Step 7: Run the gates and commit**
+- [ ] **Step 6: Run the gates and commit**
 
 ```bash
 uv run ruff check .
@@ -1051,7 +1372,39 @@ uv run mypy src tests tools
 uv run pytest
 ```
 
-Commit with a `test(matrix):` subject naming what the cell proves, the versions it resolved, and — in the body — the configuration minimum Step 1 established, because that is the part a future reader will want and cannot re-derive cheaply. Footer exactly `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
+```bash
+cat > /tmp/ddev-sync-commit-6.txt <<'MSG'
+test(matrix): verify symfony-search against a real Elasticsearch
+
+`fos:elastica:populate` had no run-time evidence and could not have had
+any: nothing in this matrix could see a search index. This cell gives it
+some - a Symfony with FOSElasticaBundle, an Elasticsearch started only for
+cells that ask for it, and an index deleted before the run that must be
+populated after it.
+
+Two things had to be measured rather than guessed, and both would have
+failed a cell run. The bundle does not register itself: after `composer
+require`, config/bundles.php holds only the three bundles the skeleton and
+orm-pack put there, and without the entry every console call dies on the
+fos_elastica config namespace. And the client key is `hosts`, a list - v7
+rejects `url` outright.
+
+The index is named exactly as configured, with no date suffix and no
+alias, so the marker names the configured string. `populate` resets and
+recreates the index itself, which is why the pre-sync state is an absent
+index rather than an empty one - and why es_count has to read a 404 as
+zero on the main path, not as a defensive branch.
+
+The configuration and the entity are recipe files rather than heredocs: a
+YAML block and a PHP class with attributes and namespaces are reviewable
+as files and unreadable as shell quoting. conftest stages a cell's `app/`
+directory into the project for that.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+MSG
+git add tests/matrix/cells.py tests/matrix/conftest.py tests/matrix/cells/mxfeatsymfony
+git commit -F /tmp/ddev-sync-commit-6.txt
+```
 
 ---
 
