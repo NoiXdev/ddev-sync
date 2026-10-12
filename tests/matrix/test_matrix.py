@@ -627,7 +627,14 @@ def test_each_feature_created_and_removed_the_paths_it_claims(stack: Stack, cell
     paths += [(check, path, False) for check in cell.features for path in check.disappears]
     if not paths:
         pytest.skip(f"{cell.name} asserts no feature paths")
-    remote = cell_dir(cell.name) / "remote"
+    # Both trees, because `conftest.py::_seed` copies `remote/` AND
+    # `remote-only/` onto the stand-in production host: a path in either one
+    # can arrive through the files step. Checking only `remote/` left the
+    # guard narrower than its own stated purpose. Inert when it was written -
+    # `mxwordpress` was the only cell with a `remote-only/` and it declares no
+    # features - so this closes the gap before a cell relies on it rather than
+    # after.
+    remote_trees = [cell_dir(cell.name) / "remote", cell_dir(cell.name) / "remote-only"]
     for check, path, wanted in paths:
         if wanted:
             # Attribution: the `files` step pulls what `files.paths` maps from
@@ -639,11 +646,12 @@ def test_each_feature_created_and_removed_the_paths_it_claims(stack: Stack, cell
             # recipe's removal is the other half of this precondition (see
             # `FeatureCheck.appears`) and cannot be checked from here - a
             # recipe that forgot it leaves this assertion passing vacuously.
-            assert not (remote / path).exists(), (
-                f"{cell.name} claims {check.feature} creates {path}, but the cell's remote "
-                "tree carries it too, so if a `files.paths` entry covers it the files step "
-                "would create it whether or not the feature ran; the cell is refused either "
-                "way, because this check cannot tell which"
+            carriers = [tree.name for tree in remote_trees if (tree / path).exists()]
+            assert not carriers, (
+                f"{cell.name} claims {check.feature} creates {path}, but the cell's "
+                f"{', '.join(carriers)} tree carries it too, so if a `files.paths` entry "
+                "covers it the files step would create it whether or not the feature ran; "
+                "the cell is refused either way, because this check cannot tell which"
             )
         assert (work_dir(cell.name) / path).exists() == wanted, (
             f"{path} should {'exist' if wanted else 'be gone'} after the sync: "
@@ -657,17 +665,27 @@ def test_the_feature_rule_removed_the_planted_row(stack: Stack, cell: Cell) -> N
     # row is planted in a table no other rule touches, and only this rule can
     # remove it. The remote is never given the row, so the import cannot be
     # what removes it either.
-    markers = [check.row_marker for check in cell.features if check.row_marker is not None]
+    # Pairs rather than bare markers, so a failure can name the feature whose
+    # rule did not fire. With one such marker in the matrix its table was
+    # unique to its feature and the table name identified it; the second
+    # feature to declare a `row_marker` is where that stops being true, and a
+    # message naming only the table would send a reader to the table instead
+    # of to the rule.
+    markers = [
+        (check.feature, check.row_marker) for check in cell.features if check.row_marker is not None
+    ]
     if not markers:
         pytest.skip(f"{cell.name} asserts no feature sanitize rule")
-    for marker in markers:
+    for feature, marker in markers:
         count = f"SELECT COUNT(*) FROM `{marker.table}` WHERE {marker.where}"
         stack.sql(marker.insert)
-        assert stack.sql(count) == "1", f"the row was not planted into {marker.table}"
+        assert stack.sql(count) == "1", (
+            f"the row {feature} asserts was not planted into {marker.table}"
+        )
         result = stack.engine("--target", "production", "--steps", "sanitize", "--yes")
         assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
         assert stack.sql(count) == "0", (
-            f"the row survived in {marker.table}: the feature's rule did not take effect"
+            f"the row survived in {marker.table}: {feature}'s rule did not take effect"
         )
 
 
