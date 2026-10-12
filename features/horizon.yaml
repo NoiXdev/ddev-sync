@@ -38,11 +38,16 @@
 # that turned out not to exist.)
 #
 # This block used to end with "See the features design doc §5.1". There is no
-# such document: `docs/` holds only `plans/` and `specs/`, and no spec in it
-# has numbered sections at all. The pointer is dropped rather than repaired
-# because the argument above does not need it - but the same dangling
-# reference still stands at `profiles/symfony.yaml:71`, which is a profile and
-# so outside this branch's scope.
+# such document - `docs/` holds only `plans/` and `specs/`, and none of those
+# specs is a features design doc or carries a §5.1. (Numbered headings do exist
+# in this repository: `docs/specs/2026-10-08-sync-init-part-b2-design.md:232` is
+# `### §8 item 3`. The claim here is about §5.1 and about a features design doc,
+# not about numbering in general.) The pointer is dropped rather than repaired
+# because the argument above does not need it - but two copies of the same
+# reference still stand, both in profiles and so outside this branch's scope:
+# `profiles/symfony.yaml:71` ("§5.1 of the features design doc") and
+# `profiles/typo3.yaml:68` ("(spec §5.1)"), for the same scheduler/Messenger
+# rule. Other `spec §` pointers elsewhere in the tree were not swept.
 #
 # What `horizon:clear` below actually does, and does not do (verified
 # against the Laravel 11.x Horizon docs, "Clearing Jobs From Queues"):
