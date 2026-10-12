@@ -98,13 +98,13 @@ git rm features/typo3-solr.yaml
 uv run pytest 2>&1 | tail -20
 ```
 
-Expected: FAIL. `tests/features/test_typo3_symfony_features.py` loads the feature in `test_typo3_solr_is_scoped_to_typo3_and_requeues_the_index`, in `test_symfony_search_reindex_commands_all_tolerate_failure`'s loop, and in `test_composer_package_detections_are_pinned`. Record the real failures — they are this step's evidence that the grep found every consumer.
+Expected: FAIL. `tests/features/test_typo3_symfony_features.py` loads the feature in `test_typo3_solr_is_scoped_to_typo3_and_requeues_the_index`, in `test_typo3_and_symfony_optional_commands_tolerate_failure`'s loop (renamed to `test_symfony_search_reindex_commands_all_tolerate_failure` by Step 4), and in `test_composer_package_detections_are_pinned`. Record the real failures — they are this step's evidence that the grep found every consumer.
 
 - [ ] **Step 4: Remove the three test sites**
 
 - Delete `test_typo3_solr_is_scoped_to_typo3_and_requeues_the_index` entirely.
-- In `test_symfony_search_reindex_commands_all_tolerate_failure`, narrow the loop to `("symfony-search",)` and change its docstring comment so it no longer speaks of "a Solr or Elastica reindex" — it is Elastica only now.
-- In `test_composer_package_detections_are_pinned`, drop the `typo3-solr` assertion and keep the `symfony-search` one.
+- In `test_typo3_and_symfony_optional_commands_tolerate_failure`, narrow the loop to `("symfony-search",)`, rename it to `test_symfony_search_reindex_commands_all_tolerate_failure`, and change its docstring comment so it no longer speaks of "a Solr or Elastica reindex" — it is Elastica only now.
+- In `test_composer_package_detections_are_pinned`, drop the `typo3-solr` assertion and keep the `symfony-search` one. (A later pass renamed it to `test_the_symfony_search_composer_package_detection_is_pinned`, once the plural name had outlived the second assertion.)
 
 Do not leave a skipped or renamed placeholder behind: a deleted feature's tests are deleted, and `tests/features/test_all_features.py` enumerates from the filesystem (`FeatureRegistry.available()`), so it adjusts itself.
 
@@ -112,7 +112,7 @@ Do not leave a skipped or renamed placeholder behind: a deleted feature's tests 
 
 Replace the `typo3-solr` row's *Notes* cell. The row stays in the table — an empty row invites someone to re-add the feature from the same guess, and a missing row loses the finding. The *Verified against* / *Date* / *By* cells stay empty, because nothing was verified:
 
-> **Removed, not verified.** `features/typo3-solr.yaml` is deleted as of this change. Its one declared command, `vendor/bin/typo3 solr:initializesolrconnections`, does not exist, and `apache-solr-for-typo3/solr` registers no CLI command at all. Four checks against `TYPO3-Solr/ext-solr@main`, 2026-10-10: `initializesolrconnections` has zero occurrences anywhere in the repository; there is no `Configuration/Commands.php`, which is TYPO3's mechanism for registering console commands; `Configuration/Services.yaml` carries no `console.command` tag; and `Classes/` has no `Command` directory. `allow_failure: true` is why no sync ever reported this. **Rebuilding a Solr index after an import remains a real need** — ext-solr drives connection setup from TypoScript and site configuration, and whatever the right mechanism is (a scheduler task, an index-queue operation), it is not this command. Reinstating the feature means establishing that mechanism first.
+> **Removed, not verified.** `features/typo3-solr.yaml` is deleted as of this change. Its one declared command, `vendor/bin/typo3 solr:initializesolrconnections`, does not exist, and `apache-solr-for-typo3/solr` registers no CLI command at all. Four checks against `TYPO3-Solr/ext-solr@main`, 2026-10-10: `initializesolrconnections` has zero occurrences anywhere in the repository; there is no `Configuration/Commands.php`, which is TYPO3's mechanism for registering console commands; `Configuration/Services.yaml` carries no `console.command` tag; and `Classes/` has no `Command` directory. `allow_failure: true` is why no sync ever reported this. **Rebuilding a Solr index after an import remains a real need** — ext-solr drives connection setup from TypoScript and site configuration (`Classes/ConnectionManager.php@main`: `getConnectionFromConfiguration` takes a `TypoScriptConfiguration`, and `getConnectionByPageId`, `getConnectionByTypo3Site`, `getConnectionByRootPageId` and `getConnectionsBySite` each build theirs from `$site->getSolrConfiguration()`; `main` is that repository's default branch, so the ref resolves), and whatever the right mechanism is (a scheduler task, an index-queue operation), it is not this command. Reinstating the feature means establishing that mechanism first.
 
 - [ ] **Step 6: Run the gates**
 
