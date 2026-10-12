@@ -9,6 +9,10 @@
 # default database driver is `mysqli`, so those are built here too. The -dev
 # packages stay installed rather than being purged afterwards: the image is a
 # throwaway test fixture, and purging would only add a fragile step.
+#
+# `pcntl` is here for laravel/horizon, which lists it (and `posix`) in
+# `require` rather than `suggest`, so composer refuses the package without
+# it. Measured on php:8.3-cli: `posix` is already present, `pcntl` is not.
 ARG PHP_IMAGE
 FROM ${PHP_IMAGE}
 
@@ -18,7 +22,7 @@ RUN apt-get update \
       libicu-dev libzip-dev libpng-dev libjpeg-dev libfreetype6-dev \
  && rm -rf /var/lib/apt/lists/* \
  && docker-php-ext-configure gd --with-freetype --with-jpeg \
- && docker-php-ext-install -j"$(nproc)" pdo_mysql mysqli intl zip gd
+ && docker-php-ext-install -j"$(nproc)" pdo_mysql mysqli intl zip gd pcntl
 
 # Pinned to an exact version rather than `composer:2`: composer's policy
 # defaults are an input to the install recipes, not a detail of the image.
