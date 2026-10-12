@@ -1228,9 +1228,13 @@ grep -q FOSElasticaBundle config/bundles.php || {
 }
 
 # The configuration and the indexed entity, from the cell's own recipe files.
+# `conftest.py::_install` stages them at /tmp/matrix-app inside the container
+# rather than in the project, because `composer create-project .` above
+# refuses a project directory that holds anything at all - see the comment on
+# the staging itself.
 mkdir -p src/Entity
-cp /var/www/html/.matrix-app/fos_elastica.yaml config/packages/fos_elastica.yaml
-cp /var/www/html/.matrix-app/Doc.php src/Entity/Doc.php
+cp /tmp/matrix-app/fos_elastica.yaml config/packages/fos_elastica.yaml
+cp /tmp/matrix-app/Doc.php src/Entity/Doc.php
 
 # Proof the configuration loads at all, before anything depends on it: a bad
 # `fos_elastica` block fails here with the option named, rather than three
@@ -1262,13 +1266,25 @@ composer --version
 cannot read `app/` from the cell directory directly — the two files have to
 reach the container another way. Add the copy to `tests/matrix/conftest.py`'s
 `_install`, beside the recipe read, so a cell directory's `app/` lands at
-`<project>/.matrix-app/` before `install.sh` runs:
+`/tmp/matrix-app` **inside the web container** before `install.sh` runs:
 
 ```python
     staged = cell_dir(cell.name) / "app"
     if staged.is_dir():
-        shutil.copytree(staged, work_dir(cell.name) / ".matrix-app", dirs_exist_ok=True)
+        copied = stack.compose("cp", str(staged), "web:/tmp/matrix-app")
+        if copied.returncode != 0:
+            raise RuntimeError(
+                f"{cell.name}: staging app/ into the web container failed:\n{copied.stderr}"
+            )
 ```
+
+Not into the bind-mounted project, which this task's own measurement corrected:
+a recipe whose first line is `composer create-project .` refuses to run if the
+project directory holds anything, dot entries included, because
+`Composer\Util\Filesystem::isDirEmpty` builds its Finder with
+`ignoreVCS(false)->ignoreDotFiles(false)` — so staging a `.matrix-app/` into
+the project fails the recipe's very first line with `Project directory
+"/var/www/html/." is not empty.`
 
 Put it immediately before `result = stack.web(["sh", "-euc", recipe])`, with a
 comment saying why: application files a recipe installs are reviewable as
