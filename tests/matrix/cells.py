@@ -100,7 +100,7 @@ class Cell:
     `services` names the compose profiles this cell needs beyond the four
     services every cell starts. Each new service sits behind a `profiles:`
     entry of its own name, so one string selects the profile and names the
-    container to exec into. Defaulted, so the cells that came before this
+    compose service to exec into. Defaulted, so the cells that came before this
     field start exactly what they started then - which matters, because
     Elasticsearch is 512 MB of heap that six of them have no use for.
     """

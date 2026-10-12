@@ -59,11 +59,14 @@ def test_no_cell_name_contains_another_so_a_k_filter_selects_one_cell() -> None:
 
 
 def test_every_declared_service_is_a_compose_profile() -> None:
-    """A mistyped service name must cost a collection error, not a cell run.
+    """A mistyped service name must fail this test, not a cell run.
 
     `compose --profile nosuch up` starts the four default services and says
     nothing about the name it did not recognise, so the cell would come up
     without the service it asked for and fail somewhere downstream.
+
+    This checks that the name appears as a list item in the file, not that it
+    sits under the service of that name.
     """
     compose = (HERE / "docker-compose.yaml").read_text(encoding="utf-8")
     declared = {name for cell in CELLS for name in cell.services}

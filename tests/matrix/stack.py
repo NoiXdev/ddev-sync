@@ -260,8 +260,10 @@ def up(cell: Cell, image: str) -> Stack:
     stack = Stack(cell=cell, image=image)
     stack.down()
     # `--profile` goes before the subcommand, which is where compose takes it.
-    # `down` needs them too, or a profiled service outlives the stack it
-    # belongs to and the next run finds its port taken.
+    # `down` needs them too: a profiled service it was not told about is not
+    # stopped, so it keeps running, keeps the cell's network in use ("Resource
+    # is still in use", and `down` still exits 0), and the next `up` meets
+    # that stale container.
     profiles = [argument for name in cell.services for argument in ("--profile", name)]
     result = stack.compose(*profiles, "up", "-d", "--build", "--wait")
     if result.returncode != 0:
