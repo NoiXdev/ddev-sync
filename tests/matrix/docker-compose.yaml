@@ -105,10 +105,14 @@ services:
       timeout: 5s
       retries: 60
 
-  # Behind a profile, like `elasticsearch` below: six of the cells in this
-  # matrix have no use for either, and a profile is how compose is told not to
-  # start a service by default. `Cell.services` names the profile, and
-  # `stack.py::up` turns each name into a `--profile` argument.
+  # Behind a profile, like `elasticsearch` below: only the cells that name it
+  # have any use for it, and a profile is how compose is told not to start a
+  # service by default. `Cell.services` names the profile, and `stack.py::up`
+  # turns each name into a `--profile` argument. Deliberately no headcount
+  # here: a number in a comment goes stale every time the registry grows, and
+  # this sentence used to carry one - "six of the cells" - which the very
+  # branch that added these two services left behind. The count lives in
+  # tests/matrix/cells.py, where it is derived rather than restated.
   redis:
     image: redis:7-alpine
     profiles:

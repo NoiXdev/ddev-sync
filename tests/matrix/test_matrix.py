@@ -703,6 +703,21 @@ def test_the_feature_command_populated_the_index(stack: Stack, cell: Cell) -> No
     # the earlier run's work and the before-count could never be 0. Measured:
     # `fos:elastica:populate` resets and recreates the index itself, so
     # removing it costs the run nothing.
+    #
+    # `db,setup` here, where the queue test above needs only `setup`: the
+    # documents this floor counts come from the `doc` rows the *import*
+    # brings in, and the install seeds one local row that the import's
+    # `DROP TABLE` removes. With `setup` alone the body leaned on the earlier
+    # whole sync for those rows without saying so, so running it on its own -
+    # `-k "mxfeatsymfony and index"`, which is what anyone debugging this cell
+    # types - populated the single install row and failed with "the feature's
+    # command did not populate it": a red that blames the feature for the
+    # harness's ordering. Carrying `db` makes the invocation bring its own
+    # import, so "the documents are the feature's work after an import" is
+    # true of this run rather than of the session. The delete still earns its
+    # place: it is what makes `expected_before == 0` assertable at all once
+    # the whole sync has populated the index, and that zero is what rules out
+    # anything but the feature having written what is counted afterwards.
     markers = [check.index_marker for check in cell.features if check.index_marker is not None]
     if not markers:
         pytest.skip(f"{cell.name} asserts no feature search index")
@@ -712,7 +727,7 @@ def test_the_feature_command_populated_the_index(stack: Stack, cell: Cell) -> No
             f"{marker.index} does not hold {marker.expected_before} documents after being "
             "deleted: something other than the feature is writing it"
         )
-        result = stack.engine("--target", "production", "--steps", "setup", "--yes")
+        result = stack.engine("--target", "production", "--steps", "db,setup", "--yes")
         assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
         counted = stack.es_count(marker.index)
         assert counted >= marker.minimum_after, (

@@ -35,9 +35,11 @@ def test_every_feature_check_names_a_feature_that_exists() -> None:
             )
 
 
-# Both loops below assert nothing against a registry too small to iterate, so
-# each states the size it needs first - the same reason the feature check
-# above refuses an empty `known`.
+# Each of the three loops below asserts nothing against a collection too small
+# to iterate, so each states the size it needs first - the same reason the
+# feature check above refuses an empty `known`. The comment used to say "both
+# loops" and was left behind when a third was added, which is how the service
+# guard came to be the one without a minimum.
 def test_every_cell_name_is_mx_followed_by_letters_and_digits_only() -> None:
     assert CELLS, "the cell registry is empty, so the loop below checks nothing"
     for cell in CELLS:
@@ -70,6 +72,7 @@ def test_every_declared_service_is_a_compose_profile() -> None:
     """
     compose = (HERE / "docker-compose.yaml").read_text(encoding="utf-8")
     declared = {name for cell in CELLS for name in cell.services}
+    assert declared, "no cell declares a service, so the loop below checks nothing"
     for name in sorted(declared):
         assert f"- {name}\n" in compose, (
             f"cell service {name!r} is not a compose profile in docker-compose.yaml; "

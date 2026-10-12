@@ -3,13 +3,24 @@
 # database - the first thing in this matrix that does.
 composer create-project --no-interaction --prefer-dist laravel/laravel .
 
-# `APP_ENV=local` is load-bearing, not decoration. Laravel defaults APP_ENV to
-# `production`, and `horizon:clear` runs through ConfirmableTrait, which
-# refuses in production without `--force`; the engine execs non-interactively,
-# so the command would return 1 and clear nothing - and the feature is
-# `allow_failure: true`, so the sync would call that fine. The real
-# laravel/laravel skeleton ships APP_ENV=local, so this is what a project
-# looks like, not a workaround.
+# `APP_ENV=local` is here because the real laravel/laravel skeleton ships it,
+# which makes this cell's .env independent of the profile rather than
+# load-bearing against it. An earlier wording called it "load-bearing, not
+# decoration"; that is false on this cell's ordered run. Laravel's own default
+# is `production`, and `horizon:clear` goes through ConfirmableTrait, which
+# refuses in production without `--force` - the engine execs
+# non-interactively, so the prompt resolves to its default of false, the
+# command returns 1 and clears nothing, and `allow_failure: true` reports that
+# as fine. But what keeps this cell out of that state is the same profile step
+# credited below for `CACHE_STORE`: `profiles/laravel.yaml`'s `env.set` carries
+# `APP_ENV: local`, `patch_keys` appends keys the file does not already have,
+# and `engine/steps.py` puts ENV in the `db` group, ordered before SETUP. So on
+# any sync that includes `db` - the default, and what the whole-sync test runs
+# before the queue test - the key reads `local` by the time the command runs,
+# whether or not the project ever set it. Deleting this line would not fail the
+# ordered run. The refusal is reachable in exactly three places: a
+# `--steps setup` run against a tree that was never synced, a project setting
+# `env: strategy: none`, and a project override that pins APP_ENV itself.
 #
 # `QUEUE_CONNECTION=redis` because the skeleton ships `database`, and a job on
 # the database queue is not in the queue Horizon clears. The profile's env step

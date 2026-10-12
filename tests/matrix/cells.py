@@ -133,15 +133,18 @@ class Cell:
 
     `features` is what this cell proves about the *features* the sync
     activated, as opposed to the profile - see `FeatureCheck`. Defaulted, so
-    the six profile cells state nothing about features and keep asserting
-    exactly what they asserted before this field existed.
+    a cell that declares no check states nothing about features and keeps
+    asserting exactly what it asserted before this field existed.
 
     `services` names the compose profiles this cell needs beyond the four
     services every cell starts. Each new service sits behind a `profiles:`
     entry of its own name, so one string selects the profile and names the
-    compose service to exec into. Defaulted, so the cells that came before this
-    field start exactly what they started then - which matters, because
-    Elasticsearch is 512 MB of heap that six of them have no use for.
+    compose service to exec into. Defaulted, so a cell that names nothing
+    starts exactly what it started before this field existed - which matters,
+    because Elasticsearch is 512 MB of heap that only the cell declaring it
+    has any use for. Stated that way rather than as a count of the cells that
+    do without it: this field's first wording said "six of them", which the
+    very change that added the field made wrong.
     """
 
     # `mx` + letters and digits only, for three independent reasons:
