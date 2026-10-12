@@ -1,17 +1,29 @@
 # Horizon's queue and supervisor state lives in Redis, not the database: its
-# `JobRepository` binds to `RedisJobRepository` (src/ServiceBindings.php:23),
-# the package ships no migrations and no `database/` directory at all, and
-# neither `horizon_jobs` nor `horizon_supervisors` occurs anywhere in it.
-# Read in laravel/horizon 5.50.0, the release the `mxfeathorizon` cell
-# installed, and claimed for that release only: this comment used to say "5.x
-# and main", which is a claim about a third-party branch that moves and that
-# nothing here can cite. An earlier version of this file carried a
-# sanitize.rules block that TRUNCATEd those two non-existent tables. That
-# is worse than dead weight: operations/sanitize.py::_run_sql raises
-# unconditionally on failure, with no allow_failure on that path, so on a
-# project running this release the first TRUNCATE would have failed with
-# "table doesn't exist" and aborted the entire sync right after the database
-# import.
+# `JobRepository` binds to `RedisJobRepository` (src/ServiceBindings.php:23).
+# That binding is the reason; a missing migration would only say nothing is
+# there today. No release read here ships a `database/` or a `migrations/`
+# directory - root listings read through the GitHub contents API at the tags
+# v5.0.0, v5.10.0, v5.25.0 and v5.50.0, at the repository's default branch
+# `5.x`, and at `master`, with `src/` present on every call as a positive
+# control so that a zero means absence rather than a failed request. Four tags
+# spanning v5.0.0 to the installed v5.50.0 is evidence for the 5.x line, not
+# proof of every release in it. Only v5.50.0 was ever on disk here, the
+# release the `mxfeathorizon` cell installed, and in it neither `horizon_jobs`
+# nor `horizon_supervisors` occurs anywhere in the package.
+#
+# This comment used to claim "5.x and main". `main` is not a ref in that
+# repository at all - the API answers "No commit found for the ref main" - so
+# the citation named something that does not exist; the default branch is
+# `5.x`, and `master` exists as a branch but is not the default. Whoever wrote
+# it assumed the branch name instead of reading it, which is the mistake worth
+# leaving here: a ref that 404s and a ref that moved look the same in prose.
+#
+# An earlier version of this file carried a sanitize.rules block that
+# TRUNCATEd those two non-existent tables. That is worse than dead weight:
+# operations/sanitize.py::_run_sql raises unconditionally on failure, with no
+# allow_failure on that path, so on a Horizon project running any release read
+# here the first TRUNCATE would have failed with "table doesn't exist" and
+# aborted the entire sync right after the database import.
 #
 # Horizon is a feature rather than a base-profile rule because its presence
 # genuinely varies. profiles/laravel.yaml's own `jobs`/`failed_jobs` rules
