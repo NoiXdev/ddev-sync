@@ -72,6 +72,30 @@ named queues (`emails`, `exports`, …), for which the feature's stated purpose
 partly achieved. The user sees "Cleared N jobs from the [default] queue" and
 reasonably reads it as done. The `horizon` row lists this under "Not run".
 
+### 3b. `filament`'s `filament:upgrade` entry cannot be credited for anything
+
+Measured 2026-10-12, after this file was first written, in the kept
+`mxfeatlaravel` tree at filament/filament v5.10.1. `features/filament.yaml`
+declares two commands; the first is `php artisan filament:upgrade`. The laravel
+profile's **first** setup command is `composer install`, which fires the
+project's `post-autoload-dump` — `[..., "@php artisan filament:upgrade"]`, put
+there by `filament:install` — and
+`Filament\Support\Commands\UpgradeCommand::handle()` calls `AssetsCommand`,
+`config:clear`, `route:clear`, `view:clear`.
+
+Probe: with `public/css|js|fonts/filament` deleted, `composer install
+--no-interaction` alone restored all three and printed the whole chain, no
+feature command involved. The feature's own entry then runs second against work
+already done.
+
+The decision, which is why this is recorded rather than fixed: keep a command
+the feature cannot be credited for, drop it, or detect the hook. Dropping it is
+**not** safe without thought — a project whose `composer.json` lacks that hook
+(one that never ran `filament:install`, or that pruned its scripts) has nothing
+else running `filament:upgrade`, and the feature is the only thing that would.
+The second command, `filament:optimize`, is unaffected and is what the row's
+effect evidence rests on.
+
 ### 4. Both service features fail silently
 
 `features/horizon.yaml:73` and `features/symfony-search.yaml:10` are both

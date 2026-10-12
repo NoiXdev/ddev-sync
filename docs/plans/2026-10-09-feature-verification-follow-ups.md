@@ -28,12 +28,30 @@ rows do not name them:
   the writer of `public/vendor/livewire/`.
 
 The `filament` and `typo3-processedfiles` rows do carry their reasoning, so the
-asymmetry is in presentation, not in rigour. One clause per row closes it.
+asymmetry was in presentation, not in rigour.
 
-**Before writing that clause, re-measure both mechanisms.** The installed
-project trees these were read from no longer exist (see "A cell run deletes the
-kept trees" below), so the only honest route is a fresh cell run with
-`DDEV_SYNC_MATRIX_KEEP=1`, or reading the vendor packages directly.
+**Closed, by the fresh cell run this item asked for** (`mxfeatlaravel` with
+`DDEV_SYNC_MATRIX_KEEP=1`, 2026-10-12, 10 passed / 17 skipped / 0 failed), and
+both mechanisms came out sharper than this item stated them:
+
+- The confounder is not only `filament:assets`. `composer install` is the
+  profile's *first* setup command and fires the project's
+  `post-autoload-dump`, which runs `filament:upgrade`, which calls
+  `AssetsCommand`, `config:clear`, `route:clear` and `view:clear` — all of it
+  before any feature command. Measured directly: with all four asserted paths
+  deleted, `composer install --no-interaction` alone restored **none** of them,
+  while it did write `public/css|js|fonts/filament`. The confounder is real,
+  and it does not reach a single asserted path.
+- The livewire half as written here was wrong in a useful direction. There is
+  no competing `vendor:publish` during a sync at all: the project's
+  `--tag=laravel-assets` call hangs off `post-update-cmd`, which `composer
+  install` does not fire. And the tag would be wrong anyway — livewire's `dist`
+  maps to `public_path('vendor/livewire')` under `livewire:assets`
+  (`FrontendAssets.php:36-42`), requested only by livewire's own
+  `livewire:publish --assets` (`PublishCommand.php:34`), while its service
+  provider publishes nothing but the config. Two independent reasons, not one.
+
+Both clauses are in the rows, with the probe's date and the versions.
 
 ### 2. The `appears` attribution guard reads one of two trees
 
@@ -78,11 +96,32 @@ authority for each; what that branch left open is in
 
 What remains under this number is the other half it carried:
 
-`filament:upgrade` is recorded as **exercised, effect not observed** — it runs
+`filament:upgrade` was recorded as **exercised, effect not observed** — it runs
 and reports success, but its likely outputs under `public/` were created by
 `filament:install --panels` and nothing removed them first, so their presence
-afterwards is not attributable to it. Removing what `filament:assets` publishes
-and re-running would settle it.
+afterwards is not attributable to it. This item said that removing what
+`filament:assets` publishes and re-running would settle it.
+
+**It did settle it, the other way.** Probed 2026-10-12 in the kept
+`mxfeatlaravel` tree at filament/filament v5.10.1: with
+`public/css|js|fonts/filament` deleted, `composer install --no-interaction`
+alone restored all three and printed the whole chain — `Successfully published
+assets!`, three cleared caches, `Successfully upgraded!` — with no feature
+command running. The project's `composer.json` carries `post-autoload-dump:
+[..., "@php artisan filament:upgrade"]`, which is what `filament:install` puts
+there, and the profile runs `composer install` as its first setup command.
+
+So the effect is not unobserved for want of a better probe: **the feature's
+`filament:upgrade` entry runs second, after the profile's `composer install`
+has already run the identical command, and has no observable effect left to
+claim.** On a stock Filament project it is redundant by construction.
+
+What that is *not*: a reason to delete the entry. A project whose
+`composer.json` lacks the hook has nothing else running it. Whether the feature
+should keep a command it cannot be credited for, drop it, or detect the hook is
+a decision about what the feature promises — recorded in
+`docs/plans/2026-10-12-service-feature-verification-follow-ups.md` beside the
+other feature-definition questions, not decided here.
 
 ## Facts about this repository that cost time to find
 
