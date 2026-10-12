@@ -35,7 +35,14 @@
 # own state. (It is also no longer able to abort the sync if those tables
 # are absent: both rules carry tolerate_missing_table, the same guard this
 # file's own comment above describes for the two Horizon-specific tables
-# that turned out not to exist.) See the features design doc §5.1.
+# that turned out not to exist.)
+#
+# This block used to end with "See the features design doc §5.1". There is no
+# such document: `docs/` holds only `plans/` and `specs/`, and no spec in it
+# has numbered sections at all. The pointer is dropped rather than repaired
+# because the argument above does not need it - but the same dangling
+# reference still stands at `profiles/symfony.yaml:71`, which is a profile and
+# so outside this branch's scope.
 #
 # What `horizon:clear` below actually does, and does not do (verified
 # against the Laravel 11.x Horizon docs, "Clearing Jobs From Queues"):
