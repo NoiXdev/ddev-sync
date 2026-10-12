@@ -99,23 +99,34 @@ are now named in the `horizon` row and in
 the hazard reached any project running `APP_ENV=production` locally, which the
 engine's own step order contradicts.
 
-### 6. The Elasticsearch service's health ceiling is thin
+### 6. The Elasticsearch service's health ceiling is thin — closed
 
-`tests/matrix/docker-compose.yaml`'s `elasticsearch` healthcheck is 2 s ×
+`tests/matrix/docker-compose.yaml`'s `elasticsearch` healthcheck was 2 s ×
 60 retries with no `start_period`, i.e. 120 s, measured against an 11 s local
 start. On a loaded CI runner starting five containers having just pulled a
-1.48 GB image, a slow start fails the cell with "the stack did not come up"
+1.48 GB image, a slow start failed the cell with "the stack did not come up"
 (`tests/matrix/stack.py`'s `up`) rather than with anything naming the cause. The
-`redis` service's ceiling is ample; this is the one with no margin.
+`redis` service's ceiling is ample; this was the one with no margin.
 
-### 7. `compose exec` into a profiled service without `--profile`
+It now carries `start_period: 60s`, chosen over more retries because during a
+start period a failing probe does not count against `retries` — so the boot
+does not spend the budget that exists for a service which answered once and
+then stopped, which is a different failure. 60 s is roughly five times the
+observed start. **Not measured:** an actual slow runner; this widens a margin
+rather than fixing an observed failure.
 
-All three readers do it — `Stack.redis` (`tests/matrix/stack.py:174`),
-`es_count` (`:186`) and `es_delete` (`:218`). It is correct on the compose
-version this work was done on (v5.5.1, measured) and it is what kept the readers
-simple, but the CI runner's compose version is pinned nowhere and older compose
-refused exactly this. **If the matrix ever goes red in CI and green locally,
-check this first.**
+### 7. `compose exec` into a profiled service without `--profile` — closed
+
+All three readers did it — `Stack.redis`, `es_count` and `es_delete`. It was
+correct on the compose version this work was done on (v5.5.1, measured) and it
+is what kept the readers simple, but the CI runner's compose version is pinned
+nowhere and older compose refused exactly this.
+
+All three now go through `Stack.service_exec`, which passes `--profile <name>`
+before the subcommand when the cell declares that service, the way `up` and
+`down` already do. Worth being exact about what this is: **no failure was ever
+observed here.** It removes a dependency on one compose version's leniency, in
+a file that has no way to pin that version.
 
 ### 8. Neither Redis nor Elasticsearch is synced
 
@@ -125,26 +136,28 @@ answer is adequate because `fos:elastica:populate` repopulates from the imported
 database; for a project whose index is not derived from the database there is
 nothing at all.
 
-### 9. Two dangling references to the same non-existent document
+### 9. Two dangling references to the same non-existent document — closed
 
-`profiles/symfony.yaml:71` says "§5.1 of the features design doc is explicit
+`profiles/symfony.yaml:71` said "§5.1 of the features design doc is explicit
 that Messenger/Scheduler state must always be cleared", and
-`profiles/typo3.yaml:68` cites "(spec §5.1)" for the same scheduler rule. No
+`profiles/typo3.yaml:68` cited "(spec §5.1)" for the same scheduler rule. No
 such document exists: `docs/` holds only `plans/` and `specs/`, and none of
-those specs is a features design doc or carries a §5.1. The claim is about that
-section and that document, not about numbering in general — numbered headings
-do exist here, `docs/specs/2026-10-08-sync-init-part-b2-design.md:232` being
-`### §8 item 3`.
+those specs is a features design doc or carries a §5.1. The claim was about
+that section and that document, not about numbering in general — numbered
+headings do exist here, `docs/specs/2026-10-08-sync-init-part-b2-design.md:232`
+being `### §8 item 3`.
 
-The third copy, in `features/horizon.yaml`, was dropped on this branch. These
-two were not, because they are in profiles and profiles were out of scope. What
-each pointer supports is argued inline in the same comment, so dropping them is
-all they need.
+A third copy, in `features/horizon.yaml`, was dropped while this file was being
+written. Both of these were then dropped too: each pointer's argument is made
+inline in the same comment, so removing the citation costs the comment nothing.
+The symfony one now states the rule as this project's own, which is what it
+always was.
 
 Scope of this item, stated because one of the lessons below is exactly this: it
-covers `§5.1` and a features design doc. Other `spec §` pointers elsewhere in
+covered `§5.1` and a features design doc. Other `spec §` pointers elsewhere in
 the tree (`profiles/laravel.yaml:50`, `features/node-build.yaml:21`) reference
-different documents and were not checked.
+different documents and were not checked — so "no dangling pointers remain" is
+not a claim this item supports.
 
 ## A rule this session earned four times over
 

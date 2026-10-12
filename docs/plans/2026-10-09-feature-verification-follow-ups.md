@@ -5,7 +5,9 @@ merged. Its working notes lived in a git-ignored scratch directory that the
 process deletes; this file is the part worth keeping.
 
 Nothing here blocks anything. Each item was reviewed, ruled "can stand", and
-left on purpose.
+left on purpose. Items marked **Closed** were done later, on the branch named
+in each; the reasoning is kept rather than deleted, because what a claim rested
+on is the part that is expensive to reconstruct.
 
 ## Still open
 
@@ -41,9 +43,10 @@ it. `tests/matrix/conftest.py` copies **both** `remote/` and `remote-only/`
 onto the stand-in production host, so the guard's stated purpose is broader
 than what it checks.
 
-Inert today: `mxwordpress` is the only cell with a `remote-only/`, and it
-declares no features. It needs a code change, so it was out of scope for a
-comment-only pass.
+Inert when written: `mxwordpress` was the only cell with a `remote-only/`, and
+it declares no features. **Closed:** the guard now checks both trees and names
+whichever one carries the path, so the gap is shut before a cell relies on it
+rather than after.
 
 ### 3. A feature's sanitize-rule failure names the table, not the feature
 
@@ -51,17 +54,29 @@ comment-only pass.
 `FlushMarker`s, so `check.feature` is not in scope where the assertions fail.
 Naming the feature needs the list to carry `(feature, marker)` pairs.
 
-Harmless while one such marker exists — its table, `sys_file_processedfile`, is
-unique to the one feature that declares it, and the test id names the cell. The
-second feature with a `row_marker` is when this starts costing time.
+Harmless while one such marker existed — its table, `sys_file_processedfile`,
+is unique to the one feature that declares it, and the test id names the cell.
+The second feature with a `row_marker` is when it would have started costing
+time. **Closed:** the list carries `(feature, marker)` pairs and all three
+messages name the feature, so a failure sends a reader to the rule rather than
+to the table.
 
-### 4. Three features still have no run-time evidence
+### 4. `filament:upgrade` is exercised, with its effect not observed
 
-`horizon` needs Redis, `symfony-search` needs Elasticsearch, `typo3-solr` needs
-Solr — each a new service in `tests/matrix/docker-compose.yaml`, which is why
-they were scoped out. `typo3-solr` carries a second problem recorded in its
-`VERIFIED.md` note: its declared command could not be located in the package at
-all, so that feature may need correcting or removing rather than verifying.
+**The three features this item used to name are settled.** It read "Three
+features still have no run-time evidence — `horizon` needs Redis,
+`symfony-search` needs Elasticsearch, `typo3-solr` needs Solr". The branch
+planned in `docs/plans/2026-10-12-service-feature-verification.md` closed all
+three: `horizon` and `symfony-search` have effect evidence from the
+`mxfeathorizon` and `mxfeatsymfony` cells against a real Redis and a real
+Elasticsearch, and `typo3-solr` was **deleted rather than verified** — this
+file's suspicion that it "may need correcting or removing" was right, and four
+checks against `TYPO3-Solr/ext-solr@main` established that its one declared
+command does not exist in the package at all. `profiles/VERIFIED.md` is the
+authority for each; what that branch left open is in
+`docs/plans/2026-10-12-service-feature-verification-follow-ups.md`.
+
+What remains under this number is the other half it carried:
 
 `filament:upgrade` is recorded as **exercised, effect not observed** — it runs
 and reports success, but its likely outputs under `public/` were created by
