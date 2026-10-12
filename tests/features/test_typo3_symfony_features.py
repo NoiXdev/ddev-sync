@@ -184,10 +184,16 @@ def test_symfony_search_reindex_commands_all_tolerate_failure() -> None:
         assert entry.get("allow_failure") is True, entry
 
 
-def test_composer_package_detections_are_pinned() -> None:
+def test_the_symfony_search_composer_package_detection_is_pinned() -> None:
     # A typo in a detect value fails silently: the feature simply never
     # activates, and nothing reports the mismatch. Pinning the exact string
-    # here makes any future change to one a deliberate edit, not a slip.
+    # here makes a future change to it a deliberate edit, not a slip.
+    #
+    # Singular since `typo3-solr` was deleted and took the second assertion
+    # with it. The plural name and the "one of several" wording outlived the
+    # thing they described, which is the same stale-by-a-later-change defect
+    # this branch exists to remove. The Laravel features, `horizon` included,
+    # are pinned by the namesake test in `test_laravel_features.py`.
     assert REGISTRY.load("symfony-search").detect == {
         "composer_package": "friendsofsymfony/elastica-bundle"
     }
