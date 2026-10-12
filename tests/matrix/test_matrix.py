@@ -671,6 +671,56 @@ def test_the_feature_rule_removed_the_planted_row(stack: Stack, cell: Cell) -> N
         )
 
 
+def test_the_feature_command_emptied_the_planted_queue(stack: Stack, cell: Cell) -> None:
+    # The claim: a feature whose effect lands in Redis really clears it. Same
+    # device as the planted cache row, in a different store: the entry is
+    # planted after the import, so nothing the database step does can be what
+    # removes it, and only the `setup` step's own command can.
+    markers = [check.redis_marker for check in cell.features if check.redis_marker is not None]
+    if not markers:
+        pytest.skip(f"{cell.name} asserts no feature Redis command")
+    for marker in markers:
+        planted = stack.web(["sh", "-c", marker.push])
+        assert planted.returncode == 0, f"stdout:\n{planted.stdout}\n\nstderr:\n{planted.stderr}"
+        assert int(stack.redis("LLEN", marker.key)) == marker.expected_before, (
+            f"{marker.key} does not hold {marker.expected_before} entries before the sync: "
+            "the push did not land where the marker says it does"
+        )
+        result = stack.engine("--target", "production", "--steps", "setup", "--yes")
+        assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+        assert int(stack.redis("LLEN", marker.key)) == 0, (
+            f"{marker.key} still holds entries: the feature's command did not take effect"
+        )
+
+
+def test_the_feature_command_populated_the_index(stack: Stack, cell: Cell) -> None:
+    # The claim: a feature that rebuilds a search index really fills it.
+    #
+    # The index is deleted first, the way the Drupal role test takes its role
+    # away before the run it means to attribute. By file order the whole sync
+    # has already run once, and that sync's own setup step already populated
+    # this index - so without the delete, "the index has documents" would be
+    # the earlier run's work and the before-count could never be 0. Measured:
+    # `fos:elastica:populate` resets and recreates the index itself, so
+    # removing it costs the run nothing.
+    markers = [check.index_marker for check in cell.features if check.index_marker is not None]
+    if not markers:
+        pytest.skip(f"{cell.name} asserts no feature search index")
+    for marker in markers:
+        stack.es_delete(marker.index)
+        assert stack.es_count(marker.index) == marker.expected_before, (
+            f"{marker.index} does not hold {marker.expected_before} documents after being "
+            "deleted: something other than the feature is writing it"
+        )
+        result = stack.engine("--target", "production", "--steps", "setup", "--yes")
+        assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+        counted = stack.es_count(marker.index)
+        assert counted >= marker.minimum_after, (
+            f"{marker.index} holds {counted} documents, fewer than the {marker.minimum_after} "
+            "the cell expects: the feature's command did not populate it"
+        )
+
+
 def test_an_unset_image_is_built_from_this_tree() -> None:
     # The local default. The matrix runs the *image*, never the checkout, so an
     # image older than the tree tests code nobody is changing - and reports

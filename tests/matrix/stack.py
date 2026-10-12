@@ -12,6 +12,7 @@ wrapper scripts to compensate (see `tests/integration/conftest.py`); none of
 that is needed here.
 """
 
+import json
 import os
 import subprocess
 from dataclasses import dataclass
@@ -169,6 +170,75 @@ class Stack:
         if result.returncode != 0:
             raise RuntimeError(f"local query failed ({query!r}):\n{result.stderr}")
         return result.stdout.strip()
+
+    def redis(self, *args: str) -> str:
+        """Run one redis-cli command against this cell's Redis.
+
+        Raises on a failed call for the same reason `sql` does: a test reads an
+        empty result as "no entries", and a call that errored must not pass
+        for that.
+        """
+        result = self.compose("exec", "-T", "redis", "redis-cli", *args)
+        if result.returncode != 0:
+            raise RuntimeError(f"redis-cli {' '.join(args)} failed:\n{result.stderr}")
+        return result.stdout.strip()
+
+    def es_count(self, index: str) -> int:
+        """How many documents `index` holds, with an absent index counting 0.
+
+        Elasticsearch answers 404 for an index that does not exist, which is
+        the ordinary state before the sync builds one - so absence is a count,
+        not an error. Any other failure raises, as in `sql`: a count that
+        silently read 0 from a broken call would make a populated index
+        indistinguishable from a dead service.
+
+        The status code arrives as the last line of stdout, after the body.
+        stderr is never parsed: `docker compose exec` can write its own
+        warnings there, and they must not break a call that succeeded.
+        """
+        result = self.compose(
+            "exec",
+            "-T",
+            "elasticsearch",
+            "curl",
+            "-s",
+            "-w",
+            "\n%{http_code}",
+            f"localhost:9200/{index}/_count",
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"counting {index} failed:\n{result.stderr}")
+        body, _, status = result.stdout.rstrip("\n").rpartition("\n")
+        if status == "404":
+            return 0
+        if status != "200":
+            raise RuntimeError(f"counting {index} returned HTTP {status}:\n{body}")
+        return int(json.loads(body)["count"])
+
+    def es_delete(self, index: str) -> None:
+        """Remove `index` if it is there, so a later count is this run's work.
+
+        A 404 counts as success: what matters is that the index is absent
+        afterwards, not that it existed before. Any other failure raises, as
+        in `sql`.
+        """
+        result = self.compose(
+            "exec",
+            "-T",
+            "elasticsearch",
+            "curl",
+            "-s",
+            "-X",
+            "DELETE",
+            "-w",
+            "\n%{http_code}",
+            f"localhost:9200/{index}",
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"deleting {index} failed:\n{result.stderr}")
+        status = result.stdout.rstrip("\n").rpartition("\n")[2]
+        if status not in {"200", "404"}:
+            raise RuntimeError(f"deleting {index} returned HTTP {status}:\n{result.stdout}")
 
     def remote_sql(self, query: str) -> subprocess.CompletedProcess[str]:
         """Run one short query against the stand-in production database."""

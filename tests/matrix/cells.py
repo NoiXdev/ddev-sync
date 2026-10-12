@@ -26,6 +26,41 @@ class FlushMarker:
 
 
 @dataclass(frozen=True)
+class RedisMarker:
+    """A queue entry a cell plants so a feature's Redis command can be seen working.
+
+    `key` is the Redis key the entry lands under, prefix included: Laravel
+    builds `queues:<name>` in `Illuminate\\Queue\\RedisQueue`, but
+    `laravel/laravel`'s `config/database.php` prefixes every Redis key with
+    `Str::slug(APP_NAME) . '-database-'`, so the full key is not the one the
+    queue name suggests. `push` is a command run in the web container that
+    plants exactly one entry, and `expected_before` is how many the test must
+    see before the sync - a marker that was never planted would otherwise let
+    "the queue is empty afterwards" pass without the feature doing anything.
+    """
+
+    key: str
+    push: str
+    expected_before: int = 1
+
+
+@dataclass(frozen=True)
+class IndexMarker:
+    """What a cell expects of a search index before and after the sync.
+
+    `expected_before` is 0 because an index the sync is about to build is
+    either absent or empty beforehand - the mirror of `RedisMarker`, whose
+    planted entry must be present. `minimum_after` is a floor rather than an
+    exact count: the document count follows from the cell's seed, and pinning
+    it here would break the marker whenever the seed grows.
+    """
+
+    index: str
+    expected_before: int = 0
+    minimum_after: int = 1
+
+
+@dataclass(frozen=True)
 class FeatureCheck:
     """What a cell proves about one feature.
 
@@ -44,12 +79,16 @@ class FeatureCheck:
     against a path the install left behind and proves nothing. `disappears`
     are paths that must be gone after the sync. `row_marker` reuses
     `FlushMarker`: a row the cell plants which the sync must have removed.
+    `redis_marker` and `index_marker` are its equivalents for a feature whose
+    effect lands in Redis or in a search index rather than in SQL.
     """
 
     feature: str
     appears: tuple[str, ...] = ()
     disappears: tuple[str, ...] = ()
     row_marker: FlushMarker | None = None
+    redis_marker: RedisMarker | None = None
+    index_marker: IndexMarker | None = None
 
 
 @dataclass(frozen=True)
