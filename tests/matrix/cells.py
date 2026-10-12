@@ -96,6 +96,13 @@ class Cell:
     activated, as opposed to the profile - see `FeatureCheck`. Defaulted, so
     the six profile cells state nothing about features and keep asserting
     exactly what they asserted before this field existed.
+
+    `services` names the compose profiles this cell needs beyond the four
+    services every cell starts. Each new service sits behind a `profiles:`
+    entry of its own name, so one string selects the profile and names the
+    container to exec into. Defaulted, so the cells that came before this
+    field start exactly what they started then - which matters, because
+    Elasticsearch is 512 MB of heap that six of them have no use for.
     """
 
     # `mx` + letters and digits only, for three independent reasons:
@@ -133,6 +140,7 @@ class Cell:
     flush_marker: FlushMarker | None = None
     remote_packages: str = "mariadb-client|rsync"
     features: tuple[FeatureCheck, ...] = ()
+    services: tuple[str, ...] = ()
 
 
 # Every TYPO3 cell keeps the same cache tables, so they all plant the same row.

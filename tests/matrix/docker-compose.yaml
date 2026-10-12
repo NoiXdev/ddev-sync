@@ -104,3 +104,44 @@ services:
       interval: 3s
       timeout: 5s
       retries: 60
+
+  # Behind a profile, like `elasticsearch` below: six of the cells in this
+  # matrix have no use for either, and a profile is how compose is told not to
+  # start a service by default. `Cell.services` names the profile, and
+  # `stack.py::up` turns each name into a `--profile` argument.
+  redis:
+    image: redis:7-alpine
+    profiles:
+      - redis
+    networks:
+      default:
+        aliases:
+          - ddev-${MATRIX_CELL}-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # `discovery.type=single-node` and security off, because this is a throwaway
+  # test instance with no cluster to join and no credential worth having; the
+  # heap is pinned low for the same reason. Measured 2026-10-10 with
+  # elasticsearch:9.0.0: this configuration answered on its HTTP port 11
+  # seconds after `docker run` and reported cluster status green.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.0.0
+    profiles:
+      - elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    networks:
+      default:
+        aliases:
+          - ddev-${MATRIX_CELL}-es
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf localhost:9200/_cluster/health || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 60

@@ -134,7 +134,8 @@ class Stack:
 
     def down(self) -> None:
         """Stop and remove every container, the network and the volumes."""
-        self.compose("down", "-v", "--remove-orphans")
+        profiles = [argument for name in self.cell.services for argument in ("--profile", name)]
+        self.compose(*profiles, "down", "-v", "--remove-orphans")
 
     def web(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
         """Run a command in the web container, where the framework lives."""
@@ -258,7 +259,11 @@ def up(cell: Cell, image: str) -> Stack:
     """Start `cell`'s stack and wait for every service to report healthy."""
     stack = Stack(cell=cell, image=image)
     stack.down()
-    result = stack.compose("up", "-d", "--build", "--wait")
+    # `--profile` goes before the subcommand, which is where compose takes it.
+    # `down` needs them too, or a profiled service outlives the stack it
+    # belongs to and the next run finds its port taken.
+    profiles = [argument for name in cell.services for argument in ("--profile", name)]
+    result = stack.compose(*profiles, "up", "-d", "--build", "--wait")
     if result.returncode != 0:
         stack.down()
         raise RuntimeError(f"{cell.name}: the stack did not come up:\n{result.stderr}")

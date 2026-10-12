@@ -14,6 +14,7 @@ import re
 
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT, FeatureRegistry
 from tests.matrix.cells import CELLS
+from tests.matrix.paths import HERE
 
 # The charset stated above `Cell.name`: the `mx` prefix, then letters and
 # digits, which is what excludes the hyphen `-k` cannot match and the
@@ -54,4 +55,20 @@ def test_no_cell_name_contains_another_so_a_k_filter_selects_one_cell() -> None:
             f"cell name {cell.name!r} contains cell name {other.name!r}, so the "
             f"`-k {other.name}` job in .github/workflows/matrix.yaml would "
             f"run {cell.name}'s tests too and still emit only {other.name}'s row"
+        )
+
+
+def test_every_declared_service_is_a_compose_profile() -> None:
+    """A mistyped service name must cost a collection error, not a cell run.
+
+    `compose --profile nosuch up` starts the four default services and says
+    nothing about the name it did not recognise, so the cell would come up
+    without the service it asked for and fail somewhere downstream.
+    """
+    compose = (HERE / "docker-compose.yaml").read_text(encoding="utf-8")
+    declared = {name for cell in CELLS for name in cell.services}
+    for name in sorted(declared):
+        assert f"- {name}\n" in compose, (
+            f"cell service {name!r} is not a compose profile in docker-compose.yaml; "
+            "each service's `profiles:` entry carries the service's own name"
         )
