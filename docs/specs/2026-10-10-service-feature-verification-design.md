@@ -75,9 +75,32 @@ in the feature.
 `JobRepository::purge` and `QueueManager::connection(...)->clear($queue)`, then
 prints `Cleared N jobs from the [default] queue.` and returns 0.
 
-**Elasticsearch's floor.** `friendsofsymfony/elastica-bundle` v7.2.0 requires
-`ruflin/elastica ^8.0 || ^9.0`, which pins the server to Elasticsearch 8 or 9 —
-a JVM service, unlike every service the matrix runs today.
+**The Redis key is prefixed, and a probe reading the obvious one would see
+nothing.** Read from `Illuminate\Queue\RedisQueue`: `getQueue` builds
+`'queues:' . $queue`, and `clear` runs a Lua script over **four** keys — the
+queue plus `:delayed`, `:reserved` and `:notify`. The cluster-safe
+`queues:{default}` form applies only to a cluster connection, which a single
+Redis service is not. But `laravel/laravel` v13's `config/database.php` sets
+the Redis prefix to `Str::slug(env('APP_NAME', 'laravel')) . '-database-'`, and
+no cell's `.env` sets `APP_NAME`, so the key a job actually lands under is
+**`laravel-database-queues:default`**. A `redis_marker` naming
+`queues:default` would find nothing at plant time — loudly, since the marker
+asserts presence before the sync, but it would cost a cell run to discover.
+
+**Elasticsearch's floor, and what it actually costs.**
+`friendsofsymfony/elastica-bundle` v7.2.0 requires `ruflin/elastica ^8.0 ||
+^9.0`. Elastica 9.0.0 wraps `elasticsearch/elasticsearch ^9.0` and 8.x wraps
+`^8.4.1`, so composer resolving to the newest means an **Elasticsearch 9**
+server — the first JVM service in this matrix.
+
+It is cheaper than that makes it sound. Measured: `docker.elastic.co/elasticsearch/elasticsearch:9.0.0`
+with `discovery.type=single-node`, `xpack.security.enabled=false` and
+`ES_JAVA_OPTS=-Xms512m -Xmx512m` answered on its HTTP port **11 seconds** after
+`docker run`, reporting cluster status `green` on a single node. That is the
+same order as the MariaDB services already in the stack, so decision 2's case
+rests on the image size and the 512 MB of heap, **not** on a slow start — an
+earlier draft of this design implied minutes, and the measurement does not
+support it.
 
 ## Decisions
 
@@ -186,8 +209,10 @@ laravel/horizon predis/predis`, and writes a `.env` that differs from
 `APP_ENV=local` (without it the command refuses and clears nothing),
 `QUEUE_CONNECTION=redis` (without it the queue Horizon clears is not the one a
 job lands in), and `REDIS_CLIENT=predis` (the image has no `redis` extension).
-Evidence: a `redis_marker` on the `default` queue — the recipe pushes one job,
-the test confirms it is there, the sync must have removed it.
+Evidence: a `redis_marker` keyed `laravel-database-queues:default` — the
+measured key, prefix included, with a comment saying where the prefix comes
+from so the string does not read as a mystery. The recipe pushes one job, the
+test confirms it is there before the sync, and the sync must have removed it.
 
 **`mxfeatsymfony`** — `profile: symfony`, `services: ("elasticsearch",)`.
 Built like `mxsymfony`, plus `friendsofsymfony/elastica-bundle`, plus the app
@@ -207,29 +232,28 @@ The Elasticsearch half carries most of this spec's unknowns. Naming them is
 not a placeholder — it is the work the plan has to do first, and no recipe line
 may be written from a guess:
 
-1. Which Elasticsearch image and version satisfy `ruflin/elastica ^8 || ^9`,
-   and what the bundle actually talks to.
-2. How that image starts in a throwaway container — ES 8+ enables security by
-   default, and a single-node test instance needs that turned off and discovery
-   pinned. The exact environment is to be measured, not copied from memory.
-3. The minimal `fos_elastica` configuration and the Doctrine entity plus
+Four items this section first listed are now measured and moved up into
+"Measured for this design": the Elasticsearch image and version, its startup
+environment and cost, the Redis key a job lands under, and what
+`horizon:clear` resolves. What remains open is the Symfony application side,
+which cannot be settled without standing the bundle up — so the plan's
+`mxfeatsymfony` task begins by measuring it and writes its recipe from what it
+found, rather than a later task inheriting a guess.
+
+1. The minimal `fos_elastica` configuration and the Doctrine entity plus
    mapping that make `fos:elastica:populate` a command that can succeed. This
    is app code in a cell recipe, which no existing cell has. **It goes in
    recipe files beside `seed.sql`, not in a heredoc inside `install.sh`** —
    a YAML config and a PHP entity are reviewable as files and unreadable as
    shell quoting. Only if it turns out to be two or three lines does the
    heredoc win, and the plan says which it was.
-4. What `fos:elastica:populate` leaves behind that a test can read — a document
+2. What `fos:elastica:populate` leaves behind that a test can read — a document
    count on a named index is the expectation, but the index name comes from the
-   configuration in (3).
+   configuration in (1).
 
-And two on the Horizon side:
-
-5. The exact Redis key a job lands in. Laravel's `RedisQueue` is expected to
-   use `queues:default`, and `ClearCommand` resolves the queue name to
-   `default` (measured above) — but the key itself has not been observed, and
-   the `redis_marker` depends on it.
-6. That `predis/predis` is sufficient, with no `redis` extension present.
+3. That `predis/predis` serves Horizon with no `redis` extension present. This
+   is Horizon's own documented alternative, so the risk is low, but the image
+   has neither driver today and nothing here has run with either.
 
 ## Testing
 
