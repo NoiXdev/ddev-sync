@@ -65,7 +65,7 @@ sanitize:
     # own cron runs it locally. That makes it the same class of accident as
     # unsanitised mailer settings, not the same class as a stale cache, so
     # it belongs here in the base profile rather than in an optional
-    # feature (spec §5.1): a feature you can forget does not protect you
+    # feature: a feature you can forget does not protect you
     # from something you must not forget. `tx_scheduler_task` is EXT:scheduler's
     # task table and its name has been stable since well before v9 (only its
     # storage format changed, in v14); task groups live in a separate
