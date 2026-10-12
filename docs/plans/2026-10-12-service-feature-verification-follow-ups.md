@@ -5,9 +5,9 @@ finished. Its working notes lived in `.superpowers/sdd/`, which the process
 treats as scratch; this file is the part worth keeping.
 
 Nothing here blocks anything. Every item was measured, reviewed, and left on
-purpose — the first two because fixing them means changing a profile, which
-this branch's spec scoped out, and the rest because they are statements about
-reach rather than defects.
+purpose — the first two because fixing them means changing a profile, which was
+ruled out for this branch when the file was commissioned, and the rest because
+they are statements about reach rather than defects.
 
 ## Still open
 
@@ -34,11 +34,16 @@ project that overrides the key back (`tests/matrix/cells/mxfeathorizon/ddev-sync
 where the interaction is written down) and `profiles/VERIFIED.md`'s `horizon` row
 carries the full chain.
 
-Why it is not fixed here: the spec's "Out of scope" names any change to the
-profiles, and widening at the end would ship an unreviewed profile change on the
-back of a verification branch. What the fix needs is a decision, not an edit —
-warn, stop pinning the key, pin it only when no Redis queue is configured — and
-that is a design question of its own.
+Why it is not fixed here: widening at the end would ship an unreviewed profile
+change on the back of a verification branch, which was ruled out when this file
+was commissioned. The authority is that ruling and not the spec — worth being
+exact about, because the obvious citation is wrong: the spec's "Out of scope"
+(`docs/specs/2026-10-10-service-feature-verification-design.md:283-296`) names
+the cells, a `typo3-solr` replacement, Redis or Elasticsearch in the engine and
+the `APP_ENV=production` question, and says nothing about profile files. What
+the fix needs is a decision, not an edit — warn, stop pinning the key, pin it
+only when no Redis queue is configured — and that is a design question of its
+own.
 
 ### 2. The same pin switches `CACHE_STORE` and `SESSION_DRIVER` to `file`
 
@@ -53,7 +58,8 @@ emptied the planted queue) precisely by citing the `CACHE_STORE: file` pin, and
 the post-sync `.env` was read by hand to confirm it. The branch could not have
 made its argument without the behaviour it is reporting here as a hazard.
 
-It belongs with item 1 and should be decided with it.
+It belongs with item 1 and is out for the same reason, which is the ruling
+rather than the spec.
 
 ### 3. `horizon:clear` clears exactly one queue
 
@@ -119,15 +125,26 @@ answer is adequate because `fos:elastica:populate` repopulates from the imported
 database; for a project whose index is not derived from the database there is
 nothing at all.
 
-### 9. One dangling documentation reference is left standing
+### 9. Two dangling references to the same non-existent document
 
 `profiles/symfony.yaml:71` says "§5.1 of the features design doc is explicit
-that Messenger/Scheduler state must always be cleared". No such document exists:
-`docs/` holds only `plans/` and `specs/`, and no spec in it has numbered
-sections. The identical reference in `features/horizon.yaml` was dropped on this
-branch; this copy was not, because it is in a profile and profiles were out of
-scope. The claim it supports is argued inline in the same comment, so dropping
-the pointer is all it needs.
+that Messenger/Scheduler state must always be cleared", and
+`profiles/typo3.yaml:68` cites "(spec §5.1)" for the same scheduler rule. No
+such document exists: `docs/` holds only `plans/` and `specs/`, and none of
+those specs is a features design doc or carries a §5.1. The claim is about that
+section and that document, not about numbering in general — numbered headings
+do exist here, `docs/specs/2026-10-08-sync-init-part-b2-design.md:232` being
+`### §8 item 3`.
+
+The third copy, in `features/horizon.yaml`, was dropped on this branch. These
+two were not, because they are in profiles and profiles were out of scope. What
+each pointer supports is argued inline in the same comment, so dropping them is
+all they need.
+
+Scope of this item, stated because one of the lessons below is exactly this: it
+covers `§5.1` and a features design doc. Other `spec §` pointers elsewhere in
+the tree (`profiles/laravel.yaml:50`, `features/node-build.yaml:21`) reference
+different documents and were not checked.
 
 ## A rule this session earned four times over
 
@@ -137,22 +154,31 @@ check reported success because of its own shape, not because of what it was
 checking. All four are the same defect, and it is the same defect the branch
 exists to remove from prose — a claim that cannot fail.
 
-1. **`uv run mypy 2>&1 | tail -1`** reports `tail`'s exit status, not mypy's.
-   Three separate times in this project. A pipeline's status is its last
-   command's; run each gate on its own line, or read `PIPESTATUS`.
-2. **A probe script printed `$?` after a pipe** and reported 0 over a
-   `doctrine:schema:create` that had failed. Same mechanism, one layer down:
-   the `$?` was the pipe's tail, not the command being probed.
-3. **A GitHub contents-API sweep** for "does `laravel/horizon` ship a
+Two of the four are recorded in the branch's execution ledger and two are
+session observations with no artefact in this repository. They are marked, and
+the mark is the point: a file whose subject is "check your checks" cannot carry
+an unsourced count.
+
+1. *(session observation, not recorded in this tree)*
+   **`uv run mypy 2>&1 | tail -1`** reports `tail`'s exit status, not mypy's —
+   seen three separate times while this branch was worked on. A pipeline's
+   status is its last command's; run each gate on its own line, or read
+   `PIPESTATUS`.
+2. *(session observation, not recorded in this tree)* **A probe script printed
+   `$?` after a pipe** and reported 0 over a `doctrine:schema:create` that had
+   failed. Same mechanism, one layer down: the `$?` was the pipe's tail, not the
+   command being probed.
+3. *(recorded, and the control is cited in `profiles/VERIFIED.md`'s `horizon`
+   row)* **A GitHub contents-API sweep** for "does `laravel/horizon` ship a
    `database/` directory" would have read *identically* had the request failed:
    both a missing directory and a broken call produce no match. What made the
    zero mean absence was asserting `src/` present on every call — that control
    is the only reason the `horizon` row can say "a zero means absence rather
    than a failed request".
-4. **A `git log --format` footer check** put the hash and the trailer on
-   separate lines, so `grep -cv` counted the hash lines and reported all 14
-   commits as missing their `Co-Authored-By` footer. The check was wrong, not
-   the commits.
+4. *(recorded in the branch's final verification pass)* **A `git log --format`
+   footer check** put the hash and the trailer on separate lines, so `grep -cv`
+   counted the hash lines and reported all 14 commits as missing their
+   `Co-Authored-By` footer. The check was wrong, not the commits.
 
 The practical form: before trusting a check that reports "clean", "absent" or
 "zero", make it fail on purpose once. The `--profile` argv test added at the end
@@ -167,20 +193,32 @@ six places before it was committed.
 **A count in a comment is stale by construction.** Two committed sentences said
 "six of the cells" about a registry that had eight when they were written and
 ten by the end of the same branch — and the branch that added the two cells was
-the branch that wrote the sentences. Both are now phrased without a headcount at
-all, as is `.github/workflows/matrix.yaml`'s concurrency comment, which had said
-"twelve 20-minute cell jobs" against a registry that has never had twelve cells.
-`prepare` reads the cell list from `tests/matrix/cells.py`, so that file is the
-only honest place for the number.
+the branch that wrote the sentences. **Three** sites were de-counted, not two:
+`Cell.features`' docstring said "the six profile cells" and was *accurate* at
+both counts (6 of 10 cells declare no feature check, measured), and it was
+rephrased anyway, because it sits ten lines above one of the wrong ones and will
+go stale the next time a feature cell is added. `.github/workflows/matrix.yaml`'s
+concurrency comment lost two numbers: "twelve", against a registry that has
+never had twelve cells, and "20-minute", which nothing on this branch measured
+while the job's own `timeout-minutes` is 45. Each count now lives where it is
+derived — the cell list in `tests/matrix/cells.py`, which `prepare` reads, and
+the per-cell ceiling in the workflow's own `timeout-minutes`.
 
 **`GET /{index}/_count` answers identically through an alias**, so a count alone
 cannot tell an index from an alias. This matters because the `symfony-search`
 row's "the index is a concrete index, not an alias" conclusion originally cited
 a `_cat/indices` / `_cat/aliases` reading that the cell run never performed — it
 came from an exploratory probe made while planning the cell. The run's own
-evidence for the conclusion is its `DELETE`: `es_delete("app")` returned 200 on
-the index the earlier sync had populated, and Elasticsearch answers `DELETE` on
-an alias with 400 rather than deleting it.
+evidence for the conclusion is its `DELETE`, and it is weaker than a status
+reading: `es_delete("app")` **did not raise** on the index the earlier sync had
+populated, and it raises on any status outside 200 or 404
+(`tests/matrix/stack.py:240`), while Elasticsearch answers `DELETE` on an alias
+with 400. That excludes the alias. It does **not** establish that a 200 was
+seen: the reader returns `None` and never yields a status, so "`es_delete`
+returned 200" would be an inference dressed as an observation — in the one
+paragraph whose subject is that distinction. `profiles/VERIFIED.md`'s
+`symfony-search` row words it as the absence of a raise; this is the same
+claim.
 
 **That 400 is measured, against this matrix's own image.** 2026-10-12,
 `docker.elastic.co/elasticsearch/elasticsearch:9.0.0` with the compose file's own
@@ -195,6 +233,27 @@ name that was neither answered 404 (`index_not_found_exception`) and
 the two statuses `es_delete` accepts, so the 400 is a raise. The same probe
 confirmed the `_count` point above: `{"count":1}` with HTTP 200 both through an
 index and through its alias.
+
+**A code-scoped sweep cannot see a claim made in prose.** `README.md:96`
+advertised "TYPO3's Solr and processed-files handling" among the optional
+features for the whole life of this branch, after `6a472dc` had deleted
+`features/typo3-solr.yaml` — true at `144a5c1`, false from the first commit
+after it. Nothing caught it because the plan's Step 1 sweep was
+`grep -rn "typo3-solr\|typo3_solr" features profiles src tests tools`: the
+README is outside every path in that list, and the prose names the product
+("Solr"), not the identifier the grep looked for. Both halves matter — widen the
+paths *and* search for what a human would write, not only for what the code
+calls it. The branch's own "exactly 1 reference to typo3-solr" check inherited
+the same blind spot and reported clean.
+
+**A claim corrected in one file can stand in the file it came from.** The
+`APP_ENV=local` overstatement was found in a cell recipe and an evidence row,
+and it was still live in the spec that specified them, at
+`docs/specs/2026-10-10-service-feature-verification-design.md:207` and in that
+spec's out-of-scope entry. Both are corrected now, with a note saying the
+branch's own cell disproved them — the house precedent set by
+`2026-10-09-feature-verification-follow-ups.md`, where two figures a run
+disproved were corrected in the spec rather than only in the row.
 
 **A matrix test that depends on an earlier test's whole sync cannot be run on
 its own**, and the red it produces names the wrong cause.
