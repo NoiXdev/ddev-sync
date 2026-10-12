@@ -28,8 +28,12 @@ permissions:
   contents: read
 
 # One matrix at a time per ref: a manual dispatch that overlaps the nightly run
-# would otherwise start twelve 20-minute cell jobs at once. A newer run queues
-# behind the running one instead of cancelling it, because a half-finished
+# would otherwise start a second 20-minute job for every cell in the registry
+# on top of the ones already running. No count here on purpose - this sentence
+# used to say "twelve", which was not the cell count when it was written and is
+# not one now; `prepare` reads the list from tests/matrix/cells.py, so that
+# file is the only place the number is right by construction. A newer run
+# queues behind the running one instead of cancelling it, because a half-finished
 # matrix verifies nothing. The key is a literal prefix, not `github.workflow`,
 # which names the *caller* when this file runs as a reusable workflow and would
 # put the nightly run and a dispatch in different groups.
