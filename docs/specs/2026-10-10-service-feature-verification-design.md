@@ -45,9 +45,7 @@ CLI command at all.** Against `TYPO3-Solr/ext-solr@main`: `initializesolrconnect
 has **zero** occurrences anywhere in the repository; there is no
 `Configuration/Commands.php`, which is TYPO3's mechanism for registering
 console commands; `Configuration/Services.yaml` carries no `console.command`
-tag; and `Classes/` has no `Command` directory (the five files matching
-"Command" are `GarbageCollector`, `RecordMonitor`, `SolrWriteService`,
-`SiteRepository`, `FrontendAwareEnvironment`, none a command class).
+tag; and `Classes/` has no `Command` directory.
 
 **The web image cannot install Horizon today.** `laravel/horizon` v5.50.0
 lists `ext-pcntl` and `ext-posix` in `require`, not in `suggest`, so composer

@@ -169,13 +169,6 @@ def test_no_feature_other_than_processedfiles_removes_anything() -> None:
             assert "rm " not in run and "rmdir" not in run, f"{name}: {run}"
 
 
-def test_typo3_solr_is_scoped_to_typo3_and_requeues_the_index() -> None:
-    feature = REGISTRY.load("typo3-solr")
-    assert feature.applies_to == ("typo3",)
-    commands = [str(e["run"]) for e in feature.data["setup"]["commands"]]
-    assert any("solr" in command for command in commands)
-
-
 def test_symfony_search_is_scoped_to_symfony_and_repopulates_elastica() -> None:
     feature = REGISTRY.load("symfony-search")
     assert feature.applies_to == ("symfony",)
@@ -183,20 +176,18 @@ def test_symfony_search_is_scoped_to_symfony_and_repopulates_elastica() -> None:
     assert any("fos:elastica:populate" in command for command in commands)
 
 
-def test_typo3_and_symfony_optional_commands_tolerate_failure() -> None:
-    # Both are post-import conveniences, not correctness requirements: a
-    # Solr or Elastica reindex that fails must not abort a sync whose
-    # database import already succeeded.
-    for name in ("typo3-solr", "symfony-search"):
-        for entry in REGISTRY.load(name).data["setup"]["commands"]:
-            assert entry.get("allow_failure") is True, entry
+def test_symfony_search_reindex_commands_all_tolerate_failure() -> None:
+    # A post-import convenience, not a correctness requirement: an Elastica
+    # reindex that fails must not abort a sync whose database import already
+    # succeeded.
+    for entry in REGISTRY.load("symfony-search").data["setup"]["commands"]:
+        assert entry.get("allow_failure") is True, entry
 
 
 def test_composer_package_detections_are_pinned() -> None:
     # A typo in a detect value fails silently: the feature simply never
     # activates, and nothing reports the mismatch. Pinning the exact string
     # here makes any future change to one a deliberate edit, not a slip.
-    assert REGISTRY.load("typo3-solr").detect == {"composer_package": "apache-solr-for-typo3/solr"}
     assert REGISTRY.load("symfony-search").detect == {
         "composer_package": "friendsofsymfony/elastica-bundle"
     }
