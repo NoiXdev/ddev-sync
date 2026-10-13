@@ -11,6 +11,9 @@ declares no autouse fixtures, so nothing here brings a stack up.
 
 import itertools
 import re
+from typing import Any
+
+import yaml
 
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT, FeatureRegistry
 from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT, ProfileRegistry
@@ -84,10 +87,10 @@ def test_every_declared_service_is_a_compose_profile() -> None:
 def test_some_cell_declares_env_markers_of_each_kind() -> None:
     # Against a registry where every `env_markers` is empty, the assertion in
     # `test_matrix.py` skips for every cell and proves nothing. Each kind is
-    # required separately because they are three different promises: imposed,
-    # kept, and defaulted.
+    # required separately because they are four different promises: imposed,
+    # kept, defaulted, and overridden by the project.
     kinds = {marker.kind for cell in CELLS for marker in cell.env_markers}
-    assert kinds == {"imposed", "kept", "defaulted"}, (
+    assert kinds == {"imposed", "kept", "defaulted", "overridden"}, (
         f"only {sorted(kinds)} are asserted anywhere; the env step's other promises "
         "have no cell behind them"
     )
@@ -113,12 +116,18 @@ def test_every_env_marker_is_consistent_with_its_profile_and_its_recipe() -> Non
             continue
         env = profiles.resolve(cell.profile, None).data["env"]
         imposed, defaulted = env.get("set", {}), env.get("default", {})
+        project = yaml.safe_load((cell_dir(cell.name) / "ddev-sync.yaml").read_text("utf-8")) or {}
+        project_set: dict[str, Any] = (project.get("env") or {}).get("set") or {}
         for marker in cell.env_markers:
             checked += 1
             where = f"{cell.name}: {marker.kind} marker {marker.key}"
             written = _recipe_values(cell.name, marker.key)
             if marker.kind == "imposed":
                 assert marker.key in imposed, f"{where} is not in {cell.profile}'s env.set"
+                assert marker.key not in project_set, (
+                    f"{where} is also in the project's env.set, so its value is the project's: "
+                    "that is an `overridden` marker"
+                )
             if marker.kind == "defaulted":
                 assert marker.key in defaulted, f"{where} is not in {cell.profile}'s env.default"
                 assert marker.key not in imposed, (
@@ -132,6 +141,27 @@ def test_every_env_marker_is_consistent_with_its_profile_and_its_recipe() -> Non
                 assert written == [marker.expected], (
                     f"{where}: the recipe must write {marker.expected!r}, found {written}"
                 )
+            if marker.kind == "overridden":
+                # A merge test, not a spelling test: the key has to be in both
+                # layers with different values, or the project's value
+                # winning shows nothing about how the layers combine.
+                assert marker.key in imposed, f"{where} is not in {cell.profile}'s env.set"
+                assert marker.key in project_set, (
+                    f"{where} is not in the cell's own ddev-sync.yaml env.set"
+                )
+                assert str(project_set[marker.key]) == marker.expected, (
+                    f"{where}: the project writes {project_set[marker.key]!r}, "
+                    f"the marker expects {marker.expected!r}"
+                )
+                assert str(imposed[marker.key]) != marker.expected, (
+                    f"{where}: the profile imposes the same value, so nothing is overridden"
+                )
+                # Alone, an overridden key also passes when the profile has
+                # stopped writing it; the imposed keys beside it are the other
+                # half of the evidence.
+                assert any(
+                    other.kind == "imposed" and other.key in imposed for other in cell.env_markers
+                ), f"{cell.name} declares an overridden marker with no imposed marker beside it"
             if marker.contrary is not None:
                 assert marker.kind == "imposed", f"{where} has a contrary value but is not imposed"
                 assert marker.contrary != marker.expected, f"{where}: contrary equals expected"

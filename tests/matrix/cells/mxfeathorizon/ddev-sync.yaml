@@ -6,10 +6,18 @@
 # (features/resolver.py), and `horizon` is meant to be found by detection,
 # from the composer package the recipe installs.
 #
-# No `env:` block either, and that absence is what this cell shows. The recipe
-# writes `QUEUE_CONNECTION=redis`; `profiles/laravel.yaml` only defaults that
-# key, so the sync leaves it alone. An earlier profile imposed `sync`, and a
-# Horizon project had to override it back here to stay on Redis.
+# Two things about `env:` are shown here, one by its absence and one by its
+# presence. The recipe writes `QUEUE_CONNECTION=redis` and the block below does
+# not name it: `profiles/laravel.yaml` only defaults that key, so the sync
+# leaves it alone, where an earlier profile imposed `sync` and a Horizon
+# project had to override it back to stay on Redis.
+#
+# The block below overrides `MAIL_PORT`, which the profile imposes as `1025`,
+# and nothing else. It exists to show that the `env` mapping merges per key
+# (`config/merge.py::merge_layers` recurses into mappings): the project's value
+# wins for the key it names, while every other imposed key, `MAIL_HOST` among
+# them, still lands. A key about mail on purpose - nothing in this cell sends
+# mail, so it cannot touch the queue evidence above.
 version: 1
 targets:
   production:
@@ -18,6 +26,9 @@ targets:
     port: 2222
     path: /srv/app/
     stage: production
+env:
+  set:
+    MAIL_PORT: "2525"
 database:
   remote_credentials: explicit
   credentials:

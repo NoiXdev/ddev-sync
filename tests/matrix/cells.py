@@ -96,7 +96,7 @@ class FeatureCheck:
 class EnvMarker:
     """One key the project's `.env` must carry after a sync, and who wrote it.
 
-    Three kinds, because the env step makes three different promises:
+    Four kinds, because the env step makes four different promises:
 
     - `imposed`: the profile's `env.set` carries the key, so the value must be
       the profile's whatever the project said. Only a recipe that declares a
@@ -114,6 +114,15 @@ class EnvMarker:
       `test_feature_registry.py` checks that against the profile statically;
       the mechanism itself is proven by a `kept` marker.
 
+    - `overridden`: the project's own `ddev-sync.yaml` names the key in
+      `env.set`, so its value wins over the profile's, while the profile's
+      other imposed keys still land. That last clause is the property under
+      test - `merge_layers` merges the `env` mapping per key - so this marker
+      is only meaningful **together with** the cell's `imposed` markers: on
+      its own it would also pass if the profile had simply stopped writing the
+      key. `test_feature_registry.py` checks that the key is in both the
+      project's `env.set` and the profile's, with different values.
+
     `contrary` is the value the cell's recipe writes before the sync, for an
     `imposed` key whose imposition the cell means to measure. It must differ
     from `expected` and `test_feature_registry.py` checks the recipe really
@@ -123,7 +132,7 @@ class EnvMarker:
 
     key: str
     expected: str
-    kind: Literal["imposed", "kept", "defaulted"]
+    kind: Literal["imposed", "kept", "defaulted", "overridden"]
     contrary: str | None = None
 
 
@@ -335,7 +344,7 @@ CELLS: tuple[Cell, ...] = (
         php_image="php:8.3-cli",
         services=("redis",),
         env_markers=(
-            # The reason this cell needs no override: `install.sh` writes
+            # The reason this cell needs no queue override: `install.sh` writes
             # QUEUE_CONNECTION=redis, the profile only defaults it, so the
             # project's value has to survive the sync. The cell's first run
             # lost its planted job to the old behaviour, which set `sync`.
@@ -384,6 +393,16 @@ CELLS: tuple[Cell, ...] = (
                 kind="imposed",
                 contrary="mysql://acme:s3cret@db.production.invalid:3306/acme_prod",
             ),
+            # The project's own `env: set:` names MAIL_PORT, which the profile
+            # also imposes (as 1025), so the project's value must win - and
+            # MAIL_HOST, which the profile imposes and the project does not
+            # name, must still read the profile's value. The pair is the
+            # evidence that the `env` mapping merges per key; MAIL_PORT alone
+            # would also pass if the profile had stopped writing it. Nothing
+            # in this cell sends mail, so the key cannot touch anything else
+            # it asserts.
+            EnvMarker(key="MAIL_PORT", expected="2525", kind="overridden"),
+            EnvMarker(key="MAIL_HOST", expected="localhost", kind="imposed"),
             # Imposed, but not evidence that the step ran: the recipe writes
             # these same two hosts, so a step that never executed would leave
             # them reading correctly. The keys above are what rule that out,
