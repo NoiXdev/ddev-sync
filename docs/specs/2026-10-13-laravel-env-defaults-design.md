@@ -232,9 +232,20 @@ Measured against the tree at `73363a9`, so a plan can start from it.
 - **A project relying on the overwrite.** A `.env` whose `QUEUE_CONNECTION` is
   wrong for local use — copied from production, naming `sqs` — keeps that value
   after this change instead of being corrected to `sync`. The sync no longer
-  fixes it, and the failure is a loud one at the first dispatch. This is the
-  trade the design chooses deliberately: the sync stops holding an opinion it
-  cannot justify about every project.
+  fixes it. This is the trade the design chooses deliberately: the sync stops
+  holding an opinion it cannot justify about every project.
+
+  *Correction:* an earlier version of this bullet said the failure "is a loud
+  one at the first dispatch". That is false, and a review of Task 3 of this
+  very change showed it. A `.env` copied from production with
+  `QUEUE_CONNECTION=sqs` and live AWS keys does not fail: the first dispatch
+  silently enqueues onto the production queue. `CACHE_STORE=dynamodb` and
+  `SESSION_DRIVER=dynamodb` have the same shape, and so does a memcached
+  pointed off the machine - drivers whose target is a set of credentials rather
+  than a host, which the `REDIS_HOST`-style pin cannot cover. This is an
+  accepted risk of defaulting those keys, and it sits uneasily with decision
+  4's "wrong value stays on the machine"; the decision is unchanged and is the
+  user's, but the cost is real and is now stated in the profile as well.
 - **An empty-value `.env`.** `QUEUE_CONNECTION=` keeps its empty value, where
   `patch_keys` previously replaced it. Laravel resolves that to an unknown
   connection and errors. Decision 3 accepts this: a written line is a decision,

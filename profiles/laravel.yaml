@@ -10,7 +10,9 @@ env:
   file: [.env]
   strategy: patch_keys
   # Imposed on every sync: a foreign value here could reach outside this
-  # machine, or contradict what the sync has just done.
+  # machine, or contradict what the sync has just done. The one exception is
+  # APP_DEBUG, which does neither; it was imposed before the default mapping
+  # existed and stays so, to keep this change no wider than the harm it fixes.
   set:
     APP_ENV: local
     APP_DEBUG: "true"
@@ -28,16 +30,30 @@ env:
     # sets no environment variable at all - its compose file declares
     # `container_name: ddev-${DDEV_SITENAME}-redis` and
     # `hostname: ${REDIS_HOSTNAME:-redis}` and nothing else - so this collides
-    # with nothing, and the container name is the half a project cannot rename
-    # out from under us. A project whose Redis is elsewhere overrides this key;
+    # with nothing. That was read from installed copies of ddev-redis v2.2.0
+    # (container_name and hostname as quoted, port 6379 exposed, no
+    # `environment:` block); nothing in this repository can establish it, and
+    # the add-on's compose file may change in a later release. The container
+    # name is the half a project cannot rename out from under us. A project
+    # whose Redis is elsewhere overrides this key;
     # that is the accepted cost of not letting a production .env reach
     # production's Redis from a developer's machine.
     REDIS_HOST: "ddev-${DDEV_SITENAME}-redis"
   # The project's own choices. Written only when the project declares nothing,
   # so a Horizon installation keeps its queue and a Redis-backed cache or
-  # session survives a sync. Getting these wrong costs the developer a loud
-  # local failure and nothing outside the machine, which is what puts them
-  # here rather than above.
+  # session survives a sync. They are defaulted because the project's choice
+  # is usually local, and a pin on a host cannot protect a driver whose target
+  # is a set of credentials rather than a host.
+  #
+  # ACCEPTED RISK: a project whose .env carries a remote driver with working
+  # credentials keeps it. QUEUE_CONNECTION=sqs, CACHE_STORE=dynamodb,
+  # SESSION_DRIVER=dynamodb, or a memcached pointed off this machine will not
+  # fail loudly after a sync; with live AWS keys in the .env, a dispatched job
+  # lands on the production queue and the cache and sessions are production's.
+  # That is a real consequence of this design, not an oversight: the
+  # alternative is the old behaviour that took a Horizon project's queue out of
+  # use without saying so. A project that needs these forced local sets them in
+  # its own env.set.
   default:
     QUEUE_CONNECTION: sync
     SESSION_DRIVER: file
