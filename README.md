@@ -81,8 +81,7 @@ through installation, the first sync and removal.
 The add-on declares **DDEV v1.25.0** as its floor, which is what it has been
 exercised against: only macOS with Docker Desktop and DDEV v1.25.4. Linux,
 Colima, OrbStack and rootless Docker have not been tried, and no real sync
-against a real remote host has yet been run through the add-on. The CI workflow
-that tests the add-on has not run yet either.
+against a real remote host has yet been run through the add-on.
 
 The published image is built for both `linux/amd64` and `linux/arm64`. On
 arm64 the same four checks run as on amd64: the image starts with no network,
