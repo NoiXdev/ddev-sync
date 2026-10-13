@@ -1767,12 +1767,17 @@ they act. They are not tasks, because a task has to be able to finish green.
    off for this repository and that `main` accepts a push from `GITHUB_TOKEN`;
    and confirm the Docker Hub repository the first push creates is **public**,
    because the smoke job pulls the published image without authenticating.
-   **Then, and only then, make `NoiXdev/ddev-sync` public** — and it can wait
-   until *after* the rehearsal, because the only job that needs an arm64
-   runner is `smoke`, which skips itself on a dry run, while the
-   multi-architecture build runs under emulation on `ubuntu-latest`. So the
-   order that keeps the public window shortest is: rehearse while private,
-   then go public, then release. The moment it is public its README
+   **Make `NoiXdev/ddev-sync` public before the rehearsal, not after.** Two
+   earlier versions of this step put it later, to keep short the window in
+   which a public README advertises `ddev add-on get` against a repository
+   with no releases. Both were impossible, and the rehearsal proved it: this
+   organisation is on GitHub Free, where organisation secrets and variables
+   reach **public repositories only**. The first rehearsal reached the release
+   job and failed at its first step with `DOCKERHUB_NAMESPACE`,
+   `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` all empty while the
+   repository's own `DOCKERHUB_IMAGE` arrived intact — and every other NoiX
+   repository that uses those values is public. The window is therefore
+   unavoidable, and is bounded by doing the release immediately afterwards. The moment it is public its README
    advertises `ddev add-on get NoiXdev/ddev-sync`, and until step 3 has run
    there is no release for that command to install: the same defect decision 9
    exists to prevent, pointing the other way. Public is still required before
@@ -1795,15 +1800,24 @@ they act. They are not tasks, because a task has to be able to finish green.
    looked at. Two reasons not to pre-emptively change anything: `marketix` and
    the Tauri workflow ship releases on this exact configuration today, so the
    practical outcome is known to work, and the version the release is *named*
-   after comes from `compute-version`, not from here. Note how long the arm64 leg took under emulation — if it is
-   unreasonable, the documented fallback is a native two-runner build with a
-   digest merge, a change to the shared workflow rather than to ddev-sync.
-   Two more things to confirm while the rehearsal is in front of you, because
-   neither has ever run here: that `vars.DOCKERHUB_NAMESPACE` and
-   `vars.DOCKERHUB_IMAGE` resolve inside a *reusable* workflow — this is the
-   organisation's first caller that reads repository variables that way — and
-   that the diff the summary now prints shows the compose default and the
-   sidecar default both carrying the new version.
+   after comes from `compute-version`, not from here.
+
+   **What the first green rehearsal settled, so nobody re-derives it.** Both
+   architectures built under emulation in **101 seconds**, and the whole run —
+   gates, ten matrix cells, the integration suite and the multi-architecture
+   build — took **six minutes**. So decision 8's documented fallback, a native
+   two-runner build with a digest merge, is not needed. `compute-version` read
+   `0.0.0` and produced `v0.1.0-rc.1` with `prerelease=true`, which is decision
+   6 working as designed. `tools/set_version.py` reported writing
+   `pyproject.toml`, `docker-compose.ddev-sync.yaml`,
+   `ddev-sync/prepare-sidecar.sh` and `uv.lock`, and the sync check printed
+   `version.json says 0.1.0-rc.1 - in sync`. The tag list held exactly one
+   entry, `docker.io/<namespace>/ddev-sync:0.1.0-rc.1` — no `latest`, which is
+   decision 7 and ruling 6. And the changelog action logged "We are not going
+   to the tag the GIT changes" and "We are not going to push the GIT changes",
+   so `skip-tag` and `git-push: false` both took effect. Repository variables
+   do resolve inside a reusable workflow; this was the organisation's first
+   caller to try.
 
 3. **Release.** The same dispatch with `dry_run: false`. Expect: `v0.1.0-rc.1`
    tagged and marked as a pre-release, one image tag on
