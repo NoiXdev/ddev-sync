@@ -30,19 +30,20 @@ ddev add-on get NoiXdev/ddev-sync
 No `.ddev/.env` lines are needed: the add-on names the image it shipped with.
 
 To work on the add-on itself, install from a checkout and point it at a local
-image instead:
+image instead. The two lines go into `.ddev/.env.local`, the git-ignored file
+for machine-specific keys:
 
 ```bash
 docker build -t ddev-sync:dev /path/to/ddev-sync
 cd /your/project
 ddev add-on get /path/to/ddev-sync
-printf 'DDEV_SYNC_IMAGE=ddev-sync\nDDEV_SYNC_VERSION=dev\n' >> .ddev/.env
+printf 'DDEV_SYNC_IMAGE=ddev-sync\nDDEV_SYNC_VERSION=dev\n' >> .ddev/.env.local
 ```
 
 **The order matters.** A pre-start hook runs on every project start and reads
-the image, so the image has to exist and `.ddev/.env` has to name it *before*
-the first `ddev restart`. Get it wrong and the whole project refuses to start,
-not just the sidecar.
+the image, so the image has to exist and `.ddev/.env.local` has to name it
+*before* the first `ddev restart`. Get it wrong and the whole project refuses
+to start, not just the sidecar.
 
 Then load your key, restart, and let `init` ask for the target:
 
@@ -85,9 +86,11 @@ Colima, OrbStack and rootless Docker have not been tried, and no real sync
 against a real remote host has yet been run through the add-on. The CI workflow
 that tests the add-on has not run yet either.
 
-The published image is built for both `linux/amd64` and `linux/arm64`. On arm64
-it is only checked that the image starts and reports itself correctly; no sync
-has been run on arm64 at all.
+The published image is built for both `linux/amd64` and `linux/arm64`. On
+arm64 the same four checks run as on amd64: the image starts with no network,
+carries every binary the engine runs locally, finds its profiles where they
+are installed, and reports the version it was released as. No sync has been
+run on arm64 at all.
 
 ## What it syncs
 

@@ -104,12 +104,14 @@ post_install_actions:
     The add-on names the image version it shipped with, so there is nothing to
     put in .ddev/.env. A pre-start hook pulls that image on the first start,
     which can take a moment, and says so while it happens. If you installed
-    from a checkout instead of a release, that default is not a published
-    image: see "To work on the add-on itself" in the README for the two lines
-    to set.
+    from a checkout instead of a release, that default names whatever version
+    the checkout carries, which is not a published image unless you are on a
+    release commit: see "To work on the add-on itself" in the README for the
+    two lines to set.
 
-    What this add-on has and has not been exercised against is recorded in
-    profiles/VERIFIED.md, which names the profile variants whose commands no
-    run has touched. Worth reading before you trust a sync against a target
-    you cannot lose.
+    Before you trust a sync against a target you cannot lose, read the
+    project's status section and profiles/VERIFIED.md at
+    https://github.com/NoiXdev/ddev-sync - the first says what the add-on has
+    been exercised against, the second which profile variants' commands have
+    been run against a real installation.
     NEXT
