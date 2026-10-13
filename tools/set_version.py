@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write one version into every file in this repository that names one.
 
-Six files carry a version and three different forms of it, which is why this
+Five files carry a version and three different forms of it, which is why this
 exists rather than a `sed` line in the release workflow:
 
 - `pyproject.toml` feeds `importlib.metadata`, so it must hold a PEP 440
@@ -18,15 +18,17 @@ exists rather than a `sed` line in the release workflow:
   names a tag nobody published does not fail at sync time - the project refuses
   to start at all.
 - `uv.lock` records the root project's own version, and `uv run` rewrites it to
-  match `pyproject.toml` on sight, so it holds the PEP 440 form too; left
-  behind, every release would be followed by a dirty lock and a failing
-  `uv sync --frozen`.
+  match `pyproject.toml` on sight, so it holds the PEP 440 form too; a release
+  that bumped `pyproject.toml` alone would be followed by the next `uv run`
+  anyone did producing a dirty tree.
 
 Run it from anywhere; the targets are resolved from this file's location, not
 from the working directory, because the release workflow's cwd is not a
 promise. Every pattern must match exactly once or the script refuses to write
-anything: a pattern that silently matched nothing is how a stale version
-reaches a published compose default.
+anything: every target is read and checked before the first one is written, so
+a miss on the last file cannot leave the earlier ones rewritten. A pattern that
+silently matched nothing is how a stale version reaches a published compose
+default.
 """
 
 from __future__ import annotations
@@ -83,7 +85,9 @@ def rewrite(version: str, root: Path = REPO_ROOT) -> list[Path]:
     """Write `version` into every target. Returns the files that changed."""
     if not _VERSION.match(version):
         raise ValueError(f"{version!r} is not a version (expected 1.2.3 or 1.2.3-rc.4)")
-    changed: list[Path] = []
+    # Two passes: resolve every replacement first, write only once all of them
+    # have passed the exactly-once guard.
+    resolved: list[tuple[Path, str, str]] = []
     for name, pattern, form in TARGETS:
         path = root / name
         text = path.read_text(encoding="utf-8")
@@ -93,7 +97,9 @@ def rewrite(version: str, root: Path = REPO_ROOT) -> list[Path]:
                 f"{name}: expected exactly one version to rewrite, found {len(matches)}"
             )
         start, end = matches[0].span("version")
-        new = text[:start] + form(version) + text[end:]
+        resolved.append((path, text, text[:start] + form(version) + text[end:]))
+    changed: list[Path] = []
+    for path, text, new in resolved:
         if new != text:
             path.write_text(new, encoding="utf-8")
             changed.append(path)

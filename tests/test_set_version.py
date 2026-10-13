@@ -55,6 +55,11 @@ def build_tree(root: Path) -> None:
     (root / "ddev-sync" / "prepare-sidecar.sh").write_text(SIDECAR, encoding="utf-8")
 
 
+def snapshot(root: Path) -> dict[Path, str]:
+    """Every file under `root`, so a refusal can prove it wrote nothing at all."""
+    return {path: path.read_text() for path in sorted(root.rglob("*")) if path.is_file()}
+
+
 def test_it_writes_the_version_into_every_target(tmp_path: Path) -> None:
     build_tree(tmp_path)
 
@@ -128,19 +133,27 @@ def test_it_refuses_anything_that_is_not_a_version(tmp_path: Path, bad: str) -> 
 
 def test_it_refuses_a_file_whose_pattern_matches_nothing(tmp_path: Path) -> None:
     build_tree(tmp_path)
-    (tmp_path / "version.json").write_text('{"nothing": "here"}\n', encoding="utf-8")
+    # The last target, so every earlier one would already be written by a
+    # one-pass loop: this is the case that pins the two-pass order.
+    (tmp_path / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    before = snapshot(tmp_path)
 
-    with pytest.raises(ValueError, match=r"version\.json: expected exactly one"):
+    with pytest.raises(ValueError, match=r"uv\.lock: expected exactly one"):
         rewrite("0.4.0", root=tmp_path)
+
+    assert snapshot(tmp_path) == before
 
 
 def test_it_refuses_a_file_whose_pattern_matches_twice(tmp_path: Path) -> None:
     build_tree(tmp_path)
     compose = tmp_path / "docker-compose.ddev-sync.yaml"
     compose.write_text(compose.read_text() + compose.read_text(), encoding="utf-8")
+    before = snapshot(tmp_path)
 
     with pytest.raises(ValueError, match="expected exactly one version to rewrite, found 2"):
         rewrite("0.4.0", root=tmp_path)
+
+    assert snapshot(tmp_path) == before
 
 
 def test_it_refuses_a_missing_file(tmp_path: Path) -> None:
