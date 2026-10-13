@@ -40,10 +40,11 @@ ddev add-on get /path/to/ddev-sync
 printf 'DDEV_SYNC_IMAGE=ddev-sync\nDDEV_SYNC_VERSION=dev\n' >> .ddev/.env.local
 ```
 
-**The order matters.** A pre-start hook runs on every project start and reads
-the image, so the image has to exist and `.ddev/.env.local` has to name it
-*before* the first `ddev restart`. Get it wrong and the whole project refuses
-to start, not just the sidecar.
+**For a checkout install the order matters.** A pre-start hook runs on every
+project start and reads the image, so the image has to be built and
+`.ddev/.env.local` has to name it *before* the first `ddev restart`. Get it
+wrong and the whole project refuses to start, not just the sidecar. A published
+install has nothing to build or name, so none of this applies to it.
 
 Then load your key, restart, and let `init` ask for the target:
 
@@ -60,10 +61,7 @@ that file, and it reads the answers from a terminal, so there are no flags to
 supply them with: to set a target up without one, edit the template by hand
 and run `ddev sync --target <name> doctor` yourself.
 
-**The order matters.** A pre-start hook runs on every project start and reads
-the image, so the image has to exist and `.ddev/.env` has to name it *before*
-the first `ddev restart`. Get it wrong and the whole project refuses to start,
-not just the sidecar. The add-on also needs DDEV's ssh agent: if
+However you installed it, the add-on needs DDEV's ssh agent: if
 `ddev-ssh-agent` is listed in `omit_containers` anywhere, no project with the
 add-on installed will start, and the hook says what to remove.
 
