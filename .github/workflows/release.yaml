@@ -59,7 +59,9 @@ jobs:
       bump: ${{ inputs.bump }}
       prerelease_id: ${{ inputs.prerelease_id }}
       dry_run: ${{ inputs.dry_run }}
-      # arm64 is not optional: DDEV users run Apple Silicon.
+      # arm64 is not optional: an arm64 host is the normal case rather than an
+      # exotic one - `ddev version` on this project's own development machine
+      # reports `architecture arm64`.
       platforms: linux/amd64,linux/arm64
       # The only JSON file in this repository that holds a version, and the
       # one `compute-version` can read. tools/set_version.py writes the other
@@ -68,6 +70,14 @@ jobs:
       version_file: version.json
       version_script: tools/set_version.py
       product_name: ddev-sync
+      # The shared workflow checks out `main` by default. `gates` and `verify`
+      # above ran on this dispatch's commit, and the matrix can queue behind
+      # the nightly run, so by the time they finish `main` may have moved -
+      # and a release built from it would be a tree nothing gated. Naming the
+      # commit is what makes this file's claim true. If `main` has moved, the
+      # release's own push of the version bump is rejected rather than
+      # quietly releasing an ungated tree.
+      ref: ${{ github.sha }}
     secrets: inherit
 
   # What the published artifact is actually touched on both architectures.
@@ -79,6 +89,8 @@ jobs:
   smoke:
     needs: [release]
     if: ${{ inputs.dry_run == false }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:

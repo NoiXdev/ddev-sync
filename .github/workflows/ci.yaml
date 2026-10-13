@@ -12,7 +12,7 @@ on:
   pull_request:
   # So release.yaml can gate on these gates having passed on the very ref it
   # is about to release, rather than trusting that an earlier run still
-  # applies. Nothing else about this workflow changes.
+  # applies.
   workflow_call:
 
 permissions:
