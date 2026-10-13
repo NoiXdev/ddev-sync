@@ -11,6 +11,12 @@ so a real Horizon project silently loses its queue — jobs run inline — and a
 project using Redis for cache or sessions loses that on every sync, with
 nothing said in the output.
 
+*What this change delivers, as built:* the queue and the session driver. The
+cache half is **not** fixed and is imposed on purpose, under both its names
+(`CACHE_STORE`, and `CACHE_DRIVER` for Laravel 10 and earlier), because the
+sync's own `optimize:clear` flushes whatever cache is configured; see
+decision 5. The paragraph above describes the problem as first found.
+
 This design separates the values a project may keep from the values the sync
 must impose, and adds the one declaration needed to express the difference.
 
@@ -138,7 +144,7 @@ That is the same reason the sanitize rules exist.
 | `MAIL_MAILER`, `MAIL_HOST`, `MAIL_PORT` | `set` | Mail must not leave the machine |
 | `REDIS_HOST` (new) | `set` | `ddev-${DDEV_SITENAME}-redis`, the same template the profile already uses for `DB_HOST` |
 | `QUEUE_CONNECTION`, `SESSION_DRIVER` | `default` | Nothing the sync runs acts on either; the project's value is no more wrong after the sync than before, and `QUEUE_CONNECTION` is the measured harm |
-| `CACHE_STORE` | `set` | The sync's own `optimize:clear` runs `cache:clear` against the configured store: `MemcachedStore::flush()` flushes a whole server, `DynamoDbStore::flush()` throws, `RedisStore::flush()` is a bare `flushdb()`. Moved back to `set` after the key-by-key check of decision 4's reworded rule (see Risks) |
+| `CACHE_STORE`, `CACHE_DRIVER` | `set` | The cache key is `CACHE_STORE` from Laravel 11 and `CACHE_DRIVER` before it (`laravel/laravel`'s `.env.example` at 10.x, 11.x, 12.x), so both are imposed. The sync's own `optimize:clear` runs `cache:clear` against the configured store: `MemcachedStore::flush()` flushes a whole server, `DynamoDbStore::flush()` throws, `RedisStore::flush()` is a bare `flushdb()`. Moved back to `set` after the key-by-key check of decision 4's reworded rule (see Risks) |
 | `APP_DEBUG` | `set`, unchanged | Neither case; out of scope, so the change stays no wider than the harm it fixes |
 
 **The `REDIS_HOST` pin and its accepted cost.** Pinning it recreates this
@@ -198,8 +204,9 @@ Measured against the tree at `73363a9`, so a plan can start from it.
   allow-list of sub-keys**, so `default` is already accepted. What it needs is
   the two new rejections: `default` must be a mapping, and `default` with
   `strategy: append_block` is an error naming both.
-- `profiles/laravel.yaml` — the three keys move from `set` (lines 25-27) to a
-  new `default` block, and `REDIS_HOST` joins `set`.
+- `profiles/laravel.yaml` — `QUEUE_CONNECTION` and `SESSION_DRIVER` move from
+  `set` (lines 25-26) to a new `default` block; `CACHE_STORE` stays in `set`
+  (decision 5), `CACHE_DRIVER` joins it, and `REDIS_HOST` joins `set`.
 - `tests/operations/test_env.py` and `tests/profiles/test_schema.py` — the unit
   coverage. Both new branches need a test apiece: the repository requires 100%
   line **and** branch coverage of `src/ddev_sync` and forbids
@@ -271,8 +278,11 @@ Measured against the tree at `73363a9`, so a plan can start from it.
   infrastructure it does not own. `CACHE_STORE` therefore returns to `set`, as
   decision 5's table now shows. This costs a project with a local Redis cache
   its choice on every sync, as before this change; it keeps the choice by
-  setting `CACHE_STORE` in its own `env.set`, and `REDIS_HOST` keeps the flush
-  local. Imposing only non-local drivers would close that, and no `set` versus
+  setting `CACHE_STORE` (`CACHE_DRIVER` on Laravel 10 and below) in its own
+  `env.set`, and `REDIS_HOST` keeps the flush local. A third review finding:
+  the key was renamed in Laravel 11, so imposing `CACHE_STORE` alone left every
+  Laravel 10 project exposed and the reasoning decorative; `CACHE_DRIVER` is
+  imposed as well, at the cost of one inert line in a Laravel 11+ `.env`. Imposing only non-local drivers would close that, and no `set` versus
   `default` split can express it. The only remaining exception to the rule is
   `APP_DEBUG`, imposed although the sync does not make it wrong (decision 5
   keeps it out of scope).

@@ -1,5 +1,8 @@
-# Laravel. The DB_* convention has been stable since Laravel 5, so there are
-# no version variants; projects that differ override database.env_map.
+# Laravel. The DB_* convention has been stable since Laravel 5, so the database
+# keys have no version variants; projects that differ override
+# database.env_map. The profile as a whole does have one: the cache driver key
+# was renamed (CACHE_DRIVER before Laravel 11, CACHE_STORE from 11), and both
+# are imposed in env.set below.
 name: laravel
 
 detect:
@@ -54,10 +57,19 @@ env:
     # does not own; DynamoDbStore::flush() throws, so a kept dynamodb cache
     # would fail that step (which is not allow_failure). This costs a project
     # that runs a local Redis cache its choice on every sync; it sets
-    # CACHE_STORE in its own env.set to keep it, and REDIS_HOST above keeps
-    # that flush local. Imposing only non-local drivers is not expressible as
+    # CACHE_STORE (CACHE_DRIVER on Laravel 10 and below) in its own env.set to
+    # keep it, and REDIS_HOST above keeps that flush local. Imposing only non-local drivers is not expressible as
     # set versus default; see the follow-ups file, item 2.
     CACHE_STORE: file
+    # The same key under its Laravel 10 and earlier name. laravel/laravel's
+    # .env.example has `CACHE_DRIVER=file` at 10.x and `CACHE_STORE=database`
+    # at 11.x and 12.x (read from those branches; nothing in this repository
+    # establishes it), so on Laravel 10 and below the project's CACHE_DRIVER
+    # still decides the cache and CACHE_STORE above is ignored, which would
+    # leave the flush described above fully live. On Laravel 11 and later
+    # nothing reads this key; patch_keys appends one inert line to the .env,
+    # the accepted cost of not leaving older projects exposed.
+    CACHE_DRIVER: file
   # The project's own choices. Written only when the project declares nothing,
   # so a Horizon installation keeps its queue and a Redis-backed session
   # survives a sync. They are defaulted because the project's value is
