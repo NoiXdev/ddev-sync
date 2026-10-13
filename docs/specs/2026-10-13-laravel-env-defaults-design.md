@@ -58,13 +58,27 @@ Everything in this section was observed on this repository at `73363a9`, in the
   `shopware6` it is `.env.local` when present, otherwise `.env`.
 - **`EnvRewriteOperation.execute` returns early when `env.set` is empty or
   absent** (`src/ddev_sync/operations/env.py:105-106`).
-- **Features can already contribute `env`.**
-  `src/ddev_sync/features/schema.py:30` lists `env` in `CONTRIBUTION_KEYS`, and
-  `src/ddev_sync/config/merge.py` recurses into mappings with
-  `DEFAULT_LIST_MODE = "extend"`, so a later layer overrides an earlier one per
-  key rather than replacing the mapping. The `mxfeathorizon` kept tree shows
-  both halves of that: `QUEUE_CONNECTION=redis` from the cell's override and
-  `CACHE_STORE=file` from the profile, in the same file.
+- **The `env` mapping merges per key, and a feature could contribute one.** Two
+  halves, resting on different things, so they are stated apart.
+  *The merge is asserted:* `src/ddev_sync/config/merge.py` recurses into
+  mappings with `DEFAULT_LIST_MODE = "extend"`, so a later layer overrides an
+  earlier one per key rather than replacing the mapping - and the
+  `mxfeathorizon` cell's own `ddev-sync.yaml` sets `MAIL_PORT: "2525"` against
+  the profile's imposed `1025`, after which the written `.env` reads
+  `MAIL_PORT=2525` beside the profile's own `MAIL_HOST=localhost`. The pair is
+  the evidence rather than either half, because `MAIL_PORT` alone would read
+  `2525` just as well had the profile stopped writing the key
+  (`test_the_env_step_imposed_what_it_must_and_kept_what_it_should`, with each
+  key's layer membership checked statically by
+  `test_every_env_marker_is_consistent_with_its_profile_and_its_recipe`).
+  *The feature half is the schema only:* `src/ddev_sync/features/schema.py:30`
+  lists `env` in `CONTRIBUTION_KEYS`, so a feature may carry an `env` block -
+  but no shipped feature declares one and no cell exercises it, so that a
+  **feature** layer merges this way is read from the code, not run.
+  The earlier evidence for the merge - `QUEUE_CONNECTION=redis` from this cell's
+  override beside `CACHE_STORE=file` from the profile, read by hand in the kept
+  tree - belonged to the override this change removes; the `MAIL_PORT` pair
+  replaces it, and is asserted rather than read by hand.
 - **DDEV's Redis add-on sets no environment variable.** Read from installed
   copies of `ddev-redis` v2.2.0, outside this repository, which nothing in the
   tree can establish; a later release may differ. Its `docker-compose.redis.yaml`
