@@ -49,6 +49,24 @@ def patch_keys(text: str, values: Mapping[str, str]) -> str:
     return "\n".join(patched) + "\n" if patched else ""
 
 
+def declared_keys(text: str) -> set[str]:
+    """Every key an env file assigns, by the same rule `patch_keys` rewrites by.
+
+    Deliberately the same `_ASSIGNMENT` match rather than a cheaper
+    `startswith`: `patch_keys` rewrites `KEY = value` in place, so a presence
+    test that did not see that line would call the key absent, let a default be
+    written, and leave the file with two assignments for one key. A commented
+    line is not an assignment, and an empty value is one - `REDIS_PASSWORD=`
+    means "no password", not "unconfigured".
+    """
+    found: set[str] = set()
+    for line in text.splitlines():
+        match = _ASSIGNMENT.match(line)
+        if match is not None:
+            found.add(match.group("key"))
+    return found
+
+
 def _requote(original: str, replacement: str) -> str:
     stripped = original.strip()
     if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {"'", '"'}:
@@ -101,15 +119,42 @@ class EnvRewriteOperation:
                 f"unknown env strategy {strategy!r}; expected one of {', '.join(STRATEGIES)}"
             )
 
-        raw_values = settings.get("set", {})
-        if not isinstance(raw_values, dict) or not raw_values:
+        raw_set = settings.get("set", {})
+        raw_default = settings.get("default", {})
+        imposed = raw_set if isinstance(raw_set, dict) else {}
+        defaulted = raw_default if isinstance(raw_default, dict) else {}
+        if not imposed and not defaulted:
             return
-        values = expand_placeholders(
-            {str(key): str(value) for key, value in raw_values.items()}, context
-        )
+        if defaulted and strategy == "append_block":
+            # `append_block` writes a block rather than reconciling keys, so
+            # "only if absent" has nowhere to land. `profiles/schema.py`
+            # rejects this in a profile; this catches a project layer, which
+            # that validator never sees.
+            raise OperationError("env.default cannot be used with strategy 'append_block'")
 
         path = self._find_env_file(context, settings)
         original = path.read_text(encoding="utf-8")
+        values = expand_placeholders(
+            {str(key): str(value) for key, value in imposed.items()}, context
+        )
+        if defaulted:
+            # Across every candidate that exists, not just the written file:
+            # a key declared in `.env` while `.env.local` is written would
+            # otherwise be overridden through Dotenv's overlay. `set` wins a
+            # collision, because it is the stronger statement and a profile may
+            # inherit one of the two from a base.
+            declared = self._declared_across_candidates(context, settings)
+            absent = {
+                str(key): str(value)
+                for key, value in defaulted.items()
+                if str(key) not in declared and str(key) not in values
+            }
+            values = {**values, **expand_placeholders(absent, context)}
+        if not values:
+            # Not an optimisation: `patch_keys(text, {})` still normalises a
+            # file with no trailing newline or with CRLF endings, so without
+            # this return the step would prompt and write with nothing to change.
+            return
         rewritten = (
             patch_keys(original, values)
             if strategy == "patch_keys"
@@ -143,15 +188,19 @@ class EnvRewriteOperation:
         # integer: `engine/plan.py::_env` is the gate, and it rejects anything
         # that is neither a string nor a list with a ConfigError before a plan
         # containing this step exists at all. Named explicitly because the
-        # `[".env.local", ".env"]` default is now read in four places with
-        # four different tolerances - that gate, this method,
+        # `[".env.local", ".env"]` default is read in several places with
+        # different tolerances - that gate, this method,
+        # `_declared_across_candidates` below, which trusts the gate exactly as
+        # this method does and reads the same `env.file` key to test presence,
         # `operations/database.py::remote_env_candidates`, which checks
         # `database.env_file` first, then falls back to this same `env.file`
         # key, before quietly falling back to the default itself, and
         # `cli/init.py::_missing_env_file`, which carries the same gate's
         # guard rather than this method's trust in it, because it runs
         # before any plan does - so "why is this one not defensive" is a
-        # question worth answering in place rather than by searching.
+        # question worth answering in place rather than by searching. A reader
+        # added later belongs in this list; the list deliberately does not
+        # state its own length.
         candidates = [configured] if isinstance(configured, str) else list(configured)
         existing = {entry.name for entry in context.project.root.iterdir() if entry.is_file()}
         for name in candidates:
@@ -159,6 +208,31 @@ class EnvRewriteOperation:
                 return context.local(str(name))
         looked = ", ".join(str(context.local(str(name))) for name in candidates)
         raise OperationError(f"no environment file found in the project; looked at: {looked}")
+
+    @staticmethod
+    def _declared_across_candidates(
+        context: ExecutionContext, settings: dict[str, Any]
+    ) -> set[str]:
+        """Every key declared by any candidate env file that exists.
+
+        `_find_env_file` returns the one file the step writes. The presence
+        test for `env.default` is deliberately wider: Symfony's Dotenv
+        overlays `.env.local` on `.env`, so a default written into
+        `.env.local` because `.env`'s declaration was not looked at would
+        override the project's configured value - the exact surprise
+        `env.default` exists to remove.
+        """
+        # Same candidate resolution and `iterdir()` probe as `_find_env_file`,
+        # for the reason its docstring gives: `is_file()` on a constructed path
+        # folds case on macOS. Do not replace the probe with one.
+        configured = settings.get("file", [".env.local", ".env"])
+        candidates = [configured] if isinstance(configured, str) else list(configured)
+        existing = {entry.name for entry in context.project.root.iterdir() if entry.is_file()}
+        declared: set[str] = set()
+        for name in candidates:
+            if str(name) in existing:
+                declared |= declared_keys(context.local(str(name)).read_text(encoding="utf-8"))
+        return declared
 
 
 def _diff(name: str, before: str, after: str) -> str:

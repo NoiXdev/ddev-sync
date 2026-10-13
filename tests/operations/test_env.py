@@ -13,6 +13,7 @@ from ddev_sync.operations.env import (
     EnvRewriteOperation,
     append_block,
     confirm_env_change,
+    declared_keys,
     expand_placeholders,
     patch_keys,
 )
@@ -358,3 +359,189 @@ def test_confirm_env_change_raises_a_clean_error_when_stdin_is_closed(
     with pytest.raises(OperationError) as caught:
         confirm_env_change("--- a\n+++ b\n")
     assert "--yes" in str(caught.value)
+
+
+def test_declared_keys_finds_an_ordinary_assignment() -> None:
+    assert declared_keys("APP_ENV=local\nDB_HOST=db\n") == {"APP_ENV", "DB_HOST"}
+
+
+def test_declared_keys_accepts_the_spacing_patch_keys_accepts() -> None:
+    # `_ASSIGNMENT` allows `\s*=\s*`, and `patch_keys` rewrites such a line in
+    # place. A presence test that missed it would call the key absent, write a
+    # default, and leave the file with two assignments for one key.
+    text = "QUEUE_CONNECTION =redis\nCACHE_STORE\t=\tredis\n"
+    assert declared_keys(text) == {"QUEUE_CONNECTION", "CACHE_STORE"}
+    assert patch_keys(text, {"QUEUE_CONNECTION": "sync"}).count("QUEUE_CONNECTION") == 1
+
+
+def test_declared_keys_ignores_a_commented_out_key() -> None:
+    # A comment is not a declaration: `_ASSIGNMENT` anchors the key at line
+    # start, so `patch_keys` would append rather than rewrite, and a default
+    # must apply for the same reason.
+    assert declared_keys("# QUEUE_CONNECTION=redis\n") == set()
+
+
+def test_declared_keys_counts_an_empty_value_as_declared() -> None:
+    # `REDIS_PASSWORD=` means "no password", not "unconfigured". A written line
+    # is a decision.
+    assert declared_keys("REDIS_PASSWORD=\n") == {"REDIS_PASSWORD"}
+
+
+def test_a_default_is_written_when_the_key_is_absent(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={"file": [".env"], "strategy": "patch_keys", "default": {"QUEUE_CONNECTION": "sync"}},
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env").read_text(
+        encoding="utf-8"
+    ) == "APP_ENV=local\nQUEUE_CONNECTION=sync\n"
+
+
+def test_a_default_leaves_a_declared_key_alone(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("QUEUE_CONNECTION=redis\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={"file": [".env"], "strategy": "patch_keys", "default": {"QUEUE_CONNECTION": "sync"}},
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "QUEUE_CONNECTION=redis\n"
+
+
+def test_a_default_is_absent_when_another_candidate_declares_it(tmp_path: Path) -> None:
+    # The write goes to the first existing candidate, but the presence test
+    # spans all of them: a key set in `.env` while `.env.local` is the written
+    # file would otherwise be overridden through Dotenv's overlay.
+    (tmp_path / ".env.local").write_text("APP_ENV=dev\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("QUEUE_CONNECTION=redis\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={
+            "file": [".env.local", ".env"],
+            "strategy": "patch_keys",
+            "default": {"QUEUE_CONNECTION": "sync"},
+        },
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env.local").read_text(encoding="utf-8") == "APP_ENV=dev\n"
+
+
+def test_a_profile_with_only_defaults_still_runs(tmp_path: Path) -> None:
+    # The early return used to trip on an empty `set` and would have made a
+    # default-only profile silently inert.
+    (tmp_path / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={"file": [".env"], "strategy": "patch_keys", "default": {"CACHE_STORE": "file"}},
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert "CACHE_STORE=file" in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_a_default_expands_placeholders(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={
+            "file": [".env"],
+            "strategy": "patch_keys",
+            "default": {"REDIS_HOST": "ddev-${DDEV_SITENAME}-redis"},
+        },
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert "REDIS_HOST=ddev-acme-redis" in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_a_key_in_both_mappings_takes_the_imposed_value(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={
+            "file": [".env"],
+            "strategy": "patch_keys",
+            "set": {"QUEUE_CONNECTION": "sync"},
+            "default": {"QUEUE_CONNECTION": "redis"},
+        },
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert "QUEUE_CONNECTION=sync" in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_a_default_is_inert_under_strategy_none(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    context = make_context(tmp_path, env={"strategy": "none", "default": {"CACHE_STORE": "file"}})
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "APP_ENV=local\n"
+
+
+def test_a_default_under_append_block_is_an_error(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={"file": [".env"], "strategy": "append_block", "default": {"CACHE_STORE": "file"}},
+    )
+    with pytest.raises(OperationError, match="append_block"):
+        EnvRewriteOperation().execute(context, {})
+
+
+def test_a_default_does_not_invent_an_env_file(tmp_path: Path) -> None:
+    # No candidate exists, so `_find_env_file` raises. A default must not be
+    # written anywhere else, and the message must still name what was looked at.
+    context = make_context(
+        tmp_path,
+        env={"file": [".env"], "strategy": "patch_keys", "default": {"CACHE_STORE": "file"}},
+    )
+    with pytest.raises(OperationError, match="no environment file found"):
+        EnvRewriteOperation().execute(context, {})
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_candidate_that_does_not_exist_is_skipped_in_the_presence_test(tmp_path: Path) -> None:
+    # `.env.local` comes first in the default candidate list but is not on disk;
+    # the presence test must pass over it and still read `.env`.
+    (tmp_path / ".env").write_text("QUEUE_CONNECTION=redis\nAPP_ENV=local\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={
+            "strategy": "patch_keys",
+            "default": {"QUEUE_CONNECTION": "sync", "CACHE_STORE": "file"},
+        },
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == (
+        "QUEUE_CONNECTION=redis\nAPP_ENV=local\nCACHE_STORE=file\n"
+    )
+
+
+def test_an_imposed_empty_value_beats_a_default_for_the_same_key(tmp_path: Path) -> None:
+    # `set: {KEY: ""}` is a deliberate blank - `REDIS_PASSWORD=` means "no
+    # password". The collision filter is membership, not truthiness, so a
+    # default must not turn that blank back into a value.
+    (tmp_path / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={
+            "file": [".env"],
+            "strategy": "patch_keys",
+            "set": {"REDIS_PASSWORD": ""},
+            "default": {"REDIS_PASSWORD": "secret"},
+        },
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "APP_ENV=local\nREDIS_PASSWORD=\n"
+
+
+def test_nothing_to_write_leaves_a_file_without_a_trailing_newline_untouched(
+    tmp_path: Path,
+) -> None:
+    # Every default is already declared and there is no `set`, so `values` is
+    # empty. `patch_keys(text, {})` would still append the missing newline, and
+    # the step would write a file it had no change for.
+    (tmp_path / ".env").write_bytes(b"QUEUE_CONNECTION=redis")
+    context = make_context(
+        tmp_path,
+        env={"file": [".env"], "strategy": "patch_keys", "default": {"QUEUE_CONNECTION": "sync"}},
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env").read_bytes() == b"QUEUE_CONNECTION=redis"
