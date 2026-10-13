@@ -17,10 +17,6 @@
 setup() {
   set -eu -o pipefail
 
-  # The release test only skips; building an image and configuring a project
-  # for it would be wasted time, and a failure here would fail a test that is
-  # meant to be skipped.
-  case "${BATS_TEST_DESCRIPTION}" in *release*) return 0 ;; esac
 
   export DIR="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." >/dev/null 2>&1 && pwd)"
   export PROJNAME="ddevsync-bats"
@@ -78,12 +74,20 @@ YAML
 
   # The order below matters. The add-on's pre-start hook runs on every start
   # and reads /etc/passwd out of the sync image, so the image must exist and
-  # .ddev/.env must name it before the first `ddev restart`; otherwise the hook
-  # fails and the whole project refuses to start. The published image does not
-  # exist until the release chain lands, so the suite builds one locally.
-  # Plan 8 removes these two steps.
-  docker build -q -t ddev-sync:bats "${DIR}" >/dev/null
-  printf 'DDEV_SYNC_IMAGE=ddev-sync\nDDEV_SYNC_VERSION=bats\n' >> .ddev/.env
+  # be named before the first `ddev restart`; otherwise the hook fails and the
+  # whole project refuses to start.
+  #
+  # A checkout install has no published image to name, so the suite builds one
+  # and points .ddev/.env at it. The release test is the one case that must NOT
+  # get this: what it exists to prove is that the add-on names a version of its
+  # own, so an override here would hide exactly the thing under test.
+  case "${BATS_TEST_DESCRIPTION}" in
+    *release*) ;;
+    *)
+      docker build -q -t ddev-sync:bats "${DIR}" >/dev/null
+      printf 'DDEV_SYNC_IMAGE=ddev-sync\nDDEV_SYNC_VERSION=bats\n' >> .ddev/.env
+      ;;
+  esac
   # A stale pair in .env, as a project installed before the lines moved to
   # .env.local has. The hook is expected to take them out of here, and the
   # value is deliberately not a plausible gid so that finding it later would
@@ -340,7 +344,58 @@ YAML
 # bats test_tags=release
 @test "install from release" {
   set -eu -o pipefail
-  # It cannot pass until the release chain publishes something, and a skip
-  # with its reason is honest where a stub that asserts nothing would not be.
-  skip "nothing is published yet - Plan 8 adds the release and the image"
+  cd "${TESTDIR}"
+
+  # No ref, no --version: a bare `ddev add-on get` is what a user types, and
+  # it reaches a pre-release because DDEV asks GitHub for the release list and
+  # takes the first entry without filtering out prereleases (pkg/github at
+  # v1.25.0 and v1.25.4 alike). That is the claim the README makes, so this is
+  # where it is checked.
+  run ddev add-on get NoiXdev/ddev-sync
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+
+  # It came from a release rather than from the default branch. DDEV records
+  # what it installed, and a tag is the difference between this test proving
+  # the release chain and it quietly proving `main`.
+  run cat .ddev/addon-metadata/ddev-sync/manifest.yaml
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"version: v"* ]] || false
+
+  # Everything the manifest lists is on disk, as in the directory install: a
+  # release tarball that dropped a file would otherwise pass every later
+  # assertion that happens to be lax.
+  for f in \
+    .ddev/docker-compose.ddev-sync.yaml \
+    .ddev/config.ddev-sync.yaml \
+    .ddev/commands/sync/sync \
+    .ddev/ddev-sync/ddev-sync.example.yaml \
+    .ddev/ddev-sync/prepare-sidecar.sh \
+    .ddev/ddev-sync/.gitignore; do
+    [ -f "${f}" ] || { echo "not installed: ${f}"; false; }
+  done
+
+  # Nothing names an image here. setup() wrote no override for this test, and
+  # the add-on is expected to carry the version it shipped with - which is the
+  # whole difference between a published install and a checkout.
+  run grep -c -e '^DDEV_SYNC_IMAGE=' -e '^DDEV_SYNC_VERSION=' .ddev/.env
+  [ "${output}" = 0 ] || false
+
+  # The proof. The pre-start hook resolves the image from the compose default
+  # alone and pulls it; a default naming a tag nobody published does not fail
+  # the sync, it stops the project from starting at all. So a green restart
+  # here says the published tag, the compose default and the hook agree.
+  run ddev restart -y
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+
+  run ddev sync --version
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"ddev-sync, version "* ]] || false
+
+  run ddev add-on remove ddev-sync
+  echo "${output}"
+  [ "${status}" -eq 0 ]
 }

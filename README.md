@@ -20,7 +20,8 @@ packaging all exist and are installable, and what has *not* happened yet is
 written down rather than implied. No real sync against a real remote host has
 been run through the add-on, and `profiles/VERIFIED.md` names every profile
 variant whose commands no run has touched. Installing from the published
-release has not itself been exercised yet either, only the image it installs.
+release *is* exercised: the add-on suite installs this release into a real
+DDEV project on every run, starts it, and removes it again.
 
 ```bash
 cd /your/project

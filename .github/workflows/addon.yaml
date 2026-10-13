@@ -82,13 +82,22 @@ jobs:
       # the version pinned above, does exit 1 on a selection that matches
       # nothing, but that is a property of the runner rather than of this
       # workflow, so the TAP plan is asserted here: exactly one test selected,
-      # and that one skipped rather than run. The day the release exists, the
-      # `# skip` assertion is what has to be taken out.
+      # and that one actually run.
+      #
+      # The `# skip` here is a *refusal*, not an expectation: the test skipped
+      # for as long as nothing was published, and v0.1.0-rc.1 ended that. A
+      # test that silently went back to skipping would otherwise look green
+      # while asserting nothing - which is the failure this whole step exists
+      # to prevent.
       - name: Install from a release
         run: |
           out="$(bats tests/test.bats --filter-tags release --formatter tap)"
           echo "${out}"
           grep -qx '1\.\.1' <<<"${out}" \
             || { echo "the release test was not selected - check its test_tags" >&2; exit 1; }
-          grep -q '^ok 1 .* # skip' <<<"${out}" \
-            || { echo "the release test did not skip" >&2; exit 1; }
+          grep -q '^ok 1 ' <<<"${out}" \
+            || { echo "the release test did not pass" >&2; exit 1; }
+          if grep -q '^ok 1 .* # skip' <<<"${out}"; then
+            echo "the release test skipped, but a release exists now" >&2
+            exit 1
+          fi
