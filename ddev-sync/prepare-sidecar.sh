@@ -227,7 +227,7 @@ setting() {
   esac
   printf '%s' "${value}"
 }
-image="$(setting DDEV_SYNC_IMAGE noixdev/ddev-sync):$(setting DDEV_SYNC_VERSION 0.0.0)"
+image="$(setting DDEV_SYNC_IMAGE noixdev/ddev-sync):$(setting DDEV_SYNC_VERSION 0.1.0-rc.1)"
 
 # Both are bind-mounted by the compose file. If the service ever starts
 # without this script having run, Docker creates a missing source as an empty

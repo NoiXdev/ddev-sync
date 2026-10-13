@@ -14,7 +14,7 @@ services:
     # use without running compose. Change one and change the other, or the hook
     # reads the user database of a different image than the service runs, and
     # the symptom is OpenSSH's "No user exists for uid".
-    image: ${DDEV_SYNC_IMAGE:-noixdev/ddev-sync}:${DDEV_SYNC_VERSION:-0.0.0}
+    image: ${DDEV_SYNC_IMAGE:-noixdev/ddev-sync}:${DDEV_SYNC_VERSION:-0.1.0-rc.1}
     container_name: ddev-${DDEV_SITENAME}-sync
     # The image's entrypoint is the engine itself, so a `command:` would be
     # handed to it as arguments ("No such command 'sleep'") and the container
