@@ -45,20 +45,33 @@ _DECLARATION = re.compile(
 
 
 def patch_keys(text: str, values: Mapping[str, str]) -> str:
-    """Replace each key's value in place; append keys that are not present."""
+    """Replace each key's value in place, in *every* line that assigns it;
+    append keys that are not present.
+
+    Every occurrence, not the first: a `.env` may assign one key twice, and
+    phpdotenv takes the **last** assignment in a file (`ImmutableWriter::write`
+    refuses only a name that is `isExternallyDefined`, which is false once the
+    name is in `$this->loaded`). Rewriting the first and passing the second
+    through left the loader reading the value the sync had just decided was
+    wrong - so `DB_HOST` and the empty URL keys, which exist to stop a synced
+    project reaching production, were defeated by a duplicate line. That is
+    what makes "first only" unsafe rather than merely untidy. The most
+    plausible way a `.env` acquires a duplicate is the predecessor tool this
+    module's own docstring describes, which appended a marked block on every
+    run.
+    """
     remaining = dict(values)
     lines = text.splitlines()
     patched: list[str] = []
 
     for line in lines:
         match = _ASSIGNMENT.match(line)
-        if match is None or match.group("key") not in remaining:
+        if match is None or match.group("key") not in values:
             patched.append(line)
             continue
         key = match.group("key")
-        patched.append(
-            f"{key}{match.group('gap')}{_requote(match.group('value'), remaining.pop(key))}"
-        )
+        remaining.pop(key, None)
+        patched.append(f"{key}{match.group('gap')}{_requote(match.group('value'), values[key])}")
 
     patched.extend(f"{key}={value}" for key, value in remaining.items())
     return "\n".join(patched) + "\n" if patched else ""

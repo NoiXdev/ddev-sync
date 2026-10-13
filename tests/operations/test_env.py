@@ -58,6 +58,43 @@ def test_a_commented_out_key_is_not_treated_as_the_key() -> None:
     assert result == "# DB_HOST=old\nDB_HOST=local\n"
 
 
+def test_every_occurrence_of_a_duplicated_key_is_rewritten() -> None:
+    # phpdotenv takes the last assignment in a file, so rewriting only the
+    # first left the loader reading the value the sync had just decided was
+    # wrong: a `.env` with the key twice beat the `DB_HOST` pin outright.
+    original = "DB_HOST=prod.example.com\nDB_HOST=also-prod\n"
+    assert patch_keys(original, {"DB_HOST": "ddev-acme-db"}) == (
+        "DB_HOST=ddev-acme-db\nDB_HOST=ddev-acme-db\n"
+    )
+
+
+def test_each_occurrence_keeps_its_own_quoting() -> None:
+    # `_requote` reads the line it is rewriting, so the second occurrence is
+    # requoted from its own value rather than from the first one's.
+    original = 'DB_URL=mysql://prod\nDB_URL="mysql://prod"\n'
+    assert patch_keys(original, {"DB_URL": ""}) == 'DB_URL=\nDB_URL=""\n'
+
+
+def test_a_duplicated_url_key_is_emptied_in_both_places(tmp_path: Path) -> None:
+    # The Critical this blanking rests on, through the operation: an unblanked
+    # URL is `array_merge`d over every discrete host, port, user and password
+    # key beside it, and the loader would have read the surviving duplicate.
+    (tmp_path / ".env").write_text(
+        "DB_URL=mysql://app:secret@db.prod.example/app\n"
+        "DB_HOST=db.prod.example\n"
+        "DB_URL=mysql://app:secret@db.prod.example/app\n",
+        encoding="utf-8",
+    )
+    context = make_context(
+        tmp_path,
+        env={"file": [".env"], "strategy": "patch_keys", "set": {"DB_URL": ""}},
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == (
+        "DB_URL=\nDB_HOST=db.prod.example\nDB_URL=\n"
+    )
+
+
 def test_a_file_without_a_trailing_newline_gains_one() -> None:
     assert patch_keys("APP_ENV=prod", {"NEW": "x"}) == "APP_ENV=prod\nNEW=x\n"
 
