@@ -1773,13 +1773,17 @@ they act. They are not tasks, because a task has to be able to finish green.
    build and the changelog, and pushes nothing. Read the step summary: it names
    the version it *would* have released and the image tags it *would* have
    pushed, and for a candidate that list must hold exactly one tag,
-   `0.1.0-rc.1`. Read the generated `CHANGELOG.md` too, in the job's file
-   tree: with `skip-bump` and `skip-version-file` both on, the changelog
-   action takes its heading from git rather than from the version file just
-   written, so the first entry may be headed with the previous version. The
-   release notes are unaffected — they come from `clean_changelog`, which
-   strips the heading — and the Tauri workflow carries the same pattern, so
-   this is a thing to look at rather than a thing to pre-emptively change. Note how long the arm64 leg took under emulation — if it is
+   `0.1.0-rc.1`. **Read the generated `CHANGELOG.md`, and read the release
+   body the summary quotes.** With `skip-bump` and `skip-version-file` both
+   on, the changelog action never computes a version of its own for its
+   heading (`src/index.js:21` leaves `newVersion` empty because `bump()` never
+   runs), and `clean_changelog` — which becomes the GitHub release body — is
+   that text with its first three lines stripped. What those lines actually
+   contain was not verified by reading, so the rehearsal is where it gets
+   looked at. Two reasons not to pre-emptively change anything: `marketix` and
+   the Tauri workflow ship releases on this exact configuration today, so the
+   practical outcome is known to work, and the version the release is *named*
+   after comes from `compute-version`, not from here. Note how long the arm64 leg took under emulation — if it is
    unreasonable, the documented fallback is a native two-runner build with a
    digest merge, a change to the shared workflow rather than to ddev-sync.
 
