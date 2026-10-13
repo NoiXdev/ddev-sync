@@ -1757,7 +1757,7 @@ EOF
 These steps need the repository owner, or an artifact that does not exist until
 they act. They are not tasks, because a task has to be able to finish green.
 
-1. **Prerequisites**, in this order: make `NoiXdev/ddev-sync` public; push
+1. **Prerequisites, and the order matters — going public comes last.** Push
    `main`; land `chore/pin-actions` and `feat/docker-release-workflow` on
    `github-workflows`' `main` (the caller references the workflow at `@main`,
    so until then the release cannot resolve its own jobs); add the repository
@@ -1767,6 +1767,14 @@ they act. They are not tasks, because a task has to be able to finish green.
    off for this repository and that `main` accepts a push from `GITHUB_TOKEN`;
    and confirm the Docker Hub repository the first push creates is **public**,
    because the smoke job pulls the published image without authenticating.
+   **Then, and only then, make `NoiXdev/ddev-sync` public** — immediately
+   before the rehearsal, not at the start. The moment it is public its README
+   advertises `ddev add-on get NoiXdev/ddev-sync`, and until step 3 has run
+   there is no release for that command to install: the same defect decision 9
+   exists to prevent, pointing the other way. Public is still required before
+   the release itself, because `ubuntu-24.04-arm` runners are free only for a
+   public repository, so the window cannot be closed entirely — only kept to
+   the minutes between this step and step 3.
 
 2. **Rehearse.** Dispatch *Release* with `bump: minor`, `prerelease_id: rc`,
    `dry_run: true`. It runs the gates, every matrix cell, the multi-architecture
@@ -1786,6 +1794,12 @@ they act. They are not tasks, because a task has to be able to finish green.
    after comes from `compute-version`, not from here. Note how long the arm64 leg took under emulation — if it is
    unreasonable, the documented fallback is a native two-runner build with a
    digest merge, a change to the shared workflow rather than to ddev-sync.
+   Two more things to confirm while the rehearsal is in front of you, because
+   neither has ever run here: that `vars.DOCKERHUB_NAMESPACE` and
+   `vars.DOCKERHUB_IMAGE` resolve inside a *reusable* workflow — this is the
+   organisation's first caller that reads repository variables that way — and
+   that the diff the summary now prints shows the compose default and the
+   sidecar default both carrying the new version.
 
 3. **Release.** The same dispatch with `dry_run: false`. Expect: `v0.1.0-rc.1`
    tagged and marked as a pre-release, one image tag on
@@ -1854,6 +1868,11 @@ they act. They are not tasks, because a task has to be able to finish green.
    `^ok 1 .* # skip` to `^ok 1 ` **without** `# skip`, so a silent re-skip
    cannot pass. Keep the `1\.\.1` plan assertion — it is what catches a typo in
    the `test_tags` comment emptying the step.
+
+   **And edit `README.md`'s Status section in the same change.** It says
+   installing from the published release has not itself been exercised yet,
+   only the image it installs — which is precisely what this step makes
+   false. Nothing else will remind anyone.
 
 5. **The first real sync.** What this whole plan was for: a real project, a
    real remote host, `--dry-run` first. Back up the project's `.env`; the

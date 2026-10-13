@@ -480,7 +480,7 @@ and the duplicate write is harmless and keeps the script usable by hand.
 
 Tests: `tests/test_set_version.py` drives it over temporary copies, including
 the failure cases (a pattern that matches zero times, a pattern that matches
-twice). `tests/test_version_coherence.py` reads the four real files, following
+twice). `tests/test_version_coherence.py` reads the five real files, following
 `tests/test_no_legacy_terms.py`'s shape.
 
 ## What arm64 means here
