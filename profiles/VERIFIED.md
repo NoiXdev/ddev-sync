@@ -62,6 +62,6 @@ other's columns would blur what was actually checked.
   amd64 is covered by the verification matrix: a cell installs a real
   framework and the runners that do so are amd64. On arm64 the release
   pipeline asserts that the image starts with no network, carries every binary
-  the engine invokes, resolves its profiles from the installed path and reports
+  the engine runs locally, resolves its profiles from the installed path and reports
   the version it was released as — which is a smoke test, not a sync. Nothing
   here claims a profile's commands have been run on arm64.

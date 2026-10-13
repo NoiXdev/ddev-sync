@@ -103,9 +103,13 @@ post_install_actions:
 
     The add-on names the image version it shipped with, so there is nothing to
     put in .ddev/.env. A pre-start hook pulls that image on the first start,
-    which can take a moment, and says so while it happens.
+    which can take a moment, and says so while it happens. If you installed
+    from a checkout instead of a release, that default is not a published
+    image: see "To work on the add-on itself" in the README for the two lines
+    to set.
 
-    This is a release candidate. No real sync against a real remote host has
-    been run through the add-on yet, and profiles/VERIFIED.md names every
-    profile variant whose commands no run has touched.
+    What this add-on has and has not been exercised against is recorded in
+    profiles/VERIFIED.md, which names the profile variants whose commands no
+    run has touched. Worth reading before you trust a sync against a target
+    you cannot lose.
     NEXT

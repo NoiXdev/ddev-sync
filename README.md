@@ -19,7 +19,8 @@ version: the engine, the profiles, the container image and the add-on
 packaging all exist and are installable, and what has *not* happened yet is
 written down rather than implied. No real sync against a real remote host has
 been run through the add-on, and `profiles/VERIFIED.md` names every profile
-variant whose commands no run has touched.
+variant whose commands no run has touched. Installing from the published
+release has not itself been exercised yet either, only the image it installs.
 
 ```bash
 cd /your/project
@@ -83,10 +84,10 @@ exercised against: only macOS with Docker Desktop and DDEV v1.25.4. Linux,
 Colima, OrbStack and rootless Docker have not been tried, and no real sync
 against a real remote host has yet been run through the add-on. The CI workflow
 that tests the add-on has not run yet either.
-The published image is built for `linux/amd64` and `linux/arm64`; on arm64 it
-is smoke-tested only — it starts, carries its binaries, resolves its profiles
-and reports its version — because the verification matrix installs real
-frameworks and runs on amd64 runners.
+
+The published image is built for both `linux/amd64` and `linux/arm64`. On arm64
+it is only checked that the image starts and reports itself correctly; no sync
+has been run on arm64 at all.
 
 ## What it syncs
 

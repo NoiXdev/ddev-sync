@@ -253,7 +253,7 @@ announce_pull "${image}" \
   "pulling ${image} to read its user database; this happens once per image..."
 docker run --rm --entrypoint cat "${image}" /etc/passwd > "${passwd_tmp}" 2>"${err_file}" \
   || fail "could not read /etc/passwd from the image ${image}. Docker said:" "${err_file}" \
-    "The project cannot start without it. Check that the image name and version are right (DDEV_SYNC_IMAGE and DDEV_SYNC_VERSION in .ddev/.env override the add-on's own defaults) and that Docker can reach the registry. To run against a local build instead: docker build -t ddev-sync:dev . and put DDEV_SYNC_IMAGE=ddev-sync and DDEV_SYNC_VERSION=dev in .ddev/.env."
+    "The project cannot start without it. Check that the image name and version are right (DDEV_SYNC_IMAGE and DDEV_SYNC_VERSION in .ddev/.env.local or .ddev/.env override the add-on's own defaults) and that Docker can reach the registry. To run against a local build instead: docker build -t ddev-sync:dev . from the ddev-sync checkout, and put DDEV_SYNC_IMAGE=ddev-sync and DDEV_SYNC_VERSION=dev in .ddev/.env.local or .ddev/.env."
 if [ "${uid}" != 0 ]; then
   # A line for this uid already in the image (1000 is common on Linux) would
   # win over the new one, because the first match is returned.
