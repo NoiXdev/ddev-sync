@@ -89,25 +89,23 @@ post_install_actions:
   - |
     #ddev-description:Say what has to happen before the project can start
     # Deliberately outside the template's existence check above: these steps
-    # are mandatory on every install, including a reinstall and an install into
-    # a project that already has a configuration, and until the image is
-    # published they are what stands between the user and a project that
-    # refuses to start altogether. This is the only message the add-on prints,
-    # so it says all of it rather than the one step that happens to be new.
+    # are mandatory on every install, including a reinstall and an install
+    # into a project that already has a configuration. This is the only
+    # message the add-on prints, so it says all of it rather than the one step
+    # that happens to be new.
     cat <<'NEXT'
 
-    Next steps - the project will not start until the first two are done:
+    Next steps:
 
-      1. Build the image from the ddev-sync checkout, if you have not yet:
-           docker build -t ddev-sync:dev /path/to/ddev-sync
-      2. Add these two lines to .ddev/.env, naming that image:
-           DDEV_SYNC_IMAGE=ddev-sync
-           DDEV_SYNC_VERSION=dev
-      3. ddev restart
-      4. ddev sync init
+      1. ddev auth ssh      (the sidecar reaches remote hosts through DDEV's agent)
+      2. ddev restart
+      3. ddev sync init
 
-    The order matters: a pre-start hook runs on every start and reads the
-    image, so the image has to exist and .ddev/.env has to name it before the
-    first restart. Get it wrong and the whole project refuses to start, not
-    just the sync.
+    The add-on names the image version it shipped with, so there is nothing to
+    put in .ddev/.env. A pre-start hook pulls that image on the first start,
+    which can take a moment, and says so while it happens.
+
+    This is a release candidate. No real sync against a real remote host has
+    been run through the add-on yet, and profiles/VERIFIED.md names every
+    profile variant whose commands no run has touched.
     NEXT

@@ -14,27 +14,34 @@ cache:flush` where Laravel wants `php artisan optimize:clear`.
 
 ## Status
 
-**Installable as a DDEV add-on from a checkout; there is no published release
-yet.** The engine, the profiles, the container image and the add-on packaging
-(the manifest, the sidecar service and the `ddev sync` command) all exist.
-What does not exist is a published image or a tagged release, so
-`ddev add-on get noixdev/ddev-sync` does not work yet: you install from a clone
-and build the image yourself.
+**Published as a release candidate.** `v0.1.0-rc.1` is the first published
+version: the engine, the profiles, the container image and the add-on
+packaging all exist and are installable, and what has *not* happened yet is
+written down rather than implied. No real sync against a real remote host has
+been run through the add-on, and `profiles/VERIFIED.md` names every profile
+variant whose commands no run has touched.
 
 ```bash
-git clone https://github.com/NoiXdev/ddev-sync /path/to/ddev-sync
-docker build -t ddev-sync:dev /path/to/ddev-sync
+cd /your/project
+ddev add-on get NoiXdev/ddev-sync
+```
 
+No `.ddev/.env` lines are needed: the add-on names the image it shipped with.
+
+To work on the add-on itself, install from a checkout and point it at a local
+image instead:
+
+```bash
+docker build -t ddev-sync:dev /path/to/ddev-sync
 cd /your/project
 ddev add-on get /path/to/ddev-sync
+printf 'DDEV_SYNC_IMAGE=ddev-sync\nDDEV_SYNC_VERSION=dev\n' >> .ddev/.env
 ```
 
-Then add these two lines to the project's `.ddev/.env`:
-
-```
-DDEV_SYNC_IMAGE=ddev-sync
-DDEV_SYNC_VERSION=dev
-```
+**The order matters.** A pre-start hook runs on every project start and reads
+the image, so the image has to exist and `.ddev/.env` has to name it *before*
+the first `ddev restart`. Get it wrong and the whole project refuses to start,
+not just the sidecar.
 
 Then load your key, restart, and let `init` ask for the target:
 
@@ -76,6 +83,10 @@ exercised against: only macOS with Docker Desktop and DDEV v1.25.4. Linux,
 Colima, OrbStack and rootless Docker have not been tried, and no real sync
 against a real remote host has yet been run through the add-on. The CI workflow
 that tests the add-on has not run yet either.
+The published image is built for `linux/amd64` and `linux/arm64`; on arm64 it
+is smoke-tested only — it starts, carries its binaries, resolves its profiles
+and reports its version — because the verification matrix installs real
+frameworks and runs on amd64 runners.
 
 ## What it syncs
 
