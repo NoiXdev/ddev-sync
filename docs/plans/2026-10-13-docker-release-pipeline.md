@@ -1771,7 +1771,13 @@ they act. They are not tasks, because a task has to be able to finish green.
    build and the changelog, and pushes nothing. Read the step summary: it names
    the version it *would* have released and the image tags it *would* have
    pushed, and for a candidate that list must hold exactly one tag,
-   `0.1.0-rc.1`. Note how long the arm64 leg took under emulation — if it is
+   `0.1.0-rc.1`. Read the generated `CHANGELOG.md` too, in the job's file
+   tree: with `skip-bump` and `skip-version-file` both on, the changelog
+   action takes its heading from git rather than from the version file just
+   written, so the first entry may be headed with the previous version. The
+   release notes are unaffected — they come from `clean_changelog`, which
+   strips the heading — and the Tauri workflow carries the same pattern, so
+   this is a thing to look at rather than a thing to pre-emptively change. Note how long the arm64 leg took under emulation — if it is
    unreasonable, the documented fallback is a native two-runner build with a
    digest merge, a change to the shared workflow rather than to ddev-sync.
 
