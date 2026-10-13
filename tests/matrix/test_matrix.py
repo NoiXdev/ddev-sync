@@ -710,8 +710,19 @@ def test_the_env_step_imposed_what_it_must_and_kept_what_it_should(
     # then `\s*=\s*` - and the value stripped as well. The operation treats
     # `KEY = value` as a clean declaration; a parser that split on a bare `=`
     # would read the key as `KEY ` and disagree with it about the same file
-    # format, which is the defect the operation's own `declared_keys` exists
-    # to avoid. Comments and indented lines are not assignments to either.
+    # format, which is the defect that module's two regexes exist to avoid.
+    # Where this parser stands against each of them, since they are
+    # deliberately different from each other: against `_ASSIGNMENT` it is the
+    # same rule, and differs only in stripping the value (so a quoted value
+    # keeps its quotes here) and in taking the **last** of a duplicated key,
+    # which is what a dotenv loader does and what `patch_keys` now makes
+    # moot by rewriting every occurrence. Against `_DECLARATION`, the wider
+    # presence rule, it is narrower: an indented assignment, an `export`
+    # prefix and a quoted name are declarations there and not here. That is
+    # safe rather than merely untested - no cell's recipe writes one of those
+    # forms, and a marker whose key appeared only in one would fail as absent
+    # rather than pass on a wrong value. A comment is an assignment to none of
+    # the three.
     declared: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         found = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", line)

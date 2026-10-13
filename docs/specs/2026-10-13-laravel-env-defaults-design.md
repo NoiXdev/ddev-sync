@@ -42,9 +42,11 @@ describes the tree **before** this change, and some of what it records (the
 `env.set` pins, the early return, the `.env` arithmetic) is deliberately no
 longer true of the tree that implemented it. Two bullets carry newer material
 and say so inline: the per-key merge was **re-measured** on `feat/env-defaults`
-on 2026-10-13, and the `patch_keys` arithmetic is corrected by a **reading** of
-the recipe and the profile with no run behind it. Nothing else in this section
-was re-read. The only line numbers re-checked are the three those two bullets
+on 2026-10-13, and the `patch_keys` arithmetic is corrected by a **run** of the
+same date at `714f42b`, read off that run's kept `.env` - it was previously
+corrected by a reading of the recipe and the profile with no run behind it, and
+that reading had already gone stale by the time the branch ended. Nothing else
+in this section was re-read. The only line numbers re-checked are the three those two bullets
 name (`operations/env.py:33`, `config/merge.py:87-89`,
 `features/schema.py:30`); every other citation here is as it stood at
 `73363a9`, and at least one is known stale - the early-return bullet below
@@ -69,10 +71,17 @@ describes a guard this change widened.
   wrote a 13-line `.env`, and after a sync the file was 19 lines, the six added
   being `APP_DEBUG`, three `MAIL_*`, `SESSION_DRIVER` and `CACHE_STORE`, in the
   profile's `env.set` order. *That arithmetic no longer describes the tree*, and
-  what follows is a reading of the recipe and the profile rather than a fresh
-  run: the recipe now writes 17 keys, `CACHE_STORE` and the three URL keys among
-  them, so those four are overwrites, and what the step appends is `APP_DEBUG`,
-  the three `MAIL_*`, `CACHE_DRIVER` and `SESSION_DRIVER`.
+  neither did the sentence that replaced it, which carried two counts and was
+  falsified by the next commit to touch `env.set` - so what follows names keys
+  instead and is dated. **Read off the kept `.env` of the `mxfeathorizon` run of
+  2026-10-13 at `714f42b`:** every key the recipe declares that `env.set` also
+  carries is an overwrite, `CACHE_STORE` and the URL keys `REDIS_URL`, `DB_URL`,
+  `DATABASE_URL` and `MAIL_URL` among them, those five being the ones the recipe
+  writes with a contrary value on purpose; and what the step appends, in
+  `env.set` order, is `APP_DEBUG`, `MAIL_MAILER`, `MAIL_HOST`, `MAIL_PORT`,
+  `CACHE_DRIVER` and `SESSION_DRIVER`. A figure here is stale by construction,
+  which this bullet has now demonstrated twice: the recipe and the profile are
+  the authorities on how many keys each holds.
   `profiles/VERIFIED.md`'s `horizon` row carries the current form, where
   `CACHE_DRIVER` and `SESSION_DRIVER` are the appends an assertion covers and
   `APP_DEBUG` and `MAIL_MAILER` are the two covered by nothing.

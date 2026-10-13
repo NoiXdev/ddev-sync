@@ -347,24 +347,32 @@ measurement**: no run here has pointed a wrong port or a stale password at the
 DDEV Redis and watched it refuse, so what the two keys actually do to a synced
 project is unobserved in either direction.
 
-### 11. Nothing tells a user that their URL keys are being blanked
+### 11. The dry-run and `--yes` cannot say that a URL key is being blanked
 
 Appended by the env-defaults branch's final wave, which fixed the Critical
 above and deliberately left this: it is a change to the reporting surface, not
 a one-liner.
 
-The env step now **blanks** three keys, the first keys this tool empties rather
-than sets, and no output can express the difference. The dry-run detail renders
-key *names* only (`engine/plan.py:422-434`), so `DB_URL` inside a nineteen-key
-list reads as "will be set", and `ddev sync --yes` skips the confirmation diff
-entirely (`operations/env.py`'s `assume_yes` branch), so a user who always
-passes `--yes` never sees a line change. A project that legitimately uses
-`DB_URL`, `DATABASE_URL` or `REDIS_URL` locally therefore loses it silently on
-the next sync. `DATABASE_URL` is the most likely of the three: it is the
-Doctrine and Symfony convention and is read by plenty of non-PHP tooling out of
-the same `.env`, so a Laravel project can carry it for something that is not
-Laravel. The recovery — override the key in the project's own `env.set` — is
-documented in a profile comment and nowhere a user would look.
+The env step now **blanks** `REDIS_URL`, `DB_URL` and `DATABASE_URL`, the first
+keys this tool empties rather than sets, and overwrites a fourth, `MAIL_URL`,
+with a local DSN. **One output does express it:** the confirmation prompt shows
+a whole-file unified diff before anything is written, so a user who runs `ddev
+sync` and reads the prompt sees each line change. The gap is the two paths that
+cannot. The dry-run detail renders key *names* only
+(`engine/plan.py:422-434`), so `DB_URL` in that list reads as "will be set"
+rather than "will be emptied"; and `ddev sync --yes` skips the confirmation
+diff entirely (`operations/env.py`'s `assume_yes` branch), so a user who always
+passes `--yes` — in a script, or out of habit — never sees a line change at
+all. Between the two, a project that legitimately uses `DB_URL`,
+`DATABASE_URL` or `REDIS_URL` locally can lose it without being told.
+`DATABASE_URL` is the most likely: it is the Doctrine and Symfony convention
+and is read by plenty of non-PHP tooling out of the same `.env`, so a Laravel
+project can carry it for something that is not Laravel. The recovery —
+override the key in the project's own `env.set` — is documented in a profile
+comment and nowhere a user would look, and for `MAIL_URL` the recovery is
+**two** overrides rather than one: the host *and* the port parsed from a URL
+outrank the discrete keys, so a project that needs another local mail port sets
+`MAIL_URL` beside `MAIL_PORT` or the port it sets decides nothing.
 
 This is the whole-branch review's highest-likelihood new hit on that branch,
 and it is also the item the spec explicitly put out of scope ("Reporting which
