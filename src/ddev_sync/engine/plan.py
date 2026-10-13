@@ -431,21 +431,28 @@ class _Builder:
                 f"env.file must be a file name or a list of file names, got {configured!r}"
             )
         candidates = [configured] if isinstance(configured, str) else [str(c) for c in configured]
-        keys = ", ".join(sorted(str(key) for key in imposed))
-        detail = f"{strategy}: {len(imposed)} key(s) -> {', '.join(candidates)} ({keys})"
+        # An imposed empty string blanks the key rather than setting it, which a
+        # bare name in the list reads as the opposite of (`DB_URL` is emptied so
+        # that it cannot override the discrete `DB_*` keys). A key whose value
+        # is anything else, `MAIL_URL`'s local DSN included, stays in the plain
+        # list: naming it here would claim an emptying that does not happen.
+        emptied = sorted(str(key) for key, value in imposed.items() if str(value) == "")
+        set_keys = sorted(str(key) for key in imposed if str(key) not in emptied)
         # `set` wins a key declared in both, so such a default is never written
         # and is not worth naming.
         written_if_absent = sorted({str(key) for key in defaulted} - {str(key) for key in imposed})
+        # Built piece by piece, so a profile with no emptied keys and no
+        # defaults renders exactly the string it always has and the goldens of
+        # every profile without either do not move.
+        groups = [", ".join(set_keys)] if set_keys else []
+        if emptied:
+            groups.append(f"emptied: {', '.join(emptied)}")
         if written_if_absent:
-            # An override of the string above rather than extra pieces on it,
-            # so the no-defaults detail stays byte-identical and the goldens of
-            # every other profile do not move.
-            groups = [keys] if keys else []
             groups.append(f"if absent: {', '.join(written_if_absent)}")
-            detail = (
-                f"{strategy}: {len(imposed)} key(s) + {len(written_if_absent)} if absent "
-                f"-> {', '.join(candidates)} ({'; '.join(groups)})"
-            )
+        counts = f"{len(imposed)} key(s)"
+        if written_if_absent:
+            counts += f" + {len(written_if_absent)} if absent"
+        detail = f"{strategy}: {counts} -> {', '.join(candidates)} ({'; '.join(groups)})"
         return [
             _Entry(
                 kind=StepKind.ENV,

@@ -677,6 +677,58 @@ def test_the_env_detail_is_unchanged_for_a_profile_with_no_defaults() -> None:
     assert detail == "patch_keys: 1 key(s) -> .env (DB_HOST)"
 
 
+def test_the_env_detail_names_the_keys_it_will_empty_apart_from_the_ones_it_sets() -> None:
+    # `DB_URL` in a plain list of names reads as "will be set"; it is emptied, so
+    # that it cannot override the discrete DB_* keys. The dry-run is the one
+    # place a user sees this before a sync.
+    detail = env_detail(
+        {
+            "file": [".env"],
+            "set": {"DB_HOST": "db", "REDIS_URL": "", "DB_URL": "", "APP_ENV": "local"},
+        }
+    )
+    assert detail == "patch_keys: 4 key(s) -> .env (APP_ENV, DB_HOST; emptied: DB_URL, REDIS_URL)"
+
+
+def test_a_local_dsn_is_set_not_emptied() -> None:
+    # MAIL_URL is replaced with a local DSN because an empty value would leave
+    # the mail transport null. Listing it as emptied would be a false claim in
+    # the output that exists to correct one.
+    detail = env_detail(
+        {
+            "file": [".env"],
+            "set": {"MAIL_URL": "smtp://localhost:1025", "DB_URL": ""},
+        }
+    )
+    assert detail == "patch_keys: 2 key(s) -> .env (MAIL_URL; emptied: DB_URL)"
+
+
+def test_a_profile_that_only_empties_keys_has_no_empty_set_group() -> None:
+    detail = env_detail({"file": [".env"], "set": {"DB_URL": ""}})
+    assert detail == "patch_keys: 1 key(s) -> .env (emptied: DB_URL)"
+
+
+def test_emptied_keys_and_if_absent_defaults_are_separate_groups() -> None:
+    detail = env_detail(
+        {
+            "file": [".env"],
+            "set": {"DB_HOST": "db", "DB_URL": ""},
+            "default": {"SESSION_DRIVER": "file"},
+        }
+    )
+    assert detail == (
+        "patch_keys: 2 key(s) + 1 if absent -> .env "
+        "(DB_HOST; emptied: DB_URL; if absent: SESSION_DRIVER)"
+    )
+
+
+def test_a_value_that_merely_contains_nothing_visible_is_not_called_emptied() -> None:
+    # Only the empty string blanks a key. A single space is a value, and a
+    # number is one too.
+    detail = env_detail({"file": [".env"], "set": {"A": " ", "B": 0}})
+    assert detail == "patch_keys: 2 key(s) -> .env (A, B)"
+
+
 def test_an_empty_env_default_leaves_the_detail_unchanged() -> None:
     detail = env_detail({"file": [".env"], "set": {"DB_HOST": "db"}, "default": {}})
     assert detail == "patch_keys: 1 key(s) -> .env (DB_HOST)"

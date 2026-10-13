@@ -6,7 +6,7 @@
    2  db.dump       remote  mysqldump --single-transaction $DB_DATABASE   [profile:laravel]
    3  db.download   -       streamed as part of db.dump into .ddev/.downloads/dump.sql   [built-in]
    4  db.import     local   mysql -h ddev-acme-db db < .ddev/.downloads/dump.sql   [built-in]
-   5  env           local   patch_keys: 19 key(s) + 2 if absent -> .env (APP_DEBUG, APP_ENV, APP_URL, CACHE_DRIVER, CACHE_STORE, DATABASE_URL, DB_CONNECTION, DB_DATABASE, DB_HOST, DB_PASSWORD, DB_PORT, DB_URL, DB_USERNAME, MAIL_HOST, MAIL_MAILER, MAIL_PORT, MAIL_URL, REDIS_HOST, REDIS_URL; if absent: QUEUE_CONNECTION, SESSION_DRIVER)   [profile:laravel]
+   5  env           local   patch_keys: 19 key(s) + 2 if absent -> .env (APP_DEBUG, APP_ENV, APP_URL, CACHE_DRIVER, CACHE_STORE, DB_CONNECTION, DB_DATABASE, DB_HOST, DB_PASSWORD, DB_PORT, DB_USERNAME, MAIL_HOST, MAIL_MAILER, MAIL_PORT, MAIL_URL, REDIS_HOST; emptied: DATABASE_URL, DB_URL, REDIS_URL; if absent: QUEUE_CONNECTION, SESSION_DRIVER)   [profile:laravel]
    6  files.sync    rsync   rsync -a --info=progress2 -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 22 deploy@web01.example:/srv/app/storage/app/public/ /var/www/html/storage/app/public/   [profile:laravel]
    7  sanitize      sql     5 rules: clear-sessions, clear-jobs, clear-failed-jobs, anonymize-users, reset-user-passwords   [profile:laravel]
    8  setup         web     composer install --no-interaction   [profile:laravel]

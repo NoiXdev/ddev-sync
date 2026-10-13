@@ -375,7 +375,7 @@ measurement**: no run here has pointed a wrong port or a stale password at the
 DDEV Redis and watched it refuse, so what the two keys actually do to a synced
 project is unobserved in either direction.
 
-### 11. The dry-run and `--yes` cannot say that a URL key is being blanked
+### 11. `--yes` cannot say that a URL key is being blanked — dry-run half closed
 
 Appended by the env-defaults branch's final wave, which fixed the Critical
 above and deliberately left this: it is a change to the reporting surface, not
@@ -385,14 +385,14 @@ The env step now **blanks** `REDIS_URL`, `DB_URL` and `DATABASE_URL`, the first
 keys this tool empties rather than sets, and overwrites a fourth, `MAIL_URL`,
 with a local DSN. **One output does express it:** the confirmation prompt shows
 a whole-file unified diff before anything is written, so a user who runs `ddev
-sync` and reads the prompt sees each line change. The gap is the two paths that
-cannot. The dry-run detail renders key *names* only
-(`engine/plan.py:422-434`), so `DB_URL` in that list reads as "will be set"
-rather than "will be emptied"; and `ddev sync --yes` skips the confirmation
-diff entirely (`operations/env.py`'s `assume_yes` branch), so a user who always
-passes `--yes` — in a script, or out of habit — never sees a line change at
-all. Between the two, a project that legitimately uses `DB_URL`,
-`DATABASE_URL` or `REDIS_URL` locally can lose it without being told.
+sync` and reads the prompt sees each line change. The gap was the two paths that
+cannot. The dry-run detail rendered key *names* only, so `DB_URL` in that list
+read as "will be set" rather than "will be emptied" (**closed, see below**); and
+`ddev sync --yes` skips the confirmation diff entirely (`operations/env.py`'s
+`assume_yes` branch), so a user who always passes `--yes` — in a script, or out
+of habit — never sees a line change at all. Between the two, a project that
+legitimately uses `DB_URL`, `DATABASE_URL` or `REDIS_URL` locally can lose it
+without being told.
 `DATABASE_URL` is the most likely: it is the Doctrine and Symfony convention
 and is read by plenty of non-PHP tooling out of the same `.env`, so a Laravel
 project can carry it for something that is not Laravel. The recovery —
@@ -408,6 +408,22 @@ keys the env step changed"), where it belongs with the `allow_failure`
 reporting question because the same output surface is at stake. Shape of a fix,
 not a decision: render the value beside the name when the imposed value differs
 from what the file holds, or at minimum name the keys the step will empty.
+
+**Status: the dry-run half is closed; the `--yes` half is not.**
+`engine/plan.py::_env` now names the keys whose imposed value is the empty
+string in a group of their own, between the plain list and `if absent`:
+`... (APP_DEBUG, ..., REDIS_HOST; emptied: DATABASE_URL, DB_URL, REDIS_URL; if
+absent: QUEUE_CONNECTION, SESSION_DRIVER)`. `MAIL_URL` is deliberately **not**
+in it - it is replaced with a local DSN, not emptied - so it still reads as a
+plain name, and the dry-run still does not say that its value is overwritten,
+nor what with. A profile with no emptied keys renders the string it always did;
+`tests/cli/golden/laravel-full.txt` is the only golden that moved. What remains
+true: `ddev sync --yes` shows neither this line's diff nor any confirmation, so a
+user who always passes it is told about the emptying only if they read the
+dry-run first. That is deliberate - skipping the diff is what `--yes` is for -
+and it is recorded here as the remaining gap rather than fixed. The
+two-override recovery for `MAIL_URL` is likewise still documented in a profile
+comment only.
 
 ### 12. A project's own `ddev-sync.yaml` is never validated — `env.default` closed
 
