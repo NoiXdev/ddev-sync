@@ -43,12 +43,33 @@ env:
     # name is the half a project cannot rename out from under us. A project
     # whose Redis is elsewhere overrides this key; that is the accepted cost of
     # not letting a production .env reach production's Redis from a developer's
-    # machine. The reason the pin exists is the setup step below: it runs
-    # `optimize:clear`, which runs `cache:clear`, and Laravel's RedisStore
-    # flushes with a bare `flushdb()`. A project that sets CACHE_STORE=redis in
-    # its own env.set, with this key left at a production host, would have the
-    # sync flush production's Redis.
+    # machine. The pin exists because this change lets a project keep
+    # QUEUE_CONNECTION=redis and SESSION_DRIVER=redis through a sync: with this
+    # key left at a production host, the app would queue onto and keep its
+    # sessions in production's Redis, and a feature that clears the queue
+    # (horizon:clear) would empty production's. The conditional case is a
+    # project that sets CACHE_STORE=redis in its own env.set: the setup step
+    # `optimize:clear` runs `cache:clear`, and Laravel's RedisStore flushes with
+    # a bare `flushdb()`. See the URL keys below: this pin only holds while
+    # they are empty.
     REDIS_HOST: "ddev-${DDEV_SITENAME}-redis"
+    # A URL key outranks every discrete key beside it, so the pins above and
+    # below would decide nothing while one is set. Laravel's
+    # ConfigurationUrlParser::parseConfiguration pulls `url` out of the
+    # connection config and, if it is non-empty, array_merges the values parsed
+    # from it over host, port, database, username and password; an empty value
+    # is ignored. laravel/laravel's config/database.php reads REDIS_URL on both
+    # redis connections (12.x lines 157 and 170; the same key at 10.x and 11.x)
+    # and DB_URL on all five database connections (12.x lines 37, 49, 69, 89,
+    # 104; it is DATABASE_URL at 10.x, line 40, renamed in 11), so a project on
+    # either naming is covered by imposing all three. All of this was read from
+    # laravel/laravel at 10.x, 11.x and 12.x and from laravel/framework; nothing
+    # in this repository establishes it. On a version that does not read one of
+    # these keys, patch_keys appends one inert empty line. A project whose real
+    # connection is a URL overrides the key in its own env.set.
+    REDIS_URL: ""
+    DB_URL: ""
+    DATABASE_URL: ""
     # Imposed although it is a driver choice, because the sync acts on the
     # store: the setup step `optimize:clear` runs `cache:clear` against
     # whatever store is configured. MemcachedStore::flush() flushes the whole
@@ -58,8 +79,10 @@ env:
     # would fail that step (which is not allow_failure). This costs a project
     # that runs a local Redis cache its choice on every sync; it sets
     # CACHE_STORE (CACHE_DRIVER on Laravel 10 and below) in its own env.set to
-    # keep it, and REDIS_HOST above keeps that flush local. Imposing only non-local drivers is not expressible as
-    # set versus default; see the follow-ups file, item 2.
+    # keep it, and REDIS_HOST above keeps that flush local. Defaulting this
+    # key instead would need the setup step to skip the cache, which is a
+    # change to that command rather than to this block; see the follow-ups
+    # file, item 2.
     CACHE_STORE: file
     # The same key under its Laravel 10 and earlier name. laravel/laravel's
     # .env.example has `CACHE_DRIVER=file` at 10.x and `CACHE_STORE=database`
@@ -80,7 +103,9 @@ env:
   # ACCEPTED RISK: a project whose .env carries a remote driver with working
   # credentials keeps it. With QUEUE_CONNECTION=sqs and live AWS keys, a job
   # dispatched after a sync lands on the production queue without a word;
-  # SESSION_DRIVER=dynamodb likewise uses production's session table. Nothing
+  # SESSION_DRIVER=dynamodb likewise uses production's session table, and the
+  # same holds for a kept beanstalkd queue or memcached session store naming a
+  # host of its own: only REDIS_HOST is pinned. Nothing
   # the sync runs acts on either, which is why they are defaulted and
   # CACHE_STORE (see above) is not. That is a real consequence of this design,
   # not an oversight: the alternative is the old behaviour that took a Horizon

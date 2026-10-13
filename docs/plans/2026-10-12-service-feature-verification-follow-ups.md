@@ -68,9 +68,12 @@ to `env.set`, because the setup step `optimize:clear` runs `cache:clear`
 against the configured store, which would flush a memcached pointed off the
 machine (`MemcachedStore::flush`) and make a dynamodb cache throw. A project
 running a local Redis cache still gets `file` back unless it sets
-`CACHE_STORE` in its own `env.set`. Closing that half needs a mechanism that
-imposes only non-local drivers, which no `set` versus `default` split can
-express.
+`CACHE_STORE` in its own `env.set` (`CACHE_DRIVER` on Laravel 10 and below,
+which is imposed as well). The obstacle is not that a `set` versus `default`
+split cannot express it: `php artisan optimize:clear --except=cache` exists at
+12.47.0, and with it `CACHE_STORE` could be defaulted. The fix lives in the
+profile's setup command rather than its `env` block, and it needs a version
+check nobody has done - whether the flag exists on Laravel 11 and below.
 
 ### 3. `horizon:clear` clears exactly one queue
 

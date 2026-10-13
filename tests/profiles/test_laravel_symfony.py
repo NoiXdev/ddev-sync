@@ -7,6 +7,7 @@ from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations.base import ExecutionContext
+from ddev_sync.operations.env import patch_keys
 from ddev_sync.operations.sanitize import parse_rules
 from ddev_sync.profiles.registry import ProfileRegistry
 from ddev_sync.transport.fake import FakeCommandRunner
@@ -160,8 +161,31 @@ def test_the_driver_choices_are_defaults_and_the_targets_are_imposed() -> None:
     # flush above stays live on the version that reads the other one.
     assert env["set"]["CACHE_STORE"] == "file"
     assert env["set"]["CACHE_DRIVER"] == "file"
+    # A non-empty URL key outranks every discrete key beside it, so the pins
+    # decide nothing unless the URL keys are imposed empty (an empty value is
+    # ignored by Laravel's ConfigurationUrlParser).
+    for url_key in ("REDIS_URL", "DB_URL", "DATABASE_URL"):
+        assert env["set"][url_key] == "", f"{url_key} must be imposed empty"
     assert env["set"]["REDIS_HOST"] == "ddev-${DDEV_SITENAME}-redis"
     for key in ("APP_ENV", "APP_URL", "DB_HOST", "DB_DATABASE", "MAIL_MAILER", "MAIL_HOST"):
         assert key in env["set"], f"{key} must stay imposed"
     for key in ("QUEUE_CONNECTION", "SESSION_DRIVER"):
         assert key not in env["set"], f"{key} must no longer be imposed"
+
+
+def test_a_production_url_in_the_env_file_is_emptied_not_kept() -> None:
+    # A non-empty URL key outranks the discrete host, port and database keys,
+    # so a .env copied from production would still reach production's Redis
+    # and database through the pins. The profile blanks the URL keys; the
+    # quoting of the line the project wrote is preserved.
+    env = REGISTRY.resolve("laravel", None).data["env"]
+    production = (
+        'REDIS_URL="redis://:secret@redis.prod.example:6379"\n'
+        "DB_URL=mysql://app:secret@db.prod.example/app\n"
+        "DATABASE_URL=mysql://app:secret@db.prod.example/app\n"
+    )
+    assert patch_keys(production, env["set"]).splitlines()[:3] == [
+        'REDIS_URL=""',
+        "DB_URL=",
+        "DATABASE_URL=",
+    ]

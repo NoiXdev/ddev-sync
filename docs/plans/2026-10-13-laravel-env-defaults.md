@@ -777,7 +777,12 @@ In that cell's entry, after `services=("redis",)`:
             EnvMarker(key="QUEUE_CONNECTION", expected="redis", kind="kept"),
             # Declared by nothing in the recipe, so the profile's default is
             # what must be there - the other half of the promise.
-            EnvMarker(key="CACHE_STORE", expected="file", kind="defaulted"),
+            EnvMarker(key="SESSION_DRIVER", expected="file", kind="defaulted"),
+            # CACHE_STORE is imposed, not defaulted (spec decision 5): the
+            # sync's own `optimize:clear` flushes whatever cache is configured.
+            # The recipe declares it nowhere, so it reads `file` either way;
+            # this is a control, not evidence of the default.
+            EnvMarker(key="CACHE_STORE", expected="file", kind="imposed"),
             # Imposed, and the control: if the step did not run at all, this
             # fails while the two above would still read as "project kept it".
             EnvMarker(key="DB_HOST", expected="ddev-mxfeathorizon-db", kind="imposed"),
@@ -859,8 +864,10 @@ read for others rather than trusting this list:
 - The `APP_ENV` paragraph (lines 6-20) credits "the same profile step credited
   below for `CACHE_STORE`" and explains that `patch_keys` appends the key. That
   is still true of `APP_ENV`, which stays in `env.set` — but any sentence
-  saying the profile *sets* `CACHE_STORE` on every sync is now describing a
-  default, and a default only lands because the recipe does not write the key.
+  saying the profile *sets* `CACHE_STORE` on every sync is still true:
+  `CACHE_STORE` stayed in `env.set` (spec decision 5). It is `SESSION_DRIVER`
+  that is now a default, and a default only lands because the recipe does not
+  write the key.
 - Any sentence that explains why `ddev-sync.yaml` carries an override.
 
 - [ ] **Step 7: Run the cell**
@@ -955,12 +962,13 @@ file's voice. Required content, and nothing beyond it:
   `test_the_env_step_imposed_what_it_must_and_kept_what_it_should` reads the
   written `.env` after a sync.
 - `DB_HOST` and `REDIS_HOST` are imposed and were observed at their imposed
-  values; `CACHE_STORE` was written by `env.default` because the recipe
-  declares it nowhere; `QUEUE_CONNECTION` was declared by the recipe and
-  survived.
+  values; `SESSION_DRIVER` was written by `env.default` because the recipe
+  declares it nowhere (`CACHE_STORE` is imposed and reads `file` either way);
+  `QUEUE_CONNECTION` was declared by the recipe and survived.
 - The keys that moved, and that the row's old claim — that
   `QUEUE_CONNECTION`/`CACHE_STORE` are "never read back" — is now false in both
-  directions: they are read back, and one of them is no longer imposed at all.
+  directions: they are read back, and `QUEUE_CONNECTION` is no longer imposed
+  at all (`CACHE_STORE` still is).
 - **Not run:** `strategy: append_block` with a `default` (rejected at load, so
   no sync reaches it), a project carrying `.env.local` (no cell creates one),
   and `REDIS_HOST` against a project whose Redis is not the DDEV service.
@@ -981,7 +989,8 @@ the patch broke.
 In `docs/plans/2026-10-12-service-feature-verification-follow-ups.md`, mark
 items 1 and 2 closed in the same shape the other closed items use — keep the
 reasoning, add what closed it and where the evidence lives. Item 1 is the queue
-driver; item 2 is `CACHE_STORE`/`SESSION_DRIVER`. Name the spec and this plan.
+driver; item 2 is half closed (`SESSION_DRIVER` yes, `CACHE_STORE` no; the
+follow-ups file already says so). Name the spec and this plan.
 
 - [ ] **Step 5: Gates**
 

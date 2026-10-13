@@ -65,8 +65,10 @@ Everything in this section was observed on this repository at `73363a9`, in the
   key rather than replacing the mapping. The `mxfeathorizon` kept tree shows
   both halves of that: `QUEUE_CONNECTION=redis` from the cell's override and
   `CACHE_STORE=file` from the profile, in the same file.
-- **DDEV's Redis add-on sets no environment variable.**
-  `ddev/ddev-redis@main`'s `docker-compose.redis.yaml` declares
+- **DDEV's Redis add-on sets no environment variable.** Read from installed
+  copies of `ddev-redis` v2.2.0, outside this repository, which nothing in the
+  tree can establish; a later release may differ. Its `docker-compose.redis.yaml`
+  declares
   `container_name: ddev-${DDEV_SITENAME}-redis` and
   `hostname: ${REDIS_HOSTNAME:-redis}`, exposes 6379, documents "Redis is
   available inside Docker containers with `redis:6379`" in its README, and
@@ -142,6 +144,7 @@ That is the same reason the sanitize rules exist.
 | `APP_ENV: local` | `set` | Load-bearing for the framework's guards: `ConfirmableTrait` refuses under `production` and returns 1, which `allow_failure` reports as fine |
 | `APP_URL`, `DB_CONNECTION`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | `set` | The database the sync has just imported; `DB_CONNECTION: mysql` is a consequence of the import, not a choice |
 | `MAIL_MAILER`, `MAIL_HOST`, `MAIL_PORT` | `set` | Mail must not leave the machine |
+| `REDIS_URL`, `DB_URL`, `DATABASE_URL` (new) | `set`, empty | A non-empty URL key outranks every discrete key beside it (`ConfigurationUrlParser::parseConfiguration` array-merges the parsed URL over host, port, database, username and password; an empty value is ignored), so without these the `DB_*` and `REDIS_HOST` pins decide nothing for a project whose `.env` carries a production URL. `laravel/laravel` reads `REDIS_URL` at 10.x to 12.x, and `DATABASE_URL` at 10.x where 11.x and 12.x read `DB_URL`. Found by the review of Task 3, not by the design |
 | `REDIS_HOST` (new) | `set` | `ddev-${DDEV_SITENAME}-redis`, the same template the profile already uses for `DB_HOST` |
 | `QUEUE_CONNECTION`, `SESSION_DRIVER` | `default` | Nothing the sync runs acts on either; the project's value is no more wrong after the sync than before, and `QUEUE_CONNECTION` is the measured harm |
 | `CACHE_STORE`, `CACHE_DRIVER` | `set` | The cache key is `CACHE_STORE` from Laravel 11 and `CACHE_DRIVER` before it (`laravel/laravel`'s `.env.example` at 10.x, 11.x, 12.x), so both are imposed. The sync's own `optimize:clear` runs `cache:clear` against the configured store: `MemcachedStore::flush()` flushes a whole server, `DynamoDbStore::flush()` throws, `RedisStore::flush()` is a bare `flushdb()`. Moved back to `set` after the key-by-key check of decision 4's reworded rule (see Risks) |
@@ -282,10 +285,23 @@ Measured against the tree at `73363a9`, so a plan can start from it.
   `env.set`, and `REDIS_HOST` keeps the flush local. A third review finding:
   the key was renamed in Laravel 11, so imposing `CACHE_STORE` alone left every
   Laravel 10 project exposed and the reasoning decorative; `CACHE_DRIVER` is
-  imposed as well, at the cost of one inert line in a Laravel 11+ `.env`. Imposing only non-local drivers would close that, and no `set` versus
-  `default` split can express it. The only remaining exception to the rule is
-  `APP_DEBUG`, imposed although the sync does not make it wrong (decision 5
-  keeps it out of scope).
+  imposed as well, at the cost of one inert line in a Laravel 11+ `.env`.
+  Defaulting `CACHE_STORE` after all is possible in principle - `php artisan
+  optimize:clear --except=cache` exists at 12.47.0 - but the fix then lives in
+  the profile's setup command rather than in its `env` block, and whether the
+  flag exists on Laravel 11 and below has not been checked.
+
+  *The rule does not cover every imposed key, and the list is not a count to
+  trust:* three imposed keys sit outside its wording. `APP_DEBUG` is imposed
+  although the sync does not make it wrong (decision 5 keeps it out of scope).
+  `APP_ENV`'s documented ground runs the other way round - the project's value
+  breaks the sync's own commands, rather than the sync making the value wrong.
+  And `CACHE_DRIVER` is, on Laravel 11 and later, a key nothing reads, imposed
+  deliberately for the versions that do. A fourth group, the URL keys, fits the
+  rule (the sync's import is what the URL would override) but was missed by
+  the design and found by review: a non-empty `REDIS_URL` or `DB_URL` defeated
+  the discrete pins, and a kept `QUEUE_CONNECTION=redis` made that reach
+  production's Redis, which this change had made possible.
 - **An empty-value `.env`.** `QUEUE_CONNECTION=` keeps its empty value, where
   `patch_keys` previously replaced it. Laravel resolves that to an unknown
   connection and errors. Decision 3 accepts this: a written line is a decision,
