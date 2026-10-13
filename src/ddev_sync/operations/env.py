@@ -28,6 +28,21 @@ STRATEGIES = ("patch_keys", "append_block", "none")
 
 _ASSIGNMENT = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?P<gap>\s*=\s*)(?P<value>.*)$")
 
+# Presence, not rewriting - see `declared_keys` for why the two are
+# deliberately different regexes. Every form here is one phpdotenv's own
+# parser accepts as a declaration, read from
+# `vendor/vlucas/phpdotenv/src/Parser/EntryParser.php` in the kept
+# `mxfeathorizon` fixture (v5, shipped with laravel/framework v13.35.0):
+# `splitStringIntoParts` trims " \n\r\t\0\x0B" from both sides of the name
+# (:75), so an indented assignment is one; `parseName` strips a leading
+# `export` followed by whitespace (:99-101) and then a matching pair of
+# quotes around the name (:103-105). `Lines::isCommentOrWhitespace` drops a
+# line whose first non-blank character is `#`, so an indented comment is not
+# a declaration here either.
+_DECLARATION = re.compile(
+    r"^[ \t]*(?:export[ \t]+)?['\"]?(?P<key>[A-Za-z_][A-Za-z0-9_]*)['\"]?\s*="
+)
+
 
 def patch_keys(text: str, values: Mapping[str, str]) -> str:
     """Replace each key's value in place; append keys that are not present."""
@@ -50,18 +65,42 @@ def patch_keys(text: str, values: Mapping[str, str]) -> str:
 
 
 def declared_keys(text: str) -> set[str]:
-    """Every key an env file assigns, by the same rule `patch_keys` rewrites by.
+    """Every key an env file declares, by the widest rule a loader would use.
 
-    Deliberately the same `_ASSIGNMENT` match rather than a cheaper
-    `startswith`: `patch_keys` rewrites `KEY = value` in place, so a presence
-    test that did not see that line would call the key absent, let a default be
-    written, and leave the file with two assignments for one key. A commented
-    line is not an assignment, and an empty value is one - `REDIS_PASSWORD=`
-    means "no password", not "unconfigured".
+    `_DECLARATION`, not `_ASSIGNMENT`, and the asymmetry is the point rather
+    than an oversight. The two regexes answer two different questions:
+
+    - *Presence* decides whether a default is written at all, so it must be
+      generous: anything a dotenv loader treats as a declaration. A key this
+      function misses gets a default appended beside the line the developer
+      wrote, and phpdotenv takes the **last** assignment in a file - within
+      one file `ImmutableWriter::write` only refuses a name that is
+      `isExternallyDefined`, which is false once the name is in `$this->loaded`
+      (`ImmutableWriter.php:53-59` and `:106-109` in the kept `mxfeathorizon`
+      fixture), so immutability protects variables defined *before* the load
+      and not earlier lines of the same file. So the appended default wins:
+      `export QUEUE_CONNECTION=redis` plus an appended `QUEUE_CONNECTION=sync`
+      resolves to `sync`, which is exactly the Horizon regression `env.default`
+      exists to remove.
+    - *Rewriting* must be exact, which is why `patch_keys` keeps the narrow
+      `_ASSIGNMENT`: rewriting `export DB_HOST=prod` in place would have to
+      either reproduce the `export` prefix and the indent the developer chose
+      or silently drop them, and dropping `export` changes what a shell that
+      sources the file does. It does not have to: an *imposed* key whose only
+      declaration is a form `_ASSIGNMENT` misses is appended at the end of the
+      file instead, and by the same last-wins rule above the appended line is
+      the one that decides. So the pin holds; what it costs is one duplicate
+      line in the file, visible in the confirmation diff.
+
+    A key `patch_keys` cannot rewrite in place is therefore still declared and
+    must not receive a default. A commented line is not a declaration - an
+    indented one is not either, matching `Lines::isCommentOrWhitespace` - and
+    an empty value is one: `REDIS_PASSWORD=` means "no password", not
+    "unconfigured".
     """
     found: set[str] = set()
     for line in text.splitlines():
-        match = _ASSIGNMENT.match(line)
+        match = _DECLARATION.match(line)
         if match is not None:
             found.add(match.group("key"))
     return found

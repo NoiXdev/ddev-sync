@@ -387,6 +387,67 @@ def test_declared_keys_counts_an_empty_value_as_declared() -> None:
     assert declared_keys("REDIS_PASSWORD=\n") == {"REDIS_PASSWORD"}
 
 
+def test_declared_keys_sees_the_forms_a_dotenv_loader_accepts() -> None:
+    # Presence is deliberately wider than `patch_keys`' rewriting rule. Each
+    # form here is one phpdotenv's `EntryParser` reads as a declaration: a
+    # leading `export`, an indented name (both sides of the name are trimmed),
+    # and a name wrapped in matching quotes. Missing any of them lets a default
+    # be appended beside the project's own line - and phpdotenv takes the last
+    # assignment in a file, so the appended default would win.
+    text = (
+        "export QUEUE_CONNECTION=redis\n"
+        "  SESSION_DRIVER=redis\n"
+        '"CACHE_STORE"=redis\n'
+        "'MAIL_MAILER'=log\n"
+    )
+    assert declared_keys(text) == {
+        "QUEUE_CONNECTION",
+        "SESSION_DRIVER",
+        "CACHE_STORE",
+        "MAIL_MAILER",
+    }
+
+
+def test_declared_keys_ignores_an_indented_comment() -> None:
+    # `Lines::isCommentOrWhitespace` drops a line whose first non-blank
+    # character is `#`, so widening the presence test for indentation must not
+    # widen it to indented comments: such a key is undeclared and a default
+    # applies.
+    assert declared_keys("  # QUEUE_CONNECTION=redis\n") == set()
+
+
+def test_a_default_is_not_written_beside_an_export_declaration(tmp_path: Path) -> None:
+    # The end of the chain the regex exists for: the project declared the key
+    # in a form `patch_keys` cannot rewrite, so the step must write nothing at
+    # all rather than append a default that the loader would then prefer.
+    (tmp_path / ".env").write_text("export QUEUE_CONNECTION=redis\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={"file": [".env"], "strategy": "patch_keys", "default": {"QUEUE_CONNECTION": "sync"}},
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "export QUEUE_CONNECTION=redis\n"
+
+
+def test_an_imposed_key_beside_an_export_declaration_is_appended_and_wins(
+    tmp_path: Path,
+) -> None:
+    # The other half of the asymmetry, and why `_ASSIGNMENT` stays narrow: the
+    # `export` line is left exactly as the developer wrote it, the pin is
+    # appended at the end, and phpdotenv's last-wins rule within a file makes
+    # the appended line the one that decides. The pin costs a duplicate line,
+    # not its effect.
+    (tmp_path / ".env").write_text("export DB_HOST=prod.example.com\n", encoding="utf-8")
+    context = make_context(
+        tmp_path,
+        env={"file": [".env"], "strategy": "patch_keys", "set": {"DB_HOST": "ddev-acme-db"}},
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == (
+        "export DB_HOST=prod.example.com\nDB_HOST=ddev-acme-db\n"
+    )
+
+
 def test_a_default_is_written_when_the_key_is_absent(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
     context = make_context(
