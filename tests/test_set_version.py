@@ -1,0 +1,154 @@
+import json
+import stat
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from tools.set_version import REPO_ROOT, main, pep440, rewrite
+
+PYPROJECT = """\
+[project]
+name = "ddev-sync"
+version = "0.1.0"
+description = "unchanged"
+"""
+
+VERSION_JSON = '{\n  "version": "0.1.0"\n}\n'
+
+COMPOSE = """\
+services:
+  sync:
+    image: ${DDEV_SYNC_IMAGE:-noixdev/ddev-sync}:${DDEV_SYNC_VERSION:-0.1.0}
+"""
+
+SIDECAR = """\
+image="$(setting DDEV_SYNC_IMAGE noixdev/ddev-sync):$(setting DDEV_SYNC_VERSION 0.1.0)"
+"""
+
+
+def build_tree(root: Path) -> None:
+    """A miniature of the four files `set_version` rewrites."""
+    (root / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
+    (root / "version.json").write_text(VERSION_JSON, encoding="utf-8")
+    (root / "docker-compose.ddev-sync.yaml").write_text(COMPOSE, encoding="utf-8")
+    (root / "ddev-sync").mkdir()
+    (root / "ddev-sync" / "prepare-sidecar.sh").write_text(SIDECAR, encoding="utf-8")
+
+
+def test_it_writes_the_version_into_every_target(tmp_path: Path) -> None:
+    build_tree(tmp_path)
+
+    changed = rewrite("0.2.0", root=tmp_path)
+
+    assert sorted(path.name for path in changed) == [
+        "docker-compose.ddev-sync.yaml",
+        "prepare-sidecar.sh",
+        "pyproject.toml",
+        "version.json",
+    ]
+    assert 'version = "0.2.0"' in (tmp_path / "pyproject.toml").read_text()
+    assert json.loads((tmp_path / "version.json").read_text())["version"] == "0.2.0"
+    assert "DDEV_SYNC_VERSION:-0.2.0}" in (tmp_path / "docker-compose.ddev-sync.yaml").read_text()
+    assert "DDEV_SYNC_VERSION 0.2.0)" in (tmp_path / "ddev-sync" / "prepare-sidecar.sh").read_text()
+
+
+def test_a_prerelease_lands_as_semver_everywhere_but_pep440_in_pyproject(
+    tmp_path: Path,
+) -> None:
+    build_tree(tmp_path)
+
+    rewrite("0.1.0-rc.1", root=tmp_path)
+
+    # pyproject feeds importlib.metadata, which only ever reports the
+    # normalised form, so the file holds that form from the start.
+    assert 'version = "0.1.0rc1"' in (tmp_path / "pyproject.toml").read_text()
+    # The other three name an image tag and a release, where the hyphen stays.
+    assert json.loads((tmp_path / "version.json").read_text())["version"] == "0.1.0-rc.1"
+    assert (
+        "DDEV_SYNC_VERSION:-0.1.0-rc.1}" in (tmp_path / "docker-compose.ddev-sync.yaml").read_text()
+    )
+    assert (
+        "DDEV_SYNC_VERSION 0.1.0-rc.1)"
+        in (tmp_path / "ddev-sync" / "prepare-sidecar.sh").read_text()
+    )
+
+
+def test_pep440_leaves_a_final_version_alone() -> None:
+    assert pep440("1.2.3") == "1.2.3"
+    assert pep440("0.1.0-rc.1") == "0.1.0rc1"
+    assert pep440("0.1.0-beta.12") == "0.1.0beta12"
+
+
+def test_running_it_twice_changes_nothing_the_second_time(tmp_path: Path) -> None:
+    build_tree(tmp_path)
+
+    assert rewrite("0.3.0", root=tmp_path) != []
+    assert rewrite("0.3.0", root=tmp_path) == []
+
+
+@pytest.mark.parametrize("bad", ["", "1.2", "v1.2.3", "1.2.3-rc", "1.2.3-rc.1-x", "latest"])
+def test_it_refuses_anything_that_is_not_a_version(tmp_path: Path, bad: str) -> None:
+    build_tree(tmp_path)
+    before = (tmp_path / "pyproject.toml").read_text()
+
+    with pytest.raises(ValueError, match="is not a version"):
+        rewrite(bad, root=tmp_path)
+
+    # Refused before anything was written: a partial rewrite is the one
+    # outcome worse than no rewrite.
+    assert (tmp_path / "pyproject.toml").read_text() == before
+
+
+def test_it_refuses_a_file_whose_pattern_matches_nothing(tmp_path: Path) -> None:
+    build_tree(tmp_path)
+    (tmp_path / "version.json").write_text('{"nothing": "here"}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"version\.json: expected exactly one"):
+        rewrite("0.4.0", root=tmp_path)
+
+
+def test_it_refuses_a_file_whose_pattern_matches_twice(tmp_path: Path) -> None:
+    build_tree(tmp_path)
+    compose = tmp_path / "docker-compose.ddev-sync.yaml"
+    compose.write_text(compose.read_text() + compose.read_text(), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="expected exactly one version to rewrite, found 2"):
+        rewrite("0.4.0", root=tmp_path)
+
+
+def test_it_refuses_a_missing_file(tmp_path: Path) -> None:
+    build_tree(tmp_path)
+    (tmp_path / "version.json").unlink()
+
+    with pytest.raises(FileNotFoundError, match=r"version\.json"):
+        rewrite("0.4.0", root=tmp_path)
+
+
+def test_main_reports_wrong_usage(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main([]) == 2
+    assert main(["1.0.0", "2.0.0"]) == 2
+    assert "usage: tools/set_version.py" in capsys.readouterr().err
+
+
+def test_main_reports_a_refused_version(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["nonsense"]) == 1
+    assert "is not a version" in capsys.readouterr().err
+
+
+def test_it_finds_its_targets_from_any_working_directory(tmp_path: Path) -> None:
+    script = REPO_ROOT / "tools" / "set_version.py"
+    assert script.stat().st_mode & stat.S_IXUSR, "the release workflow runs it directly"
+
+    # A refused version proves the script started, parsed its argument and
+    # reached its own check - from a directory that is not the repository.
+    result = subprocess.run(
+        [str(script), "nonsense"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "is not a version" in result.stderr
