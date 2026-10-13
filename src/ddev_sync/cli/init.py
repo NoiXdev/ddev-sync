@@ -365,19 +365,22 @@ def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:
     """The configured candidates when none exists; `None` when there is no question.
 
     The conditions for "there is no env step" are `engine/plan.py::_env`'s
-    own, read from the same merged configuration, so this question appears
-    exactly when that step would: the strategy is not `none`, and `env.set` or
-    `env.default` has something in it - a non-mapping `env.set` counts as
-    empty, as it does there. A non-mapping `env.default` counts as empty here
-    too, although `_env` refuses it: this runs to ask a question, and the plan
-    that follows reports the mistake before anything is written. The file is matched the way
-    `operations/env.py::_find_env_file` matches it, against real directory
+    own, read from the same merged configuration: the strategy is not `none`,
+    and `env.set` or `env.default` has something in it, a non-mapping `env.set`
+    counting as empty as it does there. So the question appears when that step
+    would, with one exception. `_env` refuses a non-mapping `env.default`; this
+    reads it as empty, so for that input a plan raises where this question is
+    not asked (or is asked on the strength of `env.set` alone). Init plans
+    nothing; the mistake is reported by the first plan a
+    sync or dry-run builds, before anything is written. The file is matched the
+    way `operations/env.py::_find_env_file` matches it, against real directory
     entries rather than a constructed path, because `is_file()` folds case on
-    a case-insensitive filesystem. The guards are `_env`'s too, raising the
+    a case-insensitive filesystem. Two guards are `_env`'s too, raising the
     same sentences: a hand-edited `env.file` that is neither a name nor a list
     of names would otherwise reach the comprehension below as a raw
     `TypeError`, and `env.default` under `append_block` is a combination no
-    step can honour, which `_env` refuses before it looks at any file.
+    step can honour, which `_env` refuses before it looks at any file. The
+    malformed-`env.default` guard is the one `_env` has that this lacks.
     """
     node = resolution.merged.data.get("env", {})
     settings = node if isinstance(node, dict) else {}

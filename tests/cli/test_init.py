@@ -1420,6 +1420,53 @@ def test_init_refuses_env_default_under_append_block_as_the_plan_does(
     assert "env.default cannot be used with strategy 'append_block'" in capsys.readouterr().err
 
 
+def test_init_reads_a_non_mapping_env_default_as_empty_where_the_plan_refuses_it(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `engine/plan.py::_env` raises for a non-mapping `env.default`; init only
+    # decides whether to ask a question and does not plan, so it must not. With
+    # a `set` beside it the step exists and the question is asked once, exactly
+    # as if the default were absent - and it is the sync's own plan that reports
+    # the mistake, not this.
+    project_file.write_text(
+        "version: 1\nenv:\n  strategy: patch_keys\n  file: [.env]\n"
+        '  set:\n    DB_HOST: db\n  default: "A=1"\n',
+        encoding="utf-8",
+    )
+    asked: list[list[str]] = []
+
+    def answer(looked_for: list[str], present: list[str]) -> str:
+        asked.append(looked_for)
+        return ENV_FILE_NONE
+
+    monkeypatch.setattr(init, "choose_env_file", answer)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    assert asked == [[".env"]]
+
+
+def test_init_asks_nothing_for_a_non_mapping_env_default_alone(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Nothing is imposed and the default reads as empty, so there is no env
+    # step for init to ask about.
+    project_file.write_text(
+        'version: 1\nenv:\n  strategy: patch_keys\n  file: [.env]\n  default: "A=1"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(init, "choose_env_file", _never_called)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+
+
 def test_no_terminal_at_the_env_file_question_stops_init_with_nothing_written(
     project: Path,
     project_file: Path,

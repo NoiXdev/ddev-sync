@@ -787,6 +787,28 @@ def test_a_bare_env_default_is_nothing_written_rather_than_an_error() -> None:
     assert all(step.kind is not StepKind.ENV for step in plan.steps)
 
 
+def test_a_bare_env_default_in_a_later_layer_drops_the_earlier_layers_defaults() -> None:
+    # Pins what is, not what should be: `merge_layers` lets a null replace the
+    # mapping beneath it, so a project's bare `default:` silently discards the
+    # profile's own defaults. The dry-run is what makes it survivable - the
+    # `if absent` group is gone from the line - and that is what is asserted.
+    profile_layer = LayerDoc(
+        "profile:laravel",
+        {"env": {"file": [".env"], "set": {"A": "1"}, "default": {"SESSION_DRIVER": "file"}}},
+    )
+    project_layer = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"default": None}})
+    kept = plan_for(["db"], user_layers=[profile_layer])
+    dropped = plan_for(["db"], user_layers=[profile_layer, project_layer])
+
+    def detail(plan: Plan) -> str:
+        return next(step.detail for step in plan.steps if step.kind is StepKind.ENV)
+
+    assert (
+        detail(kept) == "patch_keys: 1 key(s) + 1 if absent -> .env (A; if absent: SESSION_DRIVER)"
+    )
+    assert detail(dropped) == "patch_keys: 1 key(s) -> .env (A)"
+
+
 def test_a_non_mapping_env_default_is_not_an_error_when_the_strategy_is_none() -> None:
     # `none` writes nothing, so a default beside it has nothing to be wrong about.
     extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"strategy": "none", "default": "x"}})

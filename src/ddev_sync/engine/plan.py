@@ -436,6 +436,10 @@ class _Builder:
         # that it cannot override the discrete `DB_*` keys). A key whose value
         # is anything else, `MAIL_URL`'s local DSN included, stays in the plain
         # list: naming it here would claim an emptying that does not happen.
+        # The predicate reads the value as written in the configuration, while
+        # `operations/env.py` writes it after placeholder expansion, so a value
+        # that only expands to nothing would be listed as set. No shipped
+        # profile has one; the limit is recorded here rather than closed.
         emptied = sorted(str(key) for key, value in imposed.items() if str(value) == "")
         set_keys = sorted(str(key) for key in imposed if str(key) not in emptied)
         # `set` wins a key declared in both, so such a default is never written
