@@ -120,9 +120,9 @@ default applies only when no line declares the key at all.
 
 ### 4. The rule for which mapping a key belongs in
 
-> Put a key in `set` when a foreign value could reach outside the machine, or
-> could contradict what the sync has just done. Put it in `default` when it is
-> a local preference whose wrong value stays on the machine.
+> **Impose a key when the sync's own work makes the project's value wrong or
+> dangerous. Default a key when the project's value is no more wrong after the
+> sync than it was before.**
 
 "Driver versus connection target" does not survive contact with the list:
 `MAIL_MAILER: smtp` is a driver choice and must stay imposed, because a local
@@ -243,9 +243,31 @@ Measured against the tree at `73363a9`, so a plan can start from it.
   `SESSION_DRIVER=dynamodb` have the same shape, and so does a memcached
   pointed off the machine - drivers whose target is a set of credentials rather
   than a host, which the `REDIS_HOST`-style pin cannot cover. This is an
-  accepted risk of defaulting those keys, and it sits uneasily with decision
-  4's "wrong value stays on the machine"; the decision is unchanged and is the
-  user's, but the cost is real and is now stated in the profile as well.
+  accepted risk of defaulting those keys, and it is now stated in the profile
+  as well.
+
+  *Correction to decision 4:* the same review found that decision 4's rule, as
+  first written ("could reach outside the machine ... a local preference whose
+  wrong value stays on the machine"), was false for the three keys it was
+  written to justify, so its wording was replaced. The assignment of keys is
+  unchanged; the rule now says what actually separates them - whether the
+  sync's own work is what makes the value wrong. `DB_*`, `APP_URL`,
+  `MAIL_*`, `APP_ENV` and `REDIS_HOST` are imposed because the sync imports a
+  database, sets up the local site, imports real addresses into a machine that
+  can send mail, and runs commands that consult `APP_ENV` and flush the
+  configured cache (`optimize:clear` runs `cache:clear`; checked against
+  laravel/framework v12.47.0, whose `RedisStore::flush()` is a bare `flushdb()`
+  and whose `MemcachedStore::flush()` flushes the whole server). `REDIS_HOST` is therefore imposed because a kept
+  `CACHE_STORE=redis` would otherwise have the sync flush production's Redis.
+  `QUEUE_CONNECTION` and `SESSION_DRIVER` are defaulted because an `sqs` queue
+  or a `dynamodb` session store was production's before the sync and still is.
+  Two cases do not fit cleanly and are recorded rather than hidden:
+  `APP_DEBUG` is imposed although the sync does not make it wrong (decision 5
+  keeps it out of scope), and `CACHE_STORE` is defaulted although the sync's
+  own `optimize:clear` acts on it - a kept `memcached` pointed off the machine
+  is flushed by the sync, and a kept `dynamodb` makes that step fail (its
+  `flush()` throws) rather than pass silently. Whether to impose `CACHE_STORE`
+  in those cases is the user's decision and is not made here.
 - **An empty-value `.env`.** `QUEUE_CONNECTION=` keeps its empty value, where
   `patch_keys` previously replaced it. Laravel resolves that to an unknown
   connection and errors. Decision 3 accepts this: a written line is a decision,

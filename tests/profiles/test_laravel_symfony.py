@@ -145,11 +145,11 @@ def test_symfony_user_table_is_overridable(tmp_path: Path) -> None:
 
 
 def test_the_driver_choices_are_defaults_and_the_targets_are_imposed() -> None:
-    # The rule the spec settles on: impose a key when a foreign value could
-    # reach outside the machine or contradict what the sync just did; default
-    # it when a wrong value stays local. MAIL_MAILER is a driver choice and
-    # still imposed, because a local app holding freshly imported production
-    # addresses must not send real mail.
+    # The rule the spec settles on: impose a key when the sync's own work makes
+    # the project's value wrong or dangerous; default it when the value is no
+    # more wrong after the sync than before. MAIL_MAILER is a driver choice and
+    # still imposed, because the sync just put production addresses on a
+    # machine that must not send real mail.
     env = REGISTRY.resolve("laravel", None).data["env"]
     assert env["default"] == {
         "QUEUE_CONNECTION": "sync",
