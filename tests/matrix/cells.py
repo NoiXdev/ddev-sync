@@ -393,6 +393,18 @@ CELLS: tuple[Cell, ...] = (
                 kind="imposed",
                 contrary="mysql://acme:s3cret@db.production.invalid:3306/acme_prod",
             ),
+            # The fourth URL family, measured the same way and with the one
+            # value that is not empty: `MailManager::getConfig` guards on
+            # `isset`, so an empty MAIL_URL still enters the parse branch and
+            # leaves `transport` null. A local DSN is what neutralises the
+            # production relay the recipe writes, and reading it back is what
+            # says the three MAIL_* pins are not decorative.
+            EnvMarker(
+                key="MAIL_URL",
+                expected="smtp://localhost:1025",
+                kind="imposed",
+                contrary="smtp://apikey:s3cret@smtp.production.invalid:587",
+            ),
             # The project's own `env: set:` names MAIL_PORT, which the profile
             # also imposes (as 1025), so the project's value must win - and
             # MAIL_HOST, which the profile imposes and the project does not
@@ -400,7 +412,10 @@ CELLS: tuple[Cell, ...] = (
             # evidence that the `env` mapping merges per key; MAIL_PORT alone
             # would also pass if the profile had stopped writing it. Nothing
             # in this cell sends mail, so the key cannot touch anything else
-            # it asserts.
+            # it asserts. The claim is about the line in the file and not about
+            # where mail goes: the imposed MAIL_URL above carries its own port,
+            # which Laravel merges over this one, so a project wanting another
+            # local port overrides both keys. That is stated in the profile.
             EnvMarker(key="MAIL_PORT", expected="2525", kind="overridden"),
             EnvMarker(key="MAIL_HOST", expected="localhost", kind="imposed"),
             # Imposed, but not evidence that the step ran: the recipe writes

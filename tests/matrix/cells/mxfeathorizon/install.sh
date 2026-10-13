@@ -62,13 +62,18 @@ composer create-project --no-interaction --prefer-dist laravel/laravel .
 # the mechanism is proven by `QUEUE_CONNECTION` above, where an imposed key
 # would have produced `sync`.
 #
-# The three URL keys (`REDIS_URL`, `DB_URL`, `DATABASE_URL`) are appended
-# further down, after the install's artisan calls, with production-like values.
-# The profile imposes each as empty, and the env test reads them back empty,
-# because a non-empty URL is `array_merge`d over every discrete host, port,
-# user and password key beside it and would send a synced project to
-# production's Redis or database whatever those pins say. They cannot sit in
-# this file: `migrate` below would read `DB_URL` and connect to the remote host.
+# The four URL keys (`REDIS_URL`, `DB_URL`, `DATABASE_URL`, `MAIL_URL`) are
+# appended further down, after the install's artisan calls, with
+# production-like values. The profile imposes the first three as empty and the
+# env test reads them back empty, because a non-empty URL is `array_merge`d
+# over every discrete host, port, user and password key beside it and would
+# send a synced project to production's Redis or database whatever those pins
+# say. The first three cannot sit in this file: `migrate` below would read
+# `DB_URL` and connect to the remote host. `MAIL_URL` is appended with them
+# because it belongs to the same family, not because anything above reads it -
+# and it is imposed as a local DSN rather than emptied, because the guard that
+# reads it is `isset` and an empty value would leave the mail transport null.
+# The env test reads it back as that DSN.
 cat > .env <<'ENV'
 APP_ENV=local
 APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
@@ -111,11 +116,14 @@ php artisan make:job MatrixMarkerJob --no-interaction
 
 # Production-like and unmistakably remote (`.invalid` never resolves), so a
 # reader of the kept tree sees what the sync neutralised. Appended only now:
-# every artisan call above that touches a database has already run.
+# every artisan call above that touches a database has already run. The
+# MAIL_URL is the shape a real production .env carries - an API key as the
+# username against a hosted relay - and no mail is sent here either way.
 cat >> .env <<'ENV'
 REDIS_URL=redis://:s3cret@redis.production.invalid:6379
 DB_URL=mysql://acme:s3cret@db.production.invalid:3306/acme_prod
 DATABASE_URL=mysql://acme:s3cret@db.production.invalid:3306/acme_prod
+MAIL_URL=smtp://apikey:s3cret@smtp.production.invalid:587
 ENV
 
 composer show laravel/framework | grep -E '^(name|versions) '

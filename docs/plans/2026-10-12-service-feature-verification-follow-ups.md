@@ -273,6 +273,35 @@ measured rather than argued: the `mxfeathorizon` recipe appends
 `mysql://acme:s3cret@db.production.invalid:3306/acme_prod` URLs after its own
 artisan calls, and the env test reads all three back empty.
 
+**The fourth family, found by the whole-branch review: `MAIL_URL`.** The fix
+above was written against `config/database.php` and stopped there, so
+`config/mail.php:43` — `'url' => env('MAIL_URL')` — went unread, and a `.env`
+carrying `MAIL_URL=smtp://apikey:…@smtp.sendgrid.net:587` kept production's
+relay through a sync while `MAIL_MAILER`, `MAIL_HOST` and `MAIL_PORT`, pinned
+so mail cannot leave the machine, decided nothing. The lesson this branch
+recorded — *read the framework's own config for the keys that feed the value,
+not the profile's list for the keys it happens to name* — had been applied to
+one config file, and **"the framework's own config" is plural**: a key family
+is only closed once every shipped `config/*.php` that reads a URL has been
+looked at. The stock skeleton has exactly four such keys (`DB_URL`,
+`REDIS_URL`, `MAIL_URL` and `AWS_URL`, which names a public base URL for the
+`s3` disk rather than a credential path), plus the pinned `APP_URL` and
+`LOG_SLACK_WEBHOOK_URL`.
+
+`MAIL_URL` is now imposed as the local DSN `smtp://localhost:1025`, and the
+difference from the other three is load-bearing rather than a style choice:
+`Mail\MailManager::getConfig` guards on `isset($config['url'])`, not on
+truthiness, so an empty value still enters the parse branch, and
+`$config['transport'] = Arr::pull($config, 'driver')` then leaves `transport`
+null — `createSymfonyTransport` throws `Unsupported mail transport []`.
+`MAIL_URL: ""` would therefore have broken mail on every Laravel 11+ project
+instead of being inert. The cost of the DSN: the host and port parsed from it
+outrank `MAIL_HOST` and `MAIL_PORT`, so a project needing another local mail
+port overrides `MAIL_URL` beside `MAIL_PORT`. Measured the same way as the
+other three — the `mxfeathorizon` recipe appends
+`smtp://apikey:s3cret@smtp.production.invalid:587` and the env test reads the
+local DSN back.
+
 **Three gaps the fix does not cover.** None is observed as a failure; each is a
 statement about reach, and none of them is exercised by any cell.
 

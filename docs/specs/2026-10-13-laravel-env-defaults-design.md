@@ -22,8 +22,17 @@ must impose, and adds the one declaration needed to express the difference.
 
 Success is: a Laravel project that has configured `QUEUE_CONNECTION=redis`
 still has it after a sync; a project that configures nothing still gets a local
-setup that works; and a project whose `.env` came from production cannot reach
-production's Redis from the developer's machine.
+setup that works; and a project whose `.env` came from production does not
+reach production's Redis **through the keys this profile pins** — which is
+less than "cannot reach production's Redis", and deliberately so. The
+follow-ups file's item 10 names three ways it still can, each written on this
+branch: a project whose own `config/` reads key names the profile does not
+name, a real environment variable from `.ddev/config.yaml`'s `web_environment`
+(which beats a `.env` line outright), and the host keys of a kept
+non-Redis driver. The profile comment adds a fourth, a user-renamed
+`REDIS_HOSTNAME`. The Risks section below and that item are the honest
+statements; this sentence is the one a reader takes away, so it carries the
+same qualification rather than an absolute the branch documents as false.
 
 ## What was measured
 
@@ -185,6 +194,7 @@ That is the same reason the sanitize rules exist.
 | `APP_URL`, `DB_CONNECTION`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | `set` | The database the sync has just imported; `DB_CONNECTION: mysql` is a consequence of the import, not a choice |
 | `MAIL_MAILER`, `MAIL_HOST`, `MAIL_PORT` | `set` | Mail must not leave the machine |
 | `REDIS_URL`, `DB_URL`, `DATABASE_URL` (new) | `set`, empty | A non-empty URL key outranks every discrete key beside it (`ConfigurationUrlParser::parseConfiguration` array-merges the parsed URL over host, port, database, username and password; an empty value is ignored), so without these the `DB_*` and `REDIS_HOST` pins decide nothing for a project whose `.env` carries a production URL. `laravel/laravel` reads `REDIS_URL` at 10.x to 12.x, and `DATABASE_URL` at 10.x where 11.x and 12.x read `DB_URL`. Found by the review of Task 3, not by the design |
+| `MAIL_URL` (new) | `set`, a local DSN | The same mechanism one family further, and the one URL key that must not be empty. `config/mail.php:43` gives the `smtp` mailer `'url' => env('MAIL_URL')`, and `Mail\MailManager::getConfig` guards on `isset($config['url'])` rather than on truthiness: an empty value still enters the branch, `parseConfiguration` returns the config unchanged, and `$config['transport'] = Arr::pull($config, 'driver')` then leaves `transport` null, so `createSymfonyTransport` throws `Unsupported mail transport []`. The imposition is therefore `smtp://localhost:1025`, pointing where `MAIL_HOST` and `MAIL_PORT` already point; without it a production `MAIL_URL` array-merges its relay, credentials and port over all three and mail leaves a machine that has just imported real customer addresses. Its cost: the URL's host and port outrank `MAIL_HOST` and `MAIL_PORT`, so a project needing another local mail port overrides this key beside `MAIL_PORT`. Found by the whole-branch review, not by the design or by the review that found the three above |
 | `REDIS_HOST` (new) | `set` | `ddev-${DDEV_SITENAME}-redis`, the same template the profile already uses for `DB_HOST` |
 | `QUEUE_CONNECTION`, `SESSION_DRIVER` | `default` | Nothing the sync runs acts on either; the project's value is no more wrong after the sync than before, and `QUEUE_CONNECTION` is the measured harm |
 | `CACHE_STORE`, `CACHE_DRIVER` | `set` | The cache key is `CACHE_STORE` from Laravel 11 and `CACHE_DRIVER` before it (`laravel/laravel`'s `.env.example` at 10.x, 11.x, 12.x), so both are imposed. The sync's own `optimize:clear` runs `cache:clear` against the configured store: `MemcachedStore::flush()` flushes a whole server, `DynamoDbStore::flush()` throws, `RedisStore::flush()` is a bare `flushdb()`. Moved back to `set` after the key-by-key check of decision 4's reworded rule (see Risks) |
@@ -332,16 +342,21 @@ Measured against the tree at `73363a9`, so a plan can start from it.
   flag exists on Laravel 11 and below has not been checked.
 
   *The rule does not cover every imposed key, and the list is not a count to
-  trust:* three imposed keys sit outside its wording. `APP_DEBUG` is imposed
+  trust - including in this paragraph, which named one until the whole-branch
+  review found it had smuggled a count back into the sentence warning against
+  counts.* Keys outside the rule's wording, as many as have been noticed:
+  `APP_DEBUG` is imposed
   although the sync does not make it wrong (decision 5 keeps it out of scope).
   `APP_ENV`'s documented ground runs the other way round - the project's value
   breaks the sync's own commands, rather than the sync making the value wrong.
   And `CACHE_DRIVER` is, on Laravel 11 and later, a key nothing reads, imposed
-  deliberately for the versions that do. A fourth group, the URL keys, fits the
-  rule (the sync's import is what the URL would override) but was missed by
+  deliberately for the versions that do. The URL keys fit the
+  rule (the sync's import is what the URL would override) but were missed by
   the design and found by review: a non-empty `REDIS_URL` or `DB_URL` defeated
   the discrete pins, and a kept `QUEUE_CONNECTION=redis` made that reach
-  production's Redis, which this change had made possible.
+  production's Redis, which this change had made possible. `MAIL_URL` was
+  missed again, by that same review, and found by the next one - which is the
+  argument for not writing a number here.
 - **An empty-value `.env`.** `QUEUE_CONNECTION=` keeps its empty value, where
   `patch_keys` previously replaced it. Laravel resolves that to an unknown
   connection and errors. Decision 3 accepts this: a written line is a decision,

@@ -70,6 +70,36 @@ env:
     REDIS_URL: ""
     DB_URL: ""
     DATABASE_URL: ""
+    # The fourth URL family, and the one place where empty is the wrong value.
+    # DO NOT "complete" this group by writing MAIL_URL: "" - the guard that
+    # reads it is `isset`, not falsy, so an empty string still enters the
+    # branch. Mail\MailManager::getConfig is
+    #   if (isset($config['url'])) {
+    #       $config = array_merge($config, (new ConfigurationUrlParser)
+    #           ->parseConfiguration($config));
+    #       $config['transport'] = Arr::pull($config, 'driver');
+    #   }
+    # and with an empty url parseConfiguration returns the config unchanged, so
+    # the pull finds no `driver` and leaves `transport` null -
+    # createSymfonyTransport then throws "Unsupported mail transport []" and the
+    # project cannot send mail at all. The three keys above are safe empty only
+    # because their readers go through parseConfiguration alone, which returns
+    # early on a falsy url; this one does not. So the imposition is a local DSN
+    # instead, pointing where MAIL_HOST and MAIL_PORT above already point.
+    # Without it, a .env carrying MAIL_URL=smtp://apikey:...@smtp.sendgrid.net
+    # keeps production's relay through a sync - array_merged over host, port,
+    # username and password - and the three MAIL_* pins decide nothing while a
+    # machine that just imported real customer addresses can send mail. Read
+    # from config/mail.php:43 ('url' => env('MAIL_URL')) and from
+    # MailManager.php:167-184 and :527-543 at laravel/framework v13.35.0;
+    # nothing in this repository establishes it. The cost: the host and the port
+    # parsed from this URL outrank MAIL_HOST and MAIL_PORT, so a project that
+    # needs another local mail port overrides this key beside MAIL_PORT rather
+    # than MAIL_PORT alone. The port is spelled out rather than left to
+    # MAIL_PORT (which getPrimaryOptions' array_filter would allow, by dropping
+    # an absent component) because that filtering was only read at v13.35.0,
+    # while an explicit port resolves the same way whatever the parser does.
+    MAIL_URL: "smtp://localhost:1025"
     # Imposed although it is a driver choice, because the sync acts on the
     # store: the setup step `optimize:clear` runs `cache:clear` against
     # whatever store is configured. MemcachedStore::flush() flushes the whole

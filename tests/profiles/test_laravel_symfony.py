@@ -166,6 +166,13 @@ def test_the_driver_choices_are_defaults_and_the_targets_are_imposed() -> None:
     # ignored by Laravel's ConfigurationUrlParser).
     for url_key in ("REDIS_URL", "DB_URL", "DATABASE_URL"):
         assert env["set"][url_key] == "", f"{url_key} must be imposed empty"
+    # MAIL_URL is the one URL key that must not be empty: MailManager::getConfig
+    # guards on `isset`, so an empty value still enters the branch, and the
+    # `driver` pull then leaves `transport` null - "Unsupported mail transport
+    # []". A local DSN is the imposition that neutralises a production relay.
+    assert env["set"]["MAIL_URL"] == "smtp://localhost:1025", (
+        "MAIL_URL must be a local DSN; empty would break mail outright"
+    )
     assert env["set"]["REDIS_HOST"] == "ddev-${DDEV_SITENAME}-redis"
     for key in ("APP_ENV", "APP_URL", "DB_HOST", "DB_DATABASE", "MAIL_MAILER", "MAIL_HOST"):
         assert key in env["set"], f"{key} must stay imposed"
@@ -188,4 +195,25 @@ def test_a_production_url_in_the_env_file_is_emptied_not_kept() -> None:
         'REDIS_URL=""',
         "DB_URL=",
         "DATABASE_URL=",
+    ]
+
+
+def test_a_production_mail_url_is_replaced_by_a_local_dsn_not_emptied() -> None:
+    # The fourth URL family, and the one that cannot be blanked. A production
+    # MAIL_URL is array_merged over MAIL_HOST, MAIL_PORT and the credentials,
+    # so a machine that has just imported real customer addresses would send
+    # through production's relay with the three MAIL_* pins deciding nothing.
+    # Emptying it is not the fix: MailManager::getConfig guards on `isset`, an
+    # empty string enters the branch, parseConfiguration returns the config
+    # unchanged and `Arr::pull($config, 'driver')` leaves `transport` null, so
+    # createSymfonyTransport throws "Unsupported mail transport []". This test
+    # exists beside the one above rather than inside it because the two make
+    # opposite claims about what the right imposed value is.
+    env = REGISTRY.resolve("laravel", None).data["env"]
+    production = (
+        "MAIL_URL=smtp://apikey:s3cret@smtp.sendgrid.net:587\nMAIL_HOST=smtp.sendgrid.net\n"
+    )
+    assert patch_keys(production, env["set"]).splitlines()[:2] == [
+        "MAIL_URL=smtp://localhost:1025",
+        "MAIL_HOST=localhost",
     ]
