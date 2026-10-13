@@ -103,7 +103,7 @@ has a test in the task that owns the code.
 | `tests/test_version_coherence.py` (new) | Fail when the real files disagree |
 | `.github/workflows/release.yaml` (new) | The caller: gates, matrix, shared release, per-arch smoke |
 | `.github/workflows/ci.yaml` (modify) | Gains a `workflow_call` trigger so `release.yaml` can gate on it |
-| `pyproject.toml:7`, `version.json`, `docker-compose.ddev-sync.yaml:17`, `ddev-sync/prepare-sidecar.sh:230` (modify) | Carry the version; rewritten by the script |
+| `pyproject.toml:7`, `version.json`, `docker-compose.ddev-sync.yaml:17`, `ddev-sync/prepare-sidecar.sh:230`, `uv.lock` (modify) | Carry the version; rewritten by the script |
 | `README.md:15-40`, `install.yaml:96-112`, `ddev-sync/prepare-sidecar.sh:256`, `profiles/VERIFIED.md` (modify) | Stop saying there is no published image; record what arm64 means |
 
 **github-workflows** (branch `feat/docker-release-workflow`, based on `chore/pin-actions`)
@@ -1599,10 +1599,17 @@ not just the sidecar.
 
 - [ ] **Step 2: Record what arm64 means, in the README paragraph that already records what was exercised**
 
-`README.md:74-78` currently ends with "…Linux, Colima, OrbStack and rootless
-Docker have not been tried, and no real sync against a real remote host has yet
-been run through the add-on. The CI workflow that tests the add-on has not run
-yet either."
+Find the paragraph by its text, not by a line number — Step 1 has just changed
+how long the Status section is, so every number below it has moved:
+
+```bash
+grep -n "Colima, OrbStack and rootless" README.md
+```
+
+That paragraph ends with "…Linux, Colima, OrbStack and rootless Docker have
+not been tried, and no real sync against a real remote host has yet been run
+through the add-on. The CI workflow that tests the add-on has not run yet
+either."
 
 Append one sentence to that paragraph:
 

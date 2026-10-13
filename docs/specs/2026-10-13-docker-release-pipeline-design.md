@@ -286,11 +286,18 @@ what decision 10 exists for.
 
 ### 10. Version coherence is a test, not a comment
 
-`tests/test_version_coherence.py` reads all four machine-readable places and
+`tests/test_version_coherence.py` reads all five machine-readable places and
 fails unless they agree: `pyproject.toml:7`, `version.json`,
-the compose default in `docker-compose.ddev-sync.yaml:17`, and the `setting`
-default in `ddev-sync/prepare-sidecar.sh:230`. It runs in the ordinary gate, so
-a hand edit to one of them is red before it is pushed.
+the compose default in `docker-compose.ddev-sync.yaml:17`, the `setting`
+default in `ddev-sync/prepare-sidecar.sh:230`, and the `ddev-sync` package's
+own `version` in `uv.lock`. It runs in the ordinary gate, so a hand edit to one
+of them is red before it is pushed.
+
+`uv.lock` was found during implementation, not during design: it records the
+root project's version too, and `uv run` rewrites it on sight. Left out, every
+release would be followed by the next `uv run` producing a dirty lock file.
+Like `pyproject.toml` it carries the PEP 440 form, because uv normalises what
+it reads from `pyproject.toml`.
 
 `tools/set_version.py` fails loudly when a pattern it is asked to rewrite does
 not match exactly once. A regex that silently matched zero places is how this
