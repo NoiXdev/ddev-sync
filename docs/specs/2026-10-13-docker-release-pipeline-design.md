@@ -486,8 +486,10 @@ twice). `tests/test_version_coherence.py` reads the four real files, following
 ## What arm64 means here
 
 Verified on arm64 after this change: the image starts with no network, carries
-every binary the engine invokes, resolves its profiles from the installed path,
-and reports the released version.
+every binary the engine runs locally, resolves its profiles from the installed
+path, and reports the released version. "Locally" is the operative word:
+`mysqldump` runs on the remote host over ssh, so the image carrying it is
+incidental.
 
 Not verified on arm64: a sync. No cell runs there. This is recorded in
 `README.md` and under *Known limitations* in `profiles/VERIFIED.md`, in those
