@@ -1377,6 +1377,49 @@ def test_a_non_iterable_env_file_setting_fails_the_way_the_engine_would(
     assert "7" in error
 
 
+def test_init_asks_for_an_env_file_when_only_env_default_is_configured(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `_env` plans a step for a block carrying only `default`, so the question
+    # about its file must be asked exactly as it is for `set`.
+    project_file.write_text(
+        "version: 1\nenv:\n  strategy: patch_keys\n  file: [.env]\n"
+        "  default:\n    CACHE_STORE: file\n",
+        encoding="utf-8",
+    )
+    asked: list[list[str]] = []
+
+    def answer(looked_for: list[str], present: list[str]) -> str:
+        asked.append(looked_for)
+        return ENV_FILE_NONE
+
+    monkeypatch.setattr(init, "choose_env_file", answer)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    invoke(project, tmp_path)
+    assert asked == [[".env"]]
+
+
+def test_init_refuses_env_default_under_append_block_as_the_plan_does(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_file.write_text(
+        "version: 1\nenv:\n  strategy: append_block\n  default:\n    CACHE_STORE: file\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(init, "choose_env_file", _never_called)
+    _answer_the_target_questions(monkeypatch)
+    assert invoke(project, tmp_path) == 1
+    assert "env.default cannot be used with strategy 'append_block'" in capsys.readouterr().err
+
+
 def test_no_terminal_at_the_env_file_question_stops_init_with_nothing_written(
     project: Path,
     project_file: Path,

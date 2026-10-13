@@ -630,6 +630,109 @@ def test_an_env_block_with_nothing_to_set_emits_no_step() -> None:
     assert all(step.kind is not StepKind.ENV for step in plan.steps)
 
 
+def env_detail(env: dict[str, Any]) -> str:
+    plan = plan_for(["db"], user_layers=[LayerDoc(".ddev/ddev-sync.yaml", {"env": env})])
+    return next(entry.detail for entry in plan.steps if entry.kind is StepKind.ENV)
+
+
+def test_a_profile_with_only_env_defaults_still_plans_an_env_step() -> None:
+    # Decision 6 of the spec made the operation run for a default-only
+    # profile; without this the plan never emits the step, so that code is
+    # unreachable through a real run and its unit test passes against a path
+    # nothing takes.
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {"env": {"file": [".env"], "default": {"CACHE_STORE": "file"}}},
+    )
+    plan = plan_for(["db"], user_layers=[extra])
+    assert [step for step in plan.steps if step.kind is StepKind.ENV]
+
+
+def test_the_env_detail_of_a_default_only_profile_has_no_empty_group() -> None:
+    detail = env_detail({"file": [".env"], "default": {"CACHE_STORE": "file"}})
+    assert detail == "patch_keys: 0 key(s) + 1 if absent -> .env (if absent: CACHE_STORE)"
+
+
+def test_the_env_detail_names_the_defaults_a_sync_may_write() -> None:
+    # The dry-run is what a person reads before letting a sync touch their
+    # .env. A key the step may write and the plan does not name is the same
+    # class of surprise this whole change removes.
+    detail = env_detail(
+        {
+            "file": [".env"],
+            "set": {"DB_HOST": "db"},
+            "default": {"CACHE_STORE": "file", "SESSION_DRIVER": "file"},
+        }
+    )
+    assert detail == (
+        "patch_keys: 1 key(s) + 2 if absent -> .env "
+        "(DB_HOST; if absent: CACHE_STORE, SESSION_DRIVER)"
+    )
+
+
+def test_the_env_detail_is_unchanged_for_a_profile_with_no_defaults() -> None:
+    # Every other profile's rendered plan must not move: their goldens are the
+    # record of what a user sees.
+    detail = env_detail({"file": [".env"], "set": {"DB_HOST": "db"}})
+    assert detail == "patch_keys: 1 key(s) -> .env (DB_HOST)"
+
+
+def test_an_empty_env_default_leaves_the_detail_unchanged() -> None:
+    detail = env_detail({"file": [".env"], "set": {"DB_HOST": "db"}, "default": {}})
+    assert detail == "patch_keys: 1 key(s) -> .env (DB_HOST)"
+
+
+def test_a_default_that_set_overrides_is_not_named_as_written_if_absent() -> None:
+    # `set` wins a key in both, so the default is never written.
+    detail = env_detail(
+        {
+            "file": [".env"],
+            "set": {"DB_HOST": "db"},
+            "default": {"DB_HOST": "other", "CACHE_STORE": "file"},
+        }
+    )
+    assert detail == "patch_keys: 1 key(s) + 1 if absent -> .env (DB_HOST; if absent: CACHE_STORE)"
+
+
+def test_defaults_that_are_all_overridden_by_set_leave_the_detail_unchanged() -> None:
+    detail = env_detail(
+        {"file": [".env"], "set": {"DB_HOST": "db"}, "default": {"DB_HOST": "other"}}
+    )
+    assert detail == "patch_keys: 1 key(s) -> .env (DB_HOST)"
+
+
+@pytest.mark.parametrize("bad", ["file", ["file"], None, 3])
+def test_a_non_mapping_env_default_is_no_default_rather_than_an_error(bad: object) -> None:
+    # The operation shrugs at this; a plan must not be what raises.
+    with_set = env_detail({"file": [".env"], "set": {"DB_HOST": "db"}, "default": bad})
+    assert with_set == "patch_keys: 1 key(s) -> .env (DB_HOST)"
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"file": [".env"], "default": bad}})
+    plan = plan_for(["db"], user_layers=[extra])
+    assert all(step.kind is not StepKind.ENV for step in plan.steps)
+
+
+def test_env_default_with_append_block_is_a_config_error() -> None:
+    # A profile cannot reach this (the schema rejects it at load); a project's
+    # own ddev-sync.yaml can, and the dry-run is where it should be found.
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {"env": {"strategy": "append_block", "set": {"A": "1"}, "default": {"B": "2"}}},
+    )
+    with pytest.raises(ConfigError, match=r"env\.default.*append_block"):
+        plan_for(["db"], user_layers=[extra])
+
+
+def test_an_empty_env_default_with_append_block_still_plans() -> None:
+    detail = env_detail({"strategy": "append_block", "set": {"A": "1"}, "default": {}})
+    assert detail == "append_block: 1 key(s) -> .env.local, .env (A)"
+
+
+def test_a_malformed_env_file_is_an_error_for_a_default_only_profile_too() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"file": None, "default": {"A": "1"}}})
+    with pytest.raises(ConfigError, match=r"env\.file"):
+        plan_for(["db"], user_layers=[extra])
+
+
 def test_selecting_files_alone_does_not_pull_in_env() -> None:
     extra = LayerDoc(
         ".ddev/ddev-sync.yaml",

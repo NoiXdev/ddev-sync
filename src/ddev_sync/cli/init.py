@@ -364,24 +364,31 @@ def _detected_features(resolution: ProjectResolution) -> dict[str, str] | None:
 def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:
     """The configured candidates when none exists; `None` when there is no question.
 
-    The two conditions for "there is no env step" are `engine/plan.py::_env`'s
+    The conditions for "there is no env step" are `engine/plan.py::_env`'s
     own, read from the same merged configuration, so this question appears
-    exactly when that step would - and the file is matched the way
+    exactly when that step would: the strategy is not `none`, and `env.set` or
+    `env.default` has something in it - a non-mapping of either counts as
+    empty, as it does there. The file is matched the way
     `operations/env.py::_find_env_file` matches it, against real directory
     entries rather than a constructed path, because `is_file()` folds case on
-    a case-insensitive filesystem. The guard between those two conditions is
-    `_env`'s too, raising the same sentence: a hand-edited `env.file` that is
-    neither a name nor a list of names would otherwise reach the
-    comprehension below as a raw `TypeError`, where `_env` raises a
-    `ConfigError` instead.
+    a case-insensitive filesystem. The guards are `_env`'s too, raising the
+    same sentences: a hand-edited `env.file` that is neither a name nor a list
+    of names would otherwise reach the comprehension below as a raw
+    `TypeError`, and `env.default` under `append_block` is a combination no
+    step can honour, which `_env` refuses before it looks at any file.
     """
     node = resolution.merged.data.get("env", {})
     settings = node if isinstance(node, dict) else {}
     if str(settings.get("strategy", "patch_keys")) == "none":
         return None
     raw_values = settings.get("set", {})
-    if not isinstance(raw_values, dict) or not raw_values:
+    raw_default = settings.get("default", {})
+    imposed = raw_values if isinstance(raw_values, dict) else {}
+    defaulted = raw_default if isinstance(raw_default, dict) else {}
+    if not imposed and not defaulted:
         return None
+    if defaulted and str(settings.get("strategy", "patch_keys")) == "append_block":
+        raise ConfigError("env.default cannot be used with strategy 'append_block'")
     configured = settings.get("file", [".env.local", ".env"])
     if not isinstance(configured, str | list):
         raise ConfigError(

@@ -394,8 +394,20 @@ class _Builder:
         if strategy == "none":
             return []
         raw_values = settings.get("set", {})
-        if not isinstance(raw_values, dict) or not raw_values:
+        raw_default = settings.get("default", {})
+        # Mirror the operation: a non-mapping block is no block, never an error.
+        imposed = raw_values if isinstance(raw_values, dict) else {}
+        defaulted = raw_default if isinstance(raw_default, dict) else {}
+        if not imposed and not defaulted:
             return []
+        if defaulted and strategy == "append_block":
+            # `append_block` writes a block rather than reconciling keys, so
+            # "only if absent" has nowhere to land. A profile cannot reach this:
+            # `profiles/schema.py::_validate_env` rejects it at load. Only a
+            # project's own `ddev-sync.yaml` can, and the operation would raise
+            # for it mid-sync; failing here puts the reason in the dry-run, the
+            # same way the `env.file` check below does.
+            raise ConfigError("env.default cannot be used with strategy 'append_block'")
         configured = settings.get("file", [".env.local", ".env"])
         if not isinstance(configured, str | list):
             # A bare `file:` is read by YAML as null, and anything else that is
@@ -407,8 +419,21 @@ class _Builder:
                 f"env.file must be a file name or a list of file names, got {configured!r}"
             )
         candidates = [configured] if isinstance(configured, str) else [str(c) for c in configured]
-        keys = ", ".join(sorted(str(key) for key in raw_values))
-        detail = f"{strategy}: {len(raw_values)} key(s) -> {', '.join(candidates)} ({keys})"
+        keys = ", ".join(sorted(str(key) for key in imposed))
+        detail = f"{strategy}: {len(imposed)} key(s) -> {', '.join(candidates)} ({keys})"
+        # `set` wins a key declared in both, so such a default is never written
+        # and is not worth naming.
+        written_if_absent = sorted({str(key) for key in defaulted} - {str(key) for key in imposed})
+        if written_if_absent:
+            # An override of the string above rather than extra pieces on it,
+            # so the no-defaults detail stays byte-identical and the goldens of
+            # every other profile do not move.
+            groups = [keys] if keys else []
+            groups.append(f"if absent: {', '.join(written_if_absent)}")
+            detail = (
+                f"{strategy}: {len(imposed)} key(s) + {len(written_if_absent)} if absent "
+                f"-> {', '.join(candidates)} ({'; '.join(groups)})"
+            )
         return [
             _Entry(
                 kind=StepKind.ENV,
