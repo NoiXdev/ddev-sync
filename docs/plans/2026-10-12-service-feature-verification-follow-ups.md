@@ -7,32 +7,36 @@ treats as scratch; this file is the part worth keeping.
 Nothing here blocks anything. Every item was measured, reviewed, and left on
 purpose — the first two because fixing them means changing a profile, which was
 ruled out for this branch when the file was commissioned, and the rest because
-they are statements about reach rather than defects.
+they are statements about reach rather than defects. Items 1 and 2 have since
+been acted on by `docs/specs/2026-10-13-laravel-env-defaults-design.md`; their
+entries say what closed and what did not.
 
 ## Still open
 
 Ordered by how likely each is to reach a person using the add-on, which is the
-order the whole-branch review put them in.
+order the whole-branch review put them in. Item 10 was appended afterwards, by
+the env-defaults branch, and sits outside that ordering.
 
-### 1. A real Horizon project's queue driver is silently rewritten to `sync`
+### 1. A real Horizon project's queue driver is silently rewritten to `sync` — closed
 
-**This is the next piece of work.** It is also this branch's most valuable
-finding, and it is deliberately recorded here rather than fixed.
+**This was the next piece of work, and it is done.** It was also this branch's
+most valuable finding, recorded here rather than fixed because what it needed
+was a design decision and not an edit.
 
-`profiles/laravel.yaml:25` pins `QUEUE_CONNECTION: sync` in `env.set`, the
+`profiles/laravel.yaml:25` pinned `QUEUE_CONNECTION: sync` in `env.set`, the
 strategy is `patch_keys`, which replaces a key in place and appends one that is
 absent (`src/ddev_sync/operations/env.py:33`), and ENV rides in the `db` group
-(`src/ddev_sync/engine/steps.py:62`). So **every** sync that includes `db` — the
-default — rewrites that key in the project's own `.env`. The `sync` driver
+(`src/ddev_sync/engine/steps.py:62`). So **every** sync that included `db` — the
+default — rewrote that key in the project's own `.env`. The `sync` driver
 executes a dispatched job inline instead of queueing it, so the project's queue
-goes out of use and Horizon shows an empty one. Nothing warns about it: not the
-engine's output, not the README, not the profile's own comments.
+went out of use and Horizon showed an empty one. Nothing warned about it: not
+the engine's output, not the README, not the profile's own comments.
 
 How it was found: it blocked the `mxfeathorizon` cell. The cell's recipe wrote
-`QUEUE_CONNECTION=redis` and the post-sync `.env` read `sync`. The cell models a
-project that overrides the key back (`tests/matrix/cells/mxfeathorizon/ddev-sync.yaml`,
-where the interaction is written down) and `profiles/VERIFIED.md`'s `horizon` row
-carries the full chain.
+`QUEUE_CONNECTION=redis` and the post-sync `.env` read `sync`. The cell then
+modelled a project that overrides the key back
+(`tests/matrix/cells/mxfeathorizon/ddev-sync.yaml`, where the interaction was
+written down) and `profiles/VERIFIED.md`'s `horizon` row carries the full chain.
 
 Why it is not fixed here: widening at the end would ship an unreviewed profile
 change on the back of a verification branch, which was ruled out when this file
@@ -45,18 +49,53 @@ the fix needs is a decision, not an edit — warn, stop pinning the key, pin it
 only when no Redis queue is configured — and that is a design question of its
 own.
 
-### 2. The same pin switches `CACHE_STORE` and `SESSION_DRIVER` to `file`
+**What closed it** (`docs/specs/2026-10-13-laravel-env-defaults-design.md`,
+carried out by `docs/plans/2026-10-13-laravel-env-defaults.md`): the decision
+was taken, and it was the second of the three — stop pinning the key. A sibling
+mapping, `env.default`, writes a key only when no existing candidate `.env`
+declares it, and `QUEUE_CONNECTION` moved there from `env.set`, so a project's
+own value survives every sync.
+
+**The evidence is the `mxfeathorizon` cell passing *without* the override it
+needed to be measurable at all.**
+`tests/matrix/cells/mxfeathorizon/ddev-sync.yaml` no longer carries
+`env: set: QUEUE_CONNECTION: redis`; the recipe's own `QUEUE_CONNECTION=redis`
+survives the sync, the dispatched job still lands in the queue `horizon:clear`
+empties, and `test_the_env_step_imposed_what_it_must_and_kept_what_it_should`
+(`tests/matrix/test_matrix.py`) reads the key back out of the written `.env` —
+the first matrix assertion that reads a `.env` at all. Run 2026-10-13 on
+`feat/env-defaults`: 11 passed, 17 skipped, 0 failed. `profiles/VERIFIED.md`'s
+`horizon` row now records the defect instead of warning about it, and its
+`laravel` row's env claim rests on that assertion instead of on a hand reading
+of a kept tree.
+
+Two line numbers above are the pre-change ones, kept so the finding still reads
+as it was found: the key now sits at `profiles/laravel.yaml:115`, in
+`env.default`, and the `patch_keys` docstring is
+`src/ddev_sync/operations/env.py:32`.
+
+### 2. The same pin switches `CACHE_STORE` and `SESSION_DRIVER` to `file` — half closed
 
 `profiles/laravel.yaml:26-27`, by the same mechanism and on the same path. A
-project running a Redis cache or Redis sessions locally gets file-backed ones
+project running a Redis cache or Redis sessions locally got file-backed ones
 back after every sync, with no notice.
 
 This one is **known rather than suspected, because this branch depends on it.**
 The `horizon` row's attribution argument rules out `optimize:clear` →
-`cache:clear` → `RedisStore::flush()` (a bare `flushdb()`, which would have
-emptied the planted queue) precisely by citing the `CACHE_STORE: file` pin, and
-the post-sync `.env` was read by hand to confirm it. The branch could not have
-made its argument without the behaviour it is reporting here as a hazard.
+`cache:clear` → `RedisStore::flush()` by citing the `CACHE_STORE: file` pin,
+and the post-sync `.env` was read by hand to confirm it at the time (it is
+asserted now; see item 1). The branch could not have made its argument without
+the behaviour it is reporting here as a hazard.
+
+*Correction, because this sentence carried a false claim about the flush:* the
+parenthesis that stood here said the `flushdb()` would have emptied the planted
+queue. That is false for this installation. `RedisStore::flush()` is a
+`flushdb()` on the **cache** connection, and the kept `mxfeathorizon` tree's
+`config/database.php` gives the `default` connection `env('REDIS_DB', '0')` and
+the `cache` connection `env('REDIS_CACHE_DB', '1')`, so the flush would have
+emptied database 1 while the queue sat in database 0. The pin is still worth
+citing in that argument — it is why the configured store was `file` at all —
+but the queue evidence does not depend on it.
 
 It belongs with item 1 and is out for the same reason, which is the ruling
 rather than the spec.
@@ -74,6 +113,23 @@ split cannot express it: `php artisan optimize:clear --except=cache` exists at
 12.47.0, and with it `CACHE_STORE` could be defaulted. The fix lives in the
 profile's setup command rather than its `env` block, and it needs a version
 check nobody has done - whether the flag exists on Laravel 11 and below.
+Carried out by `docs/plans/2026-10-13-laravel-env-defaults.md`.
+
+**How far the run goes on each half.** `SESSION_DRIVER`: the env test reads
+`SESSION_DRIVER=file` out of the written `.env` in the `mxfeathorizon` cell,
+whose recipe declares the key nowhere - which shows that the profile's value is
+present and no more than that, because against a project that declares nothing
+a `default` and an imposition write the same line. That the key is in
+`env.default` rather than `env.set` is a static check instead,
+`test_every_env_marker_is_consistent_with_its_profile_and_its_recipe`
+(`tests/matrix/test_feature_registry.py`), and the mechanism itself is proven by
+`QUEUE_CONNECTION` in item 1, where an imposed key would have produced `sync`.
+No cell runs a Redis-backed session store, so "a Redis-backed session survives a
+sync" is the mechanism applied rather than an observed outcome. `CACHE_STORE`:
+the imposition is measured, deliberately - the cell's recipe writes the contrary
+`CACHE_STORE=redis`, the value a developer running a Redis cache would have, and
+the env test reads `file` after the sync, so a regression that defaulted the key
+would turn red. That assertion is this item's open half stated as a test.
 
 ### 3. `horizon:clear` clears exactly one queue
 
@@ -197,6 +253,58 @@ the tree (`profiles/laravel.yaml:50`, `features/node-build.yaml:21`) reference
 different documents and were not checked — so "no dangling pointers remain" is
 not a claim this item supports.
 
+### 10. The URL-key fix, and the three gaps it leaves
+
+Appended by the env-defaults branch. Its review found a Critical and the branch
+fixed it: a non-empty `REDIS_URL`, `DB_URL` or
+`DATABASE_URL` is `array_merge`d over every discrete host, port, database, user
+and password key beside it (`ConfigurationUrlParser::parseConfiguration`; an
+empty value is ignored), so the profile's `DB_*` and `REDIS_HOST` pins decided
+nothing at all for a project whose `.env` carried a production URL — and with
+`QUEUE_CONNECTION` newly allowed to stay `redis`, that project would have
+queued onto production's Redis from a developer's machine. All three keys are
+now imposed as empty in `profiles/laravel.yaml`'s `env.set`, and the fix is
+measured rather than argued: the `mxfeathorizon` recipe appends
+`redis://:s3cret@redis.production.invalid:6379` and two
+`mysql://acme:s3cret@db.production.invalid:3306/acme_prod` URLs after its own
+artisan calls, and the env test reads all three back empty.
+
+**Three gaps the fix does not cover.** None is observed as a failure; each is a
+statement about reach, and none of them is exercised by any cell.
+
+1. **A project whose own config reads other key names.** The three URL names,
+   and the `DB_*` and `REDIS_HOST` names beside them, are the ones
+   `laravel/laravel`'s shipped `config/database.php` reads. A project that
+   edited that file, or that resolves its connection from keys of its own, is
+   pinned by nothing the profile names. Nothing in the matrix or the unit suite
+   reads a project's `config/`.
+2. **Real environment variables, which beat `.env` outright.**
+   `.ddev/config.yaml`'s `web_environment` (and an `environment:` block in a
+   `docker-compose.*.yaml` override) puts variables into the web container, and
+   the env step never touches either file — it reads and writes exactly one
+   `.env`. A real variable wins over a `.env` line, which is Laravel's own
+   doing and is measured rather than assumed: `Illuminate\Support\Env`'s
+   repository is built `immutable()` (line 89 of the copy in the kept
+   `mxfeathorizon` tree) and `LoadEnvironmentVariables::createDotenv` hands
+   that repository to `Dotenv::create`, and an immutable repository does not
+   overwrite a variable that is already set. So a `DB_URL` or `REDIS_HOST` set
+   through `web_environment` outranks every pin in this profile. No cell sets
+   `web_environment`, and the DDEV side of it — that `web_environment` reaches
+   the web container as a real variable — is read from DDEV's documented
+   behaviour, not shown here.
+3. **Other hosts, for the two keys the profile now defaults.** A kept
+   `beanstalkd` queue or a memcached session store names a host of its own, and
+   only `REDIS_HOST` is pinned — so "a synced project cannot reach production's
+   service" holds for Redis and for nothing else. The profile's own ACCEPTED
+   RISK comment names this class, next to the `sqs`/`dynamodb` case, where the
+   target is a set of credentials rather than a host and no pin can reach it at
+   all.
+
+**Not a fourth gap:** `REDIS_PORT` and `REDIS_PASSWORD` stay unpinned on
+purpose. 6379 is both Laravel's default and the add-on's exposed port, and a
+`.env` carrying production's port or password fails closed against the local
+service, which is the direction the design wants (spec decision 5).
+
 ## A rule this session earned four times over
 
 **Every check needs a positive control: something that would have come out
@@ -296,6 +404,19 @@ README is outside every path in that list, and the prose names the product
 paths *and* search for what a human would write, not only for what the code
 calls it. The branch's own "exactly 1 reference to typo3-solr" check inherited
 the same blind spot and reported clean.
+
+**An audit of the keys a profile already names cannot see an absent key that
+overrides them.** The env-defaults branch checked `profiles/laravel.yaml`'s
+`env.set` key by key against the rule that decides `set` from `default`, and
+found nothing wrong with the `DB_*` and `REDIS_HOST` pins. The keys that
+defeated those pins — `REDIS_URL`, and `DB_URL`/`DATABASE_URL` — were
+**absent** from the profile, so no pass over what was present could have reached
+them however careful it was; the review that found them read `laravel/laravel`'s
+own `config/database.php` and asked which keys feed the connection. That is the
+practical form: to check whether a set of pins decides anything, read the
+framework's config for the keys that feed the value, not the profile's list for
+the keys it happens to name. Same shape as the code-scoped sweep above — a check
+whose scope is the artefact under audit cannot find what that artefact omits.
 
 **A claim corrected in one file can stand in the file it came from.** The
 `APP_ENV=local` overstatement was found in a cell recipe and an evidence row,
