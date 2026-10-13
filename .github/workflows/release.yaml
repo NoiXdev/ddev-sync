@@ -131,16 +131,28 @@ jobs:
             = "/opt/ddev-sync/profiles"
 
       # The version the image reports has to be the version that was released.
-      # It is compared against the PEP 440 form, because that is what the
-      # wheel's metadata carries and what `--version` therefore prints:
-      # `compute-version` can only produce `X.Y.Z` or `X.Y.Z-<id>.<N>`, and
-      # the second normalises to `X.Y.Z<id><N>`.
+      # The expected string is read from `pyproject.toml` at the release tag
+      # rather than derived from the semver tag: that file is exactly what the
+      # wheel was built from (the image is built after the version is written,
+      # and the tag is created on that same tree), and it holds the PEP 440
+      # form `--version` prints.
+      - name: Check out the release tag
+        # Read the file instead of converting the tag: the semver and PEP 440
+        # forms differ (`1.2.3-beta.4` is `1.2.3b4`), and a second
+        # implementation of that mapping, here in shell, is a second thing to
+        # get wrong. tools/set_version.py owns the mapping.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
       - name: It reports the version it was released as
-        env:
-          VERSION: ${{ needs.release.outputs.version }}
         run: |
           set -euo pipefail
-          expected="$(printf '%s' "${VERSION}" | sed -E 's/-([0-9A-Za-z]+)\.([0-9]+)$/\1\2/')"
+          expected="$(sed -nE 's/^version = "([^"]+)"$/\1/p' pyproject.toml)"
+          if [ -z "${expected}" ] || [ "$(printf '%s\n' "${expected}" | wc -l)" -ne 1 ]; then
+            echo "::error::could not read exactly one version from pyproject.toml"
+            exit 1
+          fi
           printed="$(docker run --rm --network none "${IMAGE}" --version)"
           echo "${printed}"
           if [ "${printed}" != "ddev-sync, version ${expected}" ]; then

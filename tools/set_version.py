@@ -8,7 +8,9 @@ exists rather than a `sed` line in the release workflow:
   version. `0.1.0-rc.1` is normalised to `0.1.0rc1` when the wheel is built,
   and `ddev-sync --version` prints the normalised form - so the file holds the
   normalised form to begin with, and nothing has to agree with a value it
-  cannot see.
+  cannot see. The normalisation is not just "drop the separators": `beta` is
+  `b`, `alpha` is `a`, and `pre`/`preview`/`c` are `rc`; an identifier with no
+  PEP 440 spelling is refused before anything is written.
 - `version.json` is what `compute-version` reads and what the release workflow
   writes; it holds the semver form, hyphen and all.
 - `docker-compose.ddev-sync.yaml` and `ddev-sync/prepare-sidecar.sh` hold the
@@ -46,12 +48,40 @@ _VERSION = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+\.\d+)?$")
 # `-rc.1` -> `rc1`: PEP 440 allows the separators but normalises them away.
 _PRERELEASE = re.compile(r"-(?P<identifier>[0-9A-Za-z]+)\.(?P<number>\d+)$")
 
+# PEP 440's pre-release spellings and the one canonical form each normalises to.
+# Anything else is not a pre-release in Python's eyes at all.
+_PEP440_PHASES = {
+    "a": "a",
+    "alpha": "a",
+    "b": "b",
+    "beta": "b",
+    "c": "rc",
+    "pre": "rc",
+    "preview": "rc",
+    "rc": "rc",
+}
+
 Target = tuple[str, re.Pattern[str], Callable[[str], str]]
 
 
 def pep440(version: str) -> str:
-    """`version` in the form Python packaging will normalise it to anyway."""
-    return _PRERELEASE.sub(lambda match: f"{match['identifier']}{match['number']}", version)
+    """`version` in the form Python packaging will normalise it to anyway.
+
+    Raises `ValueError` for a pre-release identifier PEP 440 has no spelling
+    for, rather than inventing a string the wheel's metadata would disagree
+    with.
+    """
+    match = _PRERELEASE.search(version)
+    if match is None:
+        return version
+    identifier = match["identifier"]
+    phase = _PEP440_PHASES.get(identifier.lower())
+    if phase is None:
+        raise ValueError(
+            f"{identifier!r} is not a PEP 440 pre-release identifier "
+            f"(expected one of {', '.join(_PEP440_PHASES)})"
+        )
+    return f"{version[: match.start()]}{phase}{match['number']}"
 
 
 def _unchanged(version: str) -> str:

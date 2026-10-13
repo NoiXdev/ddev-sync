@@ -107,8 +107,40 @@ def test_a_prerelease_lands_as_semver_everywhere_but_pep440_in_pyproject(
 
 def test_pep440_leaves_a_final_version_alone() -> None:
     assert pep440("1.2.3") == "1.2.3"
-    assert pep440("0.1.0-rc.1") == "0.1.0rc1"
-    assert pep440("0.1.0-beta.12") == "0.1.0beta12"
+
+
+@pytest.mark.parametrize(
+    ("semver", "normalised"),
+    [
+        ("0.1.0-a.1", "0.1.0a1"),
+        ("0.1.0-alpha.3", "0.1.0a3"),
+        ("0.1.0-b.2", "0.1.0b2"),
+        ("0.1.0-beta.12", "0.1.0b12"),
+        ("0.1.0-c.4", "0.1.0rc4"),
+        ("0.1.0-pre.1", "0.1.0rc1"),
+        ("0.1.0-preview.7", "0.1.0rc7"),
+        ("0.1.0-rc.1", "0.1.0rc1"),
+        ("0.1.0-RC.1", "0.1.0rc1"),
+    ],
+)
+def test_pep440_maps_every_spelling_to_its_canonical_form(semver: str, normalised: str) -> None:
+    assert pep440(semver) == normalised
+
+
+@pytest.mark.parametrize("identifier", ["dev", "snapshot", "next", "rc2"])
+def test_pep440_refuses_an_identifier_it_has_no_spelling_for(identifier: str) -> None:
+    with pytest.raises(ValueError, match=f"'{identifier}' is not a PEP 440 pre-release"):
+        pep440(f"0.1.0-{identifier}.1")
+
+
+def test_a_release_with_an_unknown_identifier_writes_nothing(tmp_path: Path) -> None:
+    build_tree(tmp_path)
+    before = snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="'dev' is not a PEP 440 pre-release"):
+        rewrite("0.2.0-dev.1", root=tmp_path)
+
+    assert snapshot(tmp_path) == before
 
 
 def test_running_it_twice_changes_nothing_the_second_time(tmp_path: Path) -> None:
