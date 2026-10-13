@@ -115,10 +115,38 @@ running a local Redis cache still gets `file` back unless it sets
 which is imposed as well). The obstacle is not that a `set` versus `default`
 split cannot express it: `php artisan optimize:clear --except=cache` exists at
 12.47.0, and with it `CACHE_STORE` could be defaulted. The fix lives in the
-profile's setup command rather than its `env` block, and it needs a version
-check nobody has done - whether the flag exists on Laravel 11 and below. That
-check is still nobody's: `docs/plans/2026-10-13-laravel-env-defaults.md` carried
-out the half this item records as closed and left this half exactly as stated.
+profile's setup command rather than its `env` block, and it needed a version
+check: whether the flag exists on Laravel 11 and below. `docs/plans/2026-10-13-laravel-env-defaults.md`
+carried out the half this item records as closed and left that check undone;
+it has been done since, by reading the command's source at each major
+(`src/Illuminate/Foundation/Console/OptimizeClearCommand.php` in
+`laravel/framework`) - read, not run.
+
+**The flag is available from Laravel 11, not from 10.** 10.x declares no
+`except` option anywhere in the class: no `getOptions()` entry, and nothing in
+the command reads `option('except')`. 11.x and 12.x declare it, through the
+older `getOptions()` style - `['except', 'e', InputOption::VALUE_OPTIONAL, 'The
+commands to skip']` - and read it in `handle()`. 13.x declares it in
+`$signature` as `{--e|except= : The commands to skip}`. **The first probe of
+this question was wrong, and why is worth keeping:** it looked only for the
+option in `$signature`, which reports 11.x and 12.x as lacking the flag. Laravel
+declares a command's options in two ways, and a probe for one of them is not a
+measurement of whether the option exists.
+
+**What that does to the fix.** The profile's header says it serves Laravel 10
+and below as well as 11+ (the `CACHE_DRIVER` / `CACHE_STORE` split), and it
+runs `php artisan optimize:clear` as a plain `run:` with **no** `allow_failure`
+(`profiles/laravel.yaml`, the `setup.commands` list). Passing an option a
+Symfony console command does not declare makes the command fail, so editing that
+entry to `optimize:clear --except=cache` would abort a sync against Laravel 10
+after the database import, which is the worst place to stop. `CACHE_STORE`
+therefore cannot be moved to `env.default` by an edit to this profile: the path
+needs a `laravel@10` profile variant carrying the old command line, and this
+repository already ships that mechanism - `typo3@10` through `typo3@13` under
+`profiles/` - so it is the cost of a contract change and not of an invention.
+That change alters what a Laravel 10 project is promised and what 11+ projects
+get, so it needs its own spec rather than an edit here. This half stays open,
+now as a decision with its facts in, not a question with one missing.
 
 **How far the run goes on each half.** `SESSION_DRIVER`: the env test reads
 `SESSION_DRIVER=file` out of the written `.env` in the `mxfeathorizon` cell,
