@@ -731,6 +731,19 @@ only by a hand reading of a kept tree, which leaves no trace and turns nothing
 red on regression. This task closes that, and the assertion it needs is exactly
 the one that proves Task 3.
 
+> **The snippets in this task are the plan's shape, not the implementation's.**
+> Prose below was resynced once, for the ruling that kept `CACHE_STORE` in
+> `env.set`, and not for the three review rounds after it — so the code here
+> has three kinds, no `contrary=` field, no URL markers and no
+> `MAIL_PORT`/`MAIL_HOST` pair, while what was built has four kinds and
+> twelve markers. Read it as the brief the implementer was given. The
+> authoritative form of every one of these snippets is the code:
+> `tests/matrix/cells.py` for `EnvMarker` and the cell's markers,
+> `tests/matrix/test_matrix.py` for the assertion, and
+> `tests/matrix/test_feature_registry.py` for the two minimum tests. This note
+> exists because a plan resynced for one ruling and not the later ones reads as
+> current when it is not.
+
 - [ ] **Step 1: Add the declaration**
 
 In `tests/matrix/cells.py`, beside `FlushMarker` and `IndexMarker`:

@@ -119,6 +119,15 @@ php artisan make:job MatrixMarkerJob --no-interaction
 # every artisan call above that touches a database has already run. The
 # MAIL_URL is the shape a real production .env carries - an API key as the
 # username against a hosted relay - and no mail is sent here either way.
+#
+# One consequence for anyone running a single test: these lines survive until
+# the first sync empties them, so the queue test
+# (`test_the_feature_command_emptied_the_planted_queue`) selected on its own
+# pushes its marker through REDIS_URL - that is, through
+# `redis.production.invalid` - rather than through the pinned REDIS_HOST. It
+# fails closed, because the name never resolves, so the test errors instead of
+# reporting a false pass. Run the whole cell, where the ordered sync has
+# already blanked the key before that test selects.
 cat >> .env <<'ENV'
 REDIS_URL=redis://:s3cret@redis.production.invalid:6379
 DB_URL=mysql://acme:s3cret@db.production.invalid:3306/acme_prod

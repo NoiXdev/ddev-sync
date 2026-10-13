@@ -361,10 +361,10 @@ CELLS: tuple[Cell, ...] = (
             # rather than an absence it filled. The sync's own `optimize:clear`
             # flushes whatever cache store is configured, which for a remote
             # store is somebody else's data; a regression that defaulted the
-            # key would keep `redis` here and turn this red. CACHE_DRIVER is the same key
-            # under its Laravel 10 name and is left undeclared by the recipe,
-            # so it is an appended imposed key, not a second proof of
-            # overwriting.
+            # key would keep `redis` here and turn this red. CACHE_DRIVER is
+            # the same key under its Laravel 10 name and is left undeclared by
+            # the recipe, so it is an appended imposed key, not a second proof
+            # of overwriting.
             EnvMarker(key="CACHE_STORE", expected="file", kind="imposed", contrary="redis"),
             EnvMarker(key="CACHE_DRIVER", expected="file", kind="imposed"),
             # The three URL keys, which the recipe fills with production-like

@@ -128,6 +128,18 @@ def test_every_env_marker_is_consistent_with_its_profile_and_its_recipe() -> Non
                     f"{where} is also in the project's env.set, so its value is the project's: "
                     "that is an `overridden` marker"
                 )
+                # Membership alone let the profile's value drift away from the
+                # marker's with only the Docker run to catch it: changing
+                # `CACHE_DRIVER: file` to `array` reddened nothing here. The
+                # placeholder keys are exempt because `${DDEV_SITENAME}` is
+                # resolved by the run and not by the profile, so only the cell
+                # can know what it becomes.
+                profile_value = str(imposed[marker.key])
+                if "${" not in profile_value:
+                    assert profile_value == marker.expected, (
+                        f"{where}: {cell.profile} imposes {profile_value!r}, "
+                        f"the marker expects {marker.expected!r}"
+                    )
             if marker.kind == "defaulted":
                 assert marker.key in defaulted, f"{where} is not in {cell.profile}'s env.default"
                 assert marker.key not in imposed, (

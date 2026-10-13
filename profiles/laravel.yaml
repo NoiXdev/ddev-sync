@@ -135,12 +135,12 @@ env:
   # dispatched after a sync lands on the production queue without a word;
   # SESSION_DRIVER=dynamodb likewise uses production's session table, and the
   # same holds for a kept beanstalkd queue or memcached session store naming a
-  # host of its own: only REDIS_HOST is pinned. Nothing
-  # the sync runs acts on either, which is why they are defaulted and
-  # CACHE_STORE (see above) is not. That is a real consequence of this design,
-  # not an oversight: the alternative is the old behaviour that took a Horizon
-  # project's queue out of use without saying so. A project that needs these
-  # forced local sets them in its own env.set.
+  # host of its own: only REDIS_HOST is pinned. Nothing the sync runs acts on
+  # either, which is why they are defaulted and CACHE_STORE (see above) is not.
+  # That is a real consequence of this design, not an oversight: the
+  # alternative is the old behaviour that took a Horizon project's queue out of
+  # use without saying so. A project that needs these forced local sets them in
+  # its own env.set.
   default:
     QUEUE_CONNECTION: sync
     SESSION_DRIVER: file

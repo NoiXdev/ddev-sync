@@ -14,8 +14,9 @@ entries say what closed and what did not.
 ## Still open
 
 Ordered by how likely each is to reach a person using the add-on, which is the
-order the whole-branch review put them in. Item 10 was appended afterwards, by
-the env-defaults branch, and sits outside that ordering.
+order the whole-branch review put them in. Items 10 to 12 were appended
+afterwards, by the env-defaults branch, and sit outside that ordering. By that
+branch's own review, item 11 is the likeliest of the three to reach a person.
 
 ### 1. A real Horizon project's queue driver is silently rewritten to `sync` — closed
 
@@ -345,6 +346,53 @@ password fails closed against the local service, which is the direction it wants
 measurement**: no run here has pointed a wrong port or a stale password at the
 DDEV Redis and watched it refuse, so what the two keys actually do to a synced
 project is unobserved in either direction.
+
+### 11. Nothing tells a user that their URL keys are being blanked
+
+Appended by the env-defaults branch's final wave, which fixed the Critical
+above and deliberately left this: it is a change to the reporting surface, not
+a one-liner.
+
+The env step now **blanks** three keys, the first keys this tool empties rather
+than sets, and no output can express the difference. The dry-run detail renders
+key *names* only (`engine/plan.py:422-434`), so `DB_URL` inside a nineteen-key
+list reads as "will be set", and `ddev sync --yes` skips the confirmation diff
+entirely (`operations/env.py`'s `assume_yes` branch), so a user who always
+passes `--yes` never sees a line change. A project that legitimately uses
+`DB_URL`, `DATABASE_URL` or `REDIS_URL` locally therefore loses it silently on
+the next sync. `DATABASE_URL` is the most likely of the three: it is the
+Doctrine and Symfony convention and is read by plenty of non-PHP tooling out of
+the same `.env`, so a Laravel project can carry it for something that is not
+Laravel. The recovery — override the key in the project's own `env.set` — is
+documented in a profile comment and nowhere a user would look.
+
+This is the whole-branch review's highest-likelihood new hit on that branch,
+and it is also the item the spec explicitly put out of scope ("Reporting which
+keys the env step changed"), where it belongs with the `allow_failure`
+reporting question because the same output surface is at stake. Shape of a fix,
+not a decision: render the value beside the name when the imposed value differs
+from what the file holds, or at minimum name the keys the step will empty.
+
+### 12. A project's own `ddev-sync.yaml` is never validated
+
+Appended by the same wave, and parked for the same reason: the fix is a
+validation surface rather than a line.
+
+`validate_profile` runs on profile layers (`profiles/registry.py:92`) and on
+feature contributions (`features/schema.py:87`) and never on the project's own
+file. So `env: default: "QUEUE_CONNECTION=sync"` — a string where a mapping
+belongs — in a project's `ddev-sync.yaml` produces no error, no warning and no
+default: the three runtime readers each treat a non-mapping as an empty block,
+deliberately, so that a mistake in a file the user controls cannot fail a sync
+mid-run (each of them now says so in place, and
+`profiles/schema.py::_validate_env` says why it does the opposite). Silence is
+the right behaviour for the *sync*; it is the wrong behaviour for the *user*,
+who gets no hint that the block they wrote does nothing.
+
+Spec decision 1 does not mention the project layer's case at all. A fix would
+be a validation pass over the project layer that **warns** rather than raises —
+which is a new output path and a new decision about what `ddev sync` refuses,
+not a one-liner.
 
 ## A rule this session earned four times over
 

@@ -45,6 +45,17 @@ def _validate_env(env: Any) -> None:
     if default is None:
         return
     if not isinstance(default, dict):
+        # Rejected here and *tolerated* at runtime, which is deliberate rather
+        # than an inconsistency: this validator runs on profile layers only
+        # (`profiles/registry.py`) and on feature contributions
+        # (`features/schema.py`), all of them files this repository ships, where
+        # a non-mapping is a bug to catch at load. The three runtime readers -
+        # `operations/env.py::EnvRewriteOperation.execute`,
+        # `engine/plan.py::_env` and `cli/init.py::_missing_env_file` - read
+        # merged configuration, so they also see a project's own
+        # `ddev-sync.yaml`, which nothing validates, and they treat a
+        # non-mapping as an empty block rather than failing a sync over a file
+        # the user controls. Each of those three says so in place.
         raise ProfileError("'env.default' must be a mapping")
     if strategy == "append_block" and default:
         raise ProfileError(

@@ -173,6 +173,15 @@ class EnvRewriteOperation:
 
         raw_set = settings.get("set", {})
         raw_default = settings.get("default", {})
+        # A non-mapping block is no block, never an error - and that is a
+        # deliberate divergence from `profiles/schema.py::_validate_env`, which
+        # raises ProfileError for the same input. The two see different inputs:
+        # that validator runs on profile layers only, while this reads merged
+        # configuration and therefore a project's own `ddev-sync.yaml`, which no
+        # validator ever sees. Raising here would turn a mistake in a file the
+        # user controls into a failed sync mid-run. `engine/plan.py::_env` and
+        # `cli/init.py::_missing_env_file` mirror this tolerance so the three
+        # runtime readers answer alike.
         imposed = raw_set if isinstance(raw_set, dict) else {}
         defaulted = raw_default if isinstance(raw_default, dict) else {}
         if not imposed and not defaulted:
