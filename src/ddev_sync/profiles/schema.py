@@ -41,6 +41,17 @@ def _validate_env(env: Any) -> None:
     strategy = env.get("strategy", "patch_keys")
     if strategy not in STRATEGIES:
         raise ProfileError(f"env.strategy {strategy!r} is not one of {', '.join(STRATEGIES)}")
+    default = env.get("default")
+    if default is None:
+        return
+    if not isinstance(default, dict):
+        raise ProfileError("'env.default' must be a mapping")
+    if strategy == "append_block" and default:
+        raise ProfileError(
+            "env.default cannot be used with env.strategy 'append_block': that strategy "
+            "writes a marked block rather than reconciling keys, so there is no key to "
+            "leave alone"
+        )
 
 
 def _validate_database(database: Any) -> None:

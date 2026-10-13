@@ -28,6 +28,31 @@ def test_an_unknown_env_strategy_is_rejected() -> None:
     assert "telepathy" in str(caught.value)
 
 
+def test_a_valid_env_default_passes() -> None:
+    validate_profile(
+        {**MINIMAL, "env": {"strategy": "patch_keys", "default": {"QUEUE_CONNECTION": "sync"}}}
+    )
+
+
+def test_an_env_default_that_is_not_a_mapping_is_rejected() -> None:
+    with pytest.raises(ProfileError, match=r"env\.default"):
+        validate_profile({**MINIMAL, "env": {"default": "QUEUE_CONNECTION=sync"}})
+
+
+def test_an_env_default_with_append_block_is_rejected() -> None:
+    # `append_block` writes a marked block rather than reconciling keys, so
+    # "only if absent" cannot be expressed through it. Rejected at load, where
+    # the message names the key path (`env.default`) and the strategy.
+    with pytest.raises(ProfileError, match="append_block"):
+        validate_profile(
+            {**MINIMAL, "env": {"strategy": "append_block", "default": {"CACHE_STORE": "file"}}}
+        )
+
+
+def test_an_empty_env_default_with_append_block_passes() -> None:
+    validate_profile({**MINIMAL, "env": {"strategy": "append_block", "default": {}}})
+
+
 def test_an_unknown_credential_source_is_rejected() -> None:
     with pytest.raises(ProfileError) as caught:
         validate_profile({**MINIMAL, "database": {"remote_credentials": "vibes"}})
