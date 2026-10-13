@@ -116,37 +116,51 @@ which is imposed as well). The obstacle is not that a `set` versus `default`
 split cannot express it: `php artisan optimize:clear --except=cache` exists at
 12.47.0, and with it `CACHE_STORE` could be defaulted. The fix lives in the
 profile's setup command rather than its `env` block, and it needed a version
-check: whether the flag exists on Laravel 11 and below. `docs/plans/2026-10-13-laravel-env-defaults.md`
-carried out the half this item records as closed and left that check undone;
-it has been done since, by reading the command's source at each major
-(`src/Illuminate/Foundation/Console/OptimizeClearCommand.php` in
-`laravel/framework`) - read, not run.
+check: whether the flag exists on Laravel 11 and below.
+`docs/plans/2026-10-13-laravel-env-defaults.md` carried out the half this item
+records as closed and left that check undone; it has been done since, by
+reading `src/Illuminate/Foundation/Console/OptimizeClearCommand.php` in
+`laravel/framework` at **tags** - read, not run.
 
-**The flag is available from Laravel 11, not from 10.** 10.x declares no
-`except` option anywhere in the class: no `getOptions()` entry, and nothing in
-the command reads `option('except')`. 11.x and 12.x declare it, through the
-older `getOptions()` style - `['except', 'e', InputOption::VALUE_OPTIONAL, 'The
-commands to skip']` - and read it in `handle()`. 13.x declares it in
-`$signature` as `{--e|except= : The commands to skip}`. **The first probe of
-this question was wrong, and why is worth keeping:** it looked only for the
-option in `$signature`, which reports 11.x and 12.x as lacking the flag. Laravel
-declares a command's options in two ways, and a probe for one of them is not a
-measurement of whether the option exists.
+**The flag is available from v11.38.0, not from Laravel 11 and not from 10.**
+At `v10.48.0`, `v11.0.0`, `v11.20.0` and `v11.37.0` the class declares no
+`except` option anywhere: no `getOptions()` entry, and nothing reads
+`option('except')`. `v11.38.0` is the first tag read that declares and reads it,
+through the `getOptions()` style - `['except', 'e',
+InputOption::VALUE_OPTIONAL, 'The commands to skip']` - and `v12.0.0` has it
+the same way, as do `v13.0.0`, `v13.10.0` and `v13.20.0`. Only by `v13.35.0` is
+it declared in `$signature` as `{--e|except= : The commands to skip}`; the
+move happened somewhere between those two tags and was not bisected, and it
+changes how the option is declared, not whether it exists.
 
-**What that does to the fix.** The profile's header says it serves Laravel 10
-and below as well as 11+ (the `CACHE_DRIVER` / `CACHE_STORE` split), and it
-runs `php artisan optimize:clear` as a plain `run:` with **no** `allow_failure`
-(`profiles/laravel.yaml`, the `setup.commands` list). Passing an option a
-Symfony console command does not declare makes the command fail, so editing that
-entry to `optimize:clear --except=cache` would abort a sync against Laravel 10
-after the database import, which is the worst place to stop. `CACHE_STORE`
-therefore cannot be moved to `env.default` by an edit to this profile: the path
-needs a `laravel@10` profile variant carrying the old command line, and this
-repository already ships that mechanism - `typo3@10` through `typo3@13` under
-`profiles/` - so it is the cost of a contract change and not of an invention.
-That change alters what a Laravel 10 project is promised and what 11+ projects
-get, so it needs its own spec rather than an edit here. This half stays open,
-now as a decision with its facts in, not a question with one missing.
+**Two probes of this question were wrong, and both are worth keeping, because
+together they are why this item now names its refs.** The first looked only
+for the option in `$signature`, which reports 11.x and 12.x as lacking the flag:
+Laravel declares a command's options in two ways, and a probe for one of them is
+not a measurement of whether the option exists. The second read **branch
+heads** (`10.x`, `11.x`, `12.x`) and reported what it found as a floor: a
+branch head is the latest patch of its line, so it says the line has the flag by
+now and nothing about which release introduced it. It put the floor at 11.0 when
+11.0 through 11.37 lack it. The wrong *ref kind* was measured and the result
+was reported as a version floor - the same class of error one layer up.
+
+**What that does to the fix.** The profile runs `php artisan optimize:clear` as
+a plain `run:` with **no** `allow_failure` (`profiles/laravel.yaml`, the
+`setup.commands` list). Passing an option a console command does not declare
+makes the command fail, so editing that entry to `optimize:clear --except=cache`
+would abort a sync after the database import for every project below
+`v11.38.0` - Laravel 10 and below, and the 11.0 to 11.37 releases alike. The
+path a first reading of this offered, a `laravel@10` profile variant on the
+model of `typo3@10` through `typo3@13`, **does not work as written**: the
+variant mechanism accepts a major only
+(`src/ddev_sync/profiles/registry.py`'s `_VARIANT_FILENAME` is
+`^(?P<name>[a-z0-9_-]+)@(?P<major>\d+)\.yaml$`), which is why the shipped
+variants are whole majors, so a `laravel@10` variant would leave exactly the
+11.0 to 11.37 projects aborting. Closing the `CACHE_STORE` half therefore needs
+either a mechanism that can express a minor floor, or an approach that does not
+depend on the flag at all. Neither is designed here; both are open, and both are
+a contract change that needs its own spec rather than an edit to this profile.
+This half stays open, with its facts in.
 
 **How far the run goes on each half.** `SESSION_DRIVER`: the env test reads
 `SESSION_DRIVER=file` out of the written `.env` in the `mxfeathorizon` cell,
@@ -418,9 +432,11 @@ in it - it is replaced with a local DSN, not emptied - so it still reads as a
 plain name, and the dry-run still does not say that its value is overwritten,
 nor what with. A profile with no emptied keys renders the string it always did;
 `tests/cli/golden/laravel-full.txt` is the only golden that moved. What remains
-true: `ddev sync --yes` shows neither this line's diff nor any confirmation, so a
-user who always passes it is told about the emptying only if they read the
-dry-run first. That is deliberate - skipping the diff is what `--yes` is for -
+true: `ddev sync --yes` shows no confirmation diff, so a user who always passes
+it sees the emptying only on the dry-run, or in the sync's own output at `-v`
+and above - `cli/reporter.py::starting` prints each step's `detail` from `-v` up,
+so `ddev sync --yes -v` carries the same `emptied:` line - and not at all at the
+default verbosity. That is deliberate - skipping the diff is what `--yes` is for -
 and it is recorded here as the remaining gap rather than fixed. The
 two-override recovery for `MAIL_URL` is likewise still documented in a profile
 comment only.
@@ -454,7 +470,14 @@ already live. It is a raise rather than the warning this entry proposed, on the
 precedent rather than on a new output path: the plan runs before anything is
 written, so the refusal costs the user nothing, where the operation's own check
 would have fired after the database import. A bare `default:` (YAML null) is
-still read as nothing written. What is **not** closed: a non-mapping `env.set`
+still read as nothing written - and **in a layered configuration that is worse
+than it sounds**: `merge_layers` lets a project's null replace the mapping the
+profile put there, so a bare `default:` in `ddev-sync.yaml` silently discards the
+profile's own defaults (for laravel, `SESSION_DRIVER` and `QUEUE_CONNECTION`),
+not merely adds none. Nothing refuses it. What makes it survivable is that the
+dry-run shows it: the `if absent` group is gone from the ENV line
+(`tests/engine/test_plan.py` pins that). Left as it is, because changing how a
+null merges is a contract question about every block, not a fix to this one. What is **not** closed: a non-mapping `env.set`
 is still silently no block, in the plan, the operation and
 `cli/init.py::_missing_env_file` alike; `_missing_env_file` also still reads a
 malformed `env.default` as empty, so `ddev sync init` does not report it and
