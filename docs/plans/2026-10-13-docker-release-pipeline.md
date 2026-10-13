@@ -1764,7 +1764,9 @@ they act. They are not tasks, because a task has to be able to finish green.
    variable `DOCKERHUB_IMAGE=ddev-sync`; confirm the organisation carries
    `DOCKERHUB_NAMESPACE`, `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` and
    `DISCORD_WEBHOOK_RELEASE_NOTIFICATION`; confirm `sha_pinning_required` is
-   off for this repository and that `main` accepts a push from `GITHUB_TOKEN`.
+   off for this repository and that `main` accepts a push from `GITHUB_TOKEN`;
+   and confirm the Docker Hub repository the first push creates is **public**,
+   because the smoke job pulls the published image without authenticating.
 
 2. **Rehearse.** Dispatch *Release* with `bump: minor`, `prerelease_id: rc`,
    `dry_run: true`. It runs the gates, every matrix cell, the multi-architecture
