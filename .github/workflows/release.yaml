@@ -1,0 +1,137 @@
+name: Release
+run-name: Release ${{ inputs.bump }}${{ inputs.prerelease_id != '' && format('-{0}', inputs.prerelease_id) || '' }}${{ inputs.dry_run && ' (dry run)' || '' }}
+
+# Dispatched by hand, because a release here is a deliberate act that needs
+# three inputs the commits cannot supply: which part to bump, whether this is
+# a candidate, and whether to rehearse. The organisation's Go release workflow
+# is triggered by CI finishing instead, which makes "only a green commit on
+# the default branch can release" true by construction; both guarantees are
+# bought back here - `needs:` runs the gates and the whole verification matrix
+# on the ref being released, and the branch guard below refuses a dispatch
+# from anywhere but main.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      prerelease_id:
+        description: "Prerelease identifier; empty promotes to a final version"
+        type: string
+        default: "rc"
+      dry_run:
+        description: "Run every gate and build, push nothing"
+        type: boolean
+        default: false
+
+concurrency: release
+
+permissions:
+  contents: write
+
+jobs:
+  # Lint, types, the unit suite with its 100 % gate, the image smoke tests and
+  # the integration suite - the same workflow every push runs, on this ref.
+  gates:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    uses: ./.github/workflows/ci.yaml
+
+  # Every cell in the registry, against an image built from this ref. An empty
+  # `image` is the nightly path, so a release and the nightly run share one
+  # definition of a cell. Note that matrix.yaml sets
+  # `cancel-in-progress: false`, so a release dispatched while the nightly
+  # matrix is running queues behind it rather than cancelling it.
+  verify:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    uses: ./.github/workflows/matrix.yaml
+    with:
+      image: ""
+
+  release:
+    needs: [gates, verify]
+    uses: NoiXdev/github-workflows/.github/workflows/create_docker_changelog_version_release.yaml@main
+    with:
+      bump: ${{ inputs.bump }}
+      prerelease_id: ${{ inputs.prerelease_id }}
+      dry_run: ${{ inputs.dry_run }}
+      # arm64 is not optional: DDEV users run Apple Silicon.
+      platforms: linux/amd64,linux/arm64
+      # The only JSON file in this repository that holds a version, and the
+      # one `compute-version` can read. tools/set_version.py writes the other
+      # four places from it, including pyproject.toml and uv.lock in their
+      # PEP 440 form.
+      version_file: version.json
+      version_script: tools/set_version.py
+      product_name: ddev-sync
+    secrets: inherit
+
+  # What the published artifact is actually touched on both architectures.
+  # ci.yaml runs these same checks against a locally built amd64 image; this
+  # runs them against the image a user would pull, on a native arm64 runner as
+  # well. It is not a sync: the matrix cells install real frameworks and run on
+  # amd64 runners, so arm64 is smoke-tested here and that limitation is written
+  # down in README.md and profiles/VERIFIED.md rather than glossed over.
+  smoke:
+    needs: [release]
+    if: ${{ inputs.dry_run == false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Pull the image that was just published
+        env:
+          IMAGE: docker.io/${{ vars.DOCKERHUB_NAMESPACE }}/${{ vars.DOCKERHUB_IMAGE }}:${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "${IMAGE}"
+          docker pull "${IMAGE}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+
+      # The image must be self-sufficient after a pull: nothing installed at
+      # container start, no network needed to run. `--network none` is what
+      # turns that from an intention into a test.
+      - name: It runs with no network at all
+        run: |
+          docker run --rm --network none "${IMAGE}" --help > /dev/null
+          docker run --rm --network none "${IMAGE}" --version
+
+      # One `command -v` per binary: busybox's builtin looks only at its first
+      # argument and exits 0 on it, so a single multi-argument call would
+      # assert nothing about the others.
+      - name: It carries every binary the engine runs locally
+        run: |
+          docker run --rm --network none --entrypoint sh "${IMAGE}" -c \
+            'for b in ssh scp rsync mysql mysqladmin mysqldump rclone docker; do
+               command -v "$b" || { echo "MISSING: $b"; exit 1; }
+             done'
+
+      - name: It resolves profiles from the installed path, not a checkout
+        run: |
+          test "$(docker run --rm --network none --entrypoint sh "${IMAGE}" -c \
+            'python -c "from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT; print(DEFAULT_PROFILE_ROOT)"')" \
+            = "/opt/ddev-sync/profiles"
+
+      # The version the image reports has to be the version that was released.
+      # It is compared against the PEP 440 form, because that is what the
+      # wheel's metadata carries and what `--version` therefore prints:
+      # `compute-version` can only produce `X.Y.Z` or `X.Y.Z-<id>.<N>`, and
+      # the second normalises to `X.Y.Z<id><N>`.
+      - name: It reports the version it was released as
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected="$(printf '%s' "${VERSION}" | sed -E 's/-([0-9A-Za-z]+)\.([0-9]+)$/\1\2/')"
+          printed="$(docker run --rm --network none "${IMAGE}" --version)"
+          echo "${printed}"
+          if [ "${printed}" != "ddev-sync, version ${expected}" ]; then
+            echo "::error::expected 'ddev-sync, version ${expected}', got '${printed}'"
+            exit 1
+          fi
