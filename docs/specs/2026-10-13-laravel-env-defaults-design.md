@@ -137,7 +137,8 @@ That is the same reason the sanitize rules exist.
 | `APP_URL`, `DB_CONNECTION`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | `set` | The database the sync has just imported; `DB_CONNECTION: mysql` is a consequence of the import, not a choice |
 | `MAIL_MAILER`, `MAIL_HOST`, `MAIL_PORT` | `set` | Mail must not leave the machine |
 | `REDIS_HOST` (new) | `set` | `ddev-${DDEV_SITENAME}-redis`, the same template the profile already uses for `DB_HOST` |
-| `QUEUE_CONNECTION`, `SESSION_DRIVER`, `CACHE_STORE` | `default` | Local preference, and the measured harm |
+| `QUEUE_CONNECTION`, `SESSION_DRIVER` | `default` | Nothing the sync runs acts on either; the project's value is no more wrong after the sync than before, and `QUEUE_CONNECTION` is the measured harm |
+| `CACHE_STORE` | `set` | The sync's own `optimize:clear` runs `cache:clear` against the configured store: `MemcachedStore::flush()` flushes a whole server, `DynamoDbStore::flush()` throws, `RedisStore::flush()` is a bare `flushdb()`. Moved back to `set` after the key-by-key check of decision 4's reworded rule (see Risks) |
 | `APP_DEBUG` | `set`, unchanged | Neither case; out of scope, so the change stays no wider than the harm it fixes |
 
 **The `REDIS_HOST` pin and its accepted cost.** Pinning it recreates this
@@ -239,35 +240,42 @@ Measured against the tree at `73363a9`, so a plan can start from it.
   one at the first dispatch". That is false, and a review of Task 3 of this
   very change showed it. A `.env` copied from production with
   `QUEUE_CONNECTION=sqs` and live AWS keys does not fail: the first dispatch
-  silently enqueues onto the production queue. `CACHE_STORE=dynamodb` and
-  `SESSION_DRIVER=dynamodb` have the same shape, and so does a memcached
-  pointed off the machine - drivers whose target is a set of credentials rather
-  than a host, which the `REDIS_HOST`-style pin cannot cover. This is an
+  silently enqueues onto the production queue. `SESSION_DRIVER=dynamodb` has the
+  same shape - a driver whose target is a set of credentials rather than a host, which the `REDIS_HOST`-style pin cannot cover. This is an
   accepted risk of defaulting those keys, and it is now stated in the profile
   as well.
 
   *Correction to decision 4:* the same review found that decision 4's rule, as
   first written ("could reach outside the machine ... a local preference whose
   wrong value stays on the machine"), was false for the three keys it was
-  written to justify, so its wording was replaced. The assignment of keys is
-  unchanged; the rule now says what actually separates them - whether the
-  sync's own work is what makes the value wrong. `DB_*`, `APP_URL`,
+  written to justify, so its wording was replaced. The rule now says what
+  actually separates the keys - whether the sync's own work is what makes the
+  value wrong. `DB_*`, `APP_URL`,
   `MAIL_*`, `APP_ENV` and `REDIS_HOST` are imposed because the sync imports a
   database, sets up the local site, imports real addresses into a machine that
   can send mail, and runs commands that consult `APP_ENV` and flush the
   configured cache (`optimize:clear` runs `cache:clear`; checked against
   laravel/framework v12.47.0, whose `RedisStore::flush()` is a bare `flushdb()`
-  and whose `MemcachedStore::flush()` flushes the whole server). `REDIS_HOST` is therefore imposed because a kept
-  `CACHE_STORE=redis` would otherwise have the sync flush production's Redis.
-  `QUEUE_CONNECTION` and `SESSION_DRIVER` are defaulted because an `sqs` queue
-  or a `dynamodb` session store was production's before the sync and still is.
-  Two cases do not fit cleanly and are recorded rather than hidden:
-  `APP_DEBUG` is imposed although the sync does not make it wrong (decision 5
-  keeps it out of scope), and `CACHE_STORE` is defaulted although the sync's
-  own `optimize:clear` acts on it - a kept `memcached` pointed off the machine
-  is flushed by the sync, and a kept `dynamodb` makes that step fail (its
-  `flush()` throws) rather than pass silently. Whether to impose `CACHE_STORE`
-  in those cases is the user's decision and is not made here.
+  and whose `MemcachedStore::flush()` flushes the whole server). `REDIS_HOST`
+  is imposed for that reason: a project that keeps `CACHE_STORE=redis` through
+  its own `env.set` would otherwise have the sync flush production's Redis. `QUEUE_CONNECTION` and `SESSION_DRIVER`
+  are defaulted because an `sqs` queue or a `dynamodb` session store was
+  production's before the sync and still is, and nothing the sync runs acts on
+  either.
+
+  *That check moved a key.* Applied to `CACHE_STORE`, the rule fails:
+  `optimize:clear` runs `cache:clear` against the configured store, so a kept
+  `memcached` pointed off the machine is flushed by the sync itself
+  (`MemcachedStore::flush` is `$this->memcached->flush()`), and a kept
+  `dynamodb` makes that step throw. The sync would be destroying data on
+  infrastructure it does not own. `CACHE_STORE` therefore returns to `set`, as
+  decision 5's table now shows. This costs a project with a local Redis cache
+  its choice on every sync, as before this change; it keeps the choice by
+  setting `CACHE_STORE` in its own `env.set`, and `REDIS_HOST` keeps the flush
+  local. Imposing only non-local drivers would close that, and no `set` versus
+  `default` split can express it. The only remaining exception to the rule is
+  `APP_DEBUG`, imposed although the sync does not make it wrong (decision 5
+  keeps it out of scope).
 - **An empty-value `.env`.** `QUEUE_CONNECTION=` keeps its empty value, where
   `patch_keys` previously replaced it. Laravel resolves that to an unknown
   connection and errors. Decision 3 accepts this: a written line is a decision,

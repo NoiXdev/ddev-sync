@@ -38,13 +38,29 @@ env:
     # `environment:` block); nothing in this repository can establish it, and
     # the add-on's compose file may change in a later release. The container
     # name is the half a project cannot rename out from under us. A project
-    # whose Redis is elsewhere overrides this key;
-    # that is the accepted cost of not letting a production .env reach
-    # production's Redis from a developer's machine.
+    # whose Redis is elsewhere overrides this key; that is the accepted cost of
+    # not letting a production .env reach production's Redis from a developer's
+    # machine. The reason the pin exists is the setup step below: it runs
+    # `optimize:clear`, which runs `cache:clear`, and Laravel's RedisStore
+    # flushes with a bare `flushdb()`. A project that sets CACHE_STORE=redis in
+    # its own env.set, with this key left at a production host, would have the
+    # sync flush production's Redis.
     REDIS_HOST: "ddev-${DDEV_SITENAME}-redis"
+    # Imposed although it is a driver choice, because the sync acts on the
+    # store: the setup step `optimize:clear` runs `cache:clear` against
+    # whatever store is configured. MemcachedStore::flush() flushes the whole
+    # server, so a kept CACHE_STORE=memcached pointed off this machine would
+    # be flushed by the sync, which is destroying data on infrastructure it
+    # does not own; DynamoDbStore::flush() throws, so a kept dynamodb cache
+    # would fail that step (which is not allow_failure). This costs a project
+    # that runs a local Redis cache its choice on every sync; it sets
+    # CACHE_STORE in its own env.set to keep it, and REDIS_HOST above keeps
+    # that flush local. Imposing only non-local drivers is not expressible as
+    # set versus default; see the follow-ups file, item 2.
+    CACHE_STORE: file
   # The project's own choices. Written only when the project declares nothing,
-  # so a Horizon installation keeps its queue and a Redis-backed cache or
-  # session survives a sync. They are defaulted because the project's value is
+  # so a Horizon installation keeps its queue and a Redis-backed session
+  # survives a sync. They are defaulted because the project's value is
   # no more wrong after the sync than it was before: an sqs queue was
   # production's before the sync and still is. A pin on a host cannot protect
   # a driver whose target is a set of credentials rather than a host.
@@ -52,19 +68,15 @@ env:
   # ACCEPTED RISK: a project whose .env carries a remote driver with working
   # credentials keeps it. With QUEUE_CONNECTION=sqs and live AWS keys, a job
   # dispatched after a sync lands on the production queue without a word;
-  # SESSION_DRIVER=dynamodb likewise uses production's session table. For
-  # CACHE_STORE the sync is not a bystander: its setup step runs
-  # `optimize:clear`, which runs `cache:clear` against the configured store.
-  # A memcached pointed off this machine is therefore flushed by the sync
-  # itself, and a dynamodb cache makes that step throw (the store cannot be
-  # flushed) instead of passing. That is a real consequence of this design,
+  # SESSION_DRIVER=dynamodb likewise uses production's session table. Nothing
+  # the sync runs acts on either, which is why they are defaulted and
+  # CACHE_STORE (see above) is not. That is a real consequence of this design,
   # not an oversight: the alternative is the old behaviour that took a Horizon
   # project's queue out of use without saying so. A project that needs these
   # forced local sets them in its own env.set.
   default:
     QUEUE_CONNECTION: sync
     SESSION_DRIVER: file
-    CACHE_STORE: file
 
 database:
   remote_credentials: env

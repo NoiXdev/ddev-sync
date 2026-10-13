@@ -149,15 +149,16 @@ def test_the_driver_choices_are_defaults_and_the_targets_are_imposed() -> None:
     # the project's value wrong or dangerous; default it when the value is no
     # more wrong after the sync than before. MAIL_MAILER is a driver choice and
     # still imposed, because the sync just put production addresses on a
-    # machine that must not send real mail.
+    # machine that must not send real mail. CACHE_STORE is a driver choice too
+    # and is imposed for the opposite reason: the sync's own `optimize:clear`
+    # runs `cache:clear` against whatever store is configured, which would
+    # flush a memcached pointed off the machine. Nothing the sync runs acts on
+    # the queue or the sessions, so those two are defaults.
     env = REGISTRY.resolve("laravel", None).data["env"]
-    assert env["default"] == {
-        "QUEUE_CONNECTION": "sync",
-        "SESSION_DRIVER": "file",
-        "CACHE_STORE": "file",
-    }
+    assert env["default"] == {"QUEUE_CONNECTION": "sync", "SESSION_DRIVER": "file"}
+    assert env["set"]["CACHE_STORE"] == "file"
     assert env["set"]["REDIS_HOST"] == "ddev-${DDEV_SITENAME}-redis"
     for key in ("APP_ENV", "APP_URL", "DB_HOST", "DB_DATABASE", "MAIL_MAILER", "MAIL_HOST"):
         assert key in env["set"], f"{key} must stay imposed"
-    for key in ("QUEUE_CONNECTION", "SESSION_DRIVER", "CACHE_STORE"):
+    for key in ("QUEUE_CONNECTION", "SESSION_DRIVER"):
         assert key not in env["set"], f"{key} must no longer be imposed"

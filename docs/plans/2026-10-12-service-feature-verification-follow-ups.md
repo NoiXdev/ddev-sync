@@ -61,6 +61,17 @@ made its argument without the behaviour it is reporting here as a hazard.
 It belongs with item 1 and is out for the same reason, which is the ruling
 rather than the spec.
 
+**Status (`docs/specs/2026-10-13-laravel-env-defaults-design.md`): half closed.**
+`SESSION_DRIVER` is closed - it moved to `env.default`, so a Redis-backed
+session survives a sync. `CACHE_STORE` is **not**: it was deliberately returned
+to `env.set`, because the setup step `optimize:clear` runs `cache:clear`
+against the configured store, which would flush a memcached pointed off the
+machine (`MemcachedStore::flush`) and make a dynamodb cache throw. A project
+running a local Redis cache still gets `file` back unless it sets
+`CACHE_STORE` in its own `env.set`. Closing that half needs a mechanism that
+imposes only non-local drivers, which no `set` versus `default` split can
+express.
+
 ### 3. `horizon:clear` clears exactly one queue
 
 With no `--queue` option, which is how `features/horizon.yaml:73` calls it,
