@@ -27,11 +27,30 @@ image="$(setting DDEV_SYNC_IMAGE noixdev/ddev-sync):$(setting DDEV_SYNC_VERSION 
 """
 
 
+UV_LOCK = """\
+version = 1
+
+[[package]]
+name = "click"
+version = "8.1.7"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "ddev-sync"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "click" },
+]
+"""
+
+
 def build_tree(root: Path) -> None:
-    """A miniature of the four files `set_version` rewrites."""
+    """A miniature of the files `set_version` rewrites."""
     (root / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
     (root / "version.json").write_text(VERSION_JSON, encoding="utf-8")
     (root / "docker-compose.ddev-sync.yaml").write_text(COMPOSE, encoding="utf-8")
+    (root / "uv.lock").write_text(UV_LOCK, encoding="utf-8")
     (root / "ddev-sync").mkdir()
     (root / "ddev-sync" / "prepare-sidecar.sh").write_text(SIDECAR, encoding="utf-8")
 
@@ -45,9 +64,14 @@ def test_it_writes_the_version_into_every_target(tmp_path: Path) -> None:
         "docker-compose.ddev-sync.yaml",
         "prepare-sidecar.sh",
         "pyproject.toml",
+        "uv.lock",
         "version.json",
     ]
     assert 'version = "0.2.0"' in (tmp_path / "pyproject.toml").read_text()
+    lock = (tmp_path / "uv.lock").read_text()
+    assert 'name = "ddev-sync"\nversion = "0.2.0"' in lock
+    # The anchor is doing work: the other package's version is not touched.
+    assert 'name = "click"\nversion = "8.1.7"' in lock
     assert json.loads((tmp_path / "version.json").read_text())["version"] == "0.2.0"
     assert "DDEV_SYNC_VERSION:-0.2.0}" in (tmp_path / "docker-compose.ddev-sync.yaml").read_text()
     assert "DDEV_SYNC_VERSION 0.2.0)" in (tmp_path / "ddev-sync" / "prepare-sidecar.sh").read_text()
@@ -63,6 +87,8 @@ def test_a_prerelease_lands_as_semver_everywhere_but_pep440_in_pyproject(
     # pyproject feeds importlib.metadata, which only ever reports the
     # normalised form, so the file holds that form from the start.
     assert 'version = "0.1.0rc1"' in (tmp_path / "pyproject.toml").read_text()
+    # uv normalises what it reads from pyproject.toml, so the lock does too.
+    assert 'name = "ddev-sync"\nversion = "0.1.0rc1"' in (tmp_path / "uv.lock").read_text()
     # The other three name an image tag and a release, where the hyphen stays.
     assert json.loads((tmp_path / "version.json").read_text())["version"] == "0.1.0-rc.1"
     assert (

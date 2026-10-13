@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write one version into every file in this repository that names one.
 
-Five files carry a version and three different forms of it, which is why this
+Six files carry a version and three different forms of it, which is why this
 exists rather than a `sed` line in the release workflow:
 
 - `pyproject.toml` feeds `importlib.metadata`, so it must hold a PEP 440
@@ -17,6 +17,10 @@ exists rather than a `sed` line in the release workflow:
   resolves the same image again to read `/etc/passwd` out of it. A default that
   names a tag nobody published does not fail at sync time - the project refuses
   to start at all.
+- `uv.lock` records the root project's own version, and `uv run` rewrites it to
+  match `pyproject.toml` on sight, so it holds the PEP 440 form too; left
+  behind, every release would be followed by a dirty lock and a failing
+  `uv sync --frozen`.
 
 Run it from anywhere; the targets are resolved from this file's location, not
 from the working directory, because the release workflow's cwd is not a
@@ -24,6 +28,8 @@ promise. Every pattern must match exactly once or the script refuses to write
 anything: a pattern that silently matched nothing is how a stale version
 reaches a published compose default.
 """
+
+from __future__ import annotations
 
 import re
 import sys
@@ -62,6 +68,13 @@ TARGETS: tuple[Target, ...] = (
         "ddev-sync/prepare-sidecar.sh",
         re.compile(r"setting DDEV_SYNC_VERSION (?P<version>[^)]+)\)"),
         _unchanged,
+    ),
+    # Anchored on the project's own block: every other package has a
+    # `name`/`version` pair of its own.
+    (
+        "uv.lock",
+        re.compile(r'name = "ddev-sync"\nversion = "(?P<version>[^"]+)"'),
+        pep440,
     ),
 )
 

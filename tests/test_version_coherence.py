@@ -1,4 +1,4 @@
-"""The four files that name a version must name the same one.
+"""The five files that name a version must name the same one.
 
 `tools/set_version.py` writes them together, so they can only drift through a
 hand edit - which is exactly what this test is for. It runs in the ordinary
@@ -34,5 +34,8 @@ def test_every_file_that_names_an_image_tag_names_the_same_one() -> None:
     assert len(set(semver.values())) == 1, f"versions disagree: {semver}"
 
 
-def test_pyproject_carries_the_same_version_in_the_form_packaging_uses() -> None:
-    assert _declared("pyproject.toml") == pep440(_declared("version.json"))
+def test_pyproject_and_the_lock_carry_the_same_version_in_the_form_packaging_uses() -> None:
+    expected = pep440(_declared("version.json"))
+
+    assert _declared("pyproject.toml") == expected
+    assert _declared("uv.lock") == expected
