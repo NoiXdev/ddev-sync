@@ -124,6 +124,15 @@ has a test in the task that owns the code.
 - Create: `tests/test_version_coherence.py`
 - Modify: `pyproject.toml:7`, `version.json`, `docker-compose.ddev-sync.yaml:17`, `ddev-sync/prepare-sidecar.sh:230` (by running the script, in the final steps)
 
+**Amended during execution.** Two rulings extended this task after the brief was
+written, and the code that shipped differs from the code below by exactly those
+two things: `uv.lock` is a fifth rewrite target, in PEP 440 form, anchored on the
+root project's own `name = "ddev-sync"` block; and the module carries
+`from __future__ import annotations`, because a workflow invokes it bare and the
+shebang's `python3` is not guaranteed to be 3.10 or newer. Both reasons are in
+commit `c8aba2b`'s body. The code below is left as it was argued, not rewritten
+to match — git carries the artifact, this document carries the argument.
+
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
 - Produces, and Tasks 2 and 3 rely on these exact names:
@@ -165,7 +174,7 @@ the `pep440` conversion existing at all. If instead the build **fails**, record
 that too: the conversion is then not an improvement but a necessity, and the
 rest of this task is unchanged.
 
-- [ ] **Step 2: Write the failing test for the four rewrite targets**
+- [ ] **Step 2: Write the failing test for the rewrite targets**
 
 Create `tests/test_set_version.py`:
 
@@ -200,7 +209,7 @@ image="$(setting DDEV_SYNC_IMAGE noixdev/ddev-sync):$(setting DDEV_SYNC_VERSION 
 
 
 def build_tree(root: Path) -> None:
-    """A miniature of the four files `set_version` rewrites."""
+    """A miniature of the files `set_version` rewrites."""
     (root / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
     (root / "version.json").write_text(VERSION_JSON, encoding="utf-8")
     (root / "docker-compose.ddev-sync.yaml").write_text(COMPOSE, encoding="utf-8")
@@ -549,7 +558,7 @@ EOF
 Create `tests/test_version_coherence.py`:
 
 ```python
-"""The four files that name a version must name the same one.
+"""The files that name a version must name the same one.
 
 `tools/set_version.py` writes them together, so they can only drift through a
 hand edit - which is exactly what this test is for. It runs in the ordinary
@@ -635,7 +644,7 @@ EOF
 `0.1.0-rc.1` is unreachable from `0.1.0` — see the spec's decision 6. From
 `0.0.0`, `bump: minor` with `prerelease_id: rc` computes exactly `0.1.0-rc.1`.
 
-Using the script here, rather than editing four files by hand, is also the
+Using the script here, rather than editing five files by hand, is also the
 first real exercise of the thing Step 15 just built.
 
 ```bash
@@ -643,7 +652,7 @@ first real exercise of the thing Step 15 just built.
 git diff --stat
 ```
 
-Expected: four files changed, each by one line.
+Expected: five files changed, each by one line.
 
 - [ ] **Step 21: Run the whole gate**
 
@@ -654,7 +663,7 @@ uv run mypy
 ```
 
 Expected: every test passes, 100 % line and branch coverage, all three linters
-silent. The coherence test passes because all four files now say `0.0.0`.
+silent. The coherence test passes because all five files now say `0.0.0`.
 
 - [ ] **Step 22: Commit the reset**
 
@@ -1370,7 +1379,8 @@ jobs:
       platforms: linux/amd64,linux/arm64
       # The only JSON file in this repository that holds a version, and the
       # one `compute-version` can read. tools/set_version.py writes the other
-      # four places from it, including pyproject.toml in its PEP 440 form.
+      # four places from it, including pyproject.toml and uv.lock in their
+      # PEP 440 form.
       version_file: version.json
       version_script: tools/set_version.py
       product_name: ddev-sync
