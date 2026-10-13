@@ -395,9 +395,21 @@ class _Builder:
             return []
         raw_values = settings.get("set", {})
         raw_default = settings.get("default", {})
-        # Mirror the operation: a non-mapping block is no block, never an error.
+        if raw_default is not None and not isinstance(raw_default, dict):
+            # `profiles/schema.py::_validate_env` rejects this at load, but it
+            # only ever sees profile layers; a project's own `ddev-sync.yaml`
+            # reaches here unvalidated. The operation would read it as no
+            # default at all and carry on - silently, and after the database
+            # import. Failing here puts the reason in the dry-run, before
+            # anything is written, the same way the `env.file` check below
+            # does. A bare `default:` is YAML null, which is nothing written
+            # rather than something malformed, so it stays tolerated.
+            raise ConfigError(
+                f"env.default must be a mapping of keys to values, got {raw_default!r}"
+            )
+        # A non-mapping `set` is still no block, and the operation reads it so.
         imposed = raw_values if isinstance(raw_values, dict) else {}
-        defaulted = raw_default if isinstance(raw_default, dict) else {}
+        defaulted = raw_default or {}
         if not imposed and not defaulted:
             return []
         if defaulted and strategy == "append_block":

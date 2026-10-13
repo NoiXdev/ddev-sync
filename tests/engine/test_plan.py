@@ -701,12 +701,43 @@ def test_defaults_that_are_all_overridden_by_set_leave_the_detail_unchanged() ->
     assert detail == "patch_keys: 1 key(s) -> .env (DB_HOST)"
 
 
-@pytest.mark.parametrize("bad", ["file", ["file"], None, 3])
-def test_a_non_mapping_env_default_is_no_default_rather_than_an_error(bad: object) -> None:
-    # The operation shrugs at this; a plan must not be what raises.
-    with_set = env_detail({"file": [".env"], "set": {"DB_HOST": "db"}, "default": bad})
+@pytest.mark.parametrize("bad", ["QUEUE_CONNECTION=sync", ["QUEUE_CONNECTION=sync"], 3])
+def test_a_non_mapping_env_default_is_a_config_error_naming_what_is_expected(bad: object) -> None:
+    # A project's own ddev-sync.yaml is never validated, and the operation reads
+    # a non-mapping as no default at all - so a user who wrote the string form
+    # got nothing, after the database import, and no word of why. The dry-run is
+    # where it is found, as for `env.file`. Both a set and a default-only block
+    # must raise: the check cannot sit behind "has something to write".
+    with_set = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {"env": {"file": [".env"], "set": {"DB_HOST": "db"}, "default": bad}},
+    )
+    with pytest.raises(ConfigError, match=r"env\.default must be a mapping.*got "):
+        plan_for(["db"], user_layers=[with_set])
+    alone = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"file": [".env"], "default": bad}})
+    with pytest.raises(ConfigError, match=r"env\.default must be a mapping"):
+        plan_for(["db"], user_layers=[alone])
+
+
+def test_the_env_default_error_quotes_the_value_the_user_wrote() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"default": "QUEUE_CONNECTION=sync"}})
+    with pytest.raises(ConfigError) as caught:
+        plan_for(["db"], user_layers=[extra])
+    assert "'QUEUE_CONNECTION=sync'" in str(caught.value)
+
+
+def test_a_bare_env_default_is_nothing_written_rather_than_an_error() -> None:
+    # `default:` with no value is YAML null: an unfilled key, not a wrong shape.
+    with_set = env_detail({"file": [".env"], "set": {"DB_HOST": "db"}, "default": None})
     assert with_set == "patch_keys: 1 key(s) -> .env (DB_HOST)"
-    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"file": [".env"], "default": bad}})
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"file": [".env"], "default": None}})
+    plan = plan_for(["db"], user_layers=[extra])
+    assert all(step.kind is not StepKind.ENV for step in plan.steps)
+
+
+def test_a_non_mapping_env_default_is_not_an_error_when_the_strategy_is_none() -> None:
+    # `none` writes nothing, so a default beside it has nothing to be wrong about.
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"strategy": "none", "default": "x"}})
     plan = plan_for(["db"], user_layers=[extra])
     assert all(step.kind is not StepKind.ENV for step in plan.steps)
 

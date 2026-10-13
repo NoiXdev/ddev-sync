@@ -367,8 +367,10 @@ def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:
     The conditions for "there is no env step" are `engine/plan.py::_env`'s
     own, read from the same merged configuration, so this question appears
     exactly when that step would: the strategy is not `none`, and `env.set` or
-    `env.default` has something in it - a non-mapping of either counts as
-    empty, as it does there. The file is matched the way
+    `env.default` has something in it - a non-mapping `env.set` counts as
+    empty, as it does there. A non-mapping `env.default` counts as empty here
+    too, although `_env` refuses it: this runs to ask a question, and the plan
+    that follows reports the mistake before anything is written. The file is matched the way
     `operations/env.py::_find_env_file` matches it, against real directory
     entries rather than a constructed path, because `is_file()` folds case on
     a case-insensitive filesystem. The guards are `_env`'s too, raising the

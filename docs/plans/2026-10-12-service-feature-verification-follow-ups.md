@@ -409,7 +409,7 @@ reporting question because the same output surface is at stake. Shape of a fix,
 not a decision: render the value beside the name when the imposed value differs
 from what the file holds, or at minimum name the keys the step will empty.
 
-### 12. A project's own `ddev-sync.yaml` is never validated
+### 12. A project's own `ddev-sync.yaml` is never validated — `env.default` closed
 
 Appended by the same wave, and parked for the same reason: the fix is a
 validation surface rather than a line.
@@ -429,6 +429,21 @@ Spec decision 1 does not mention the project layer's case at all. A fix would
 be a validation pass over the project layer that **warns** rather than raises —
 which is a new output path and a new decision about what `ddev sync` refuses,
 not a one-liner.
+
+**Status: the `env.default` case is closed; the item is not.** A non-mapping
+`env.default` in a project's `ddev-sync.yaml` is now a `ConfigError` from
+`engine/plan.py::_env` - "`env.default` must be a mapping of keys to values,
+got ..." - which is where the existing `env.file` and `append_block` refusals
+already live. It is a raise rather than the warning this entry proposed, on the
+precedent rather than on a new output path: the plan runs before anything is
+written, so the refusal costs the user nothing, where the operation's own check
+would have fired after the database import. A bare `default:` (YAML null) is
+still read as nothing written. What is **not** closed: a non-mapping `env.set`
+is still silently no block, in the plan, the operation and
+`cli/init.py::_missing_env_file` alike; `_missing_env_file` also still reads a
+malformed `env.default` as empty, so `ddev sync init` does not report it and
+the first plan does; and every other block a project layer can carry
+(`database`, `files`, `sanitize`, `setup`) is as unvalidated as it was.
 
 ## A rule this session earned four times over
 
