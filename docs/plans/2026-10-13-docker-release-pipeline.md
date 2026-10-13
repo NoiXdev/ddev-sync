@@ -1767,8 +1767,12 @@ they act. They are not tasks, because a task has to be able to finish green.
    off for this repository and that `main` accepts a push from `GITHUB_TOKEN`;
    and confirm the Docker Hub repository the first push creates is **public**,
    because the smoke job pulls the published image without authenticating.
-   **Then, and only then, make `NoiXdev/ddev-sync` public** — immediately
-   before the rehearsal, not at the start. The moment it is public its README
+   **Then, and only then, make `NoiXdev/ddev-sync` public** — and it can wait
+   until *after* the rehearsal, because the only job that needs an arm64
+   runner is `smoke`, which skips itself on a dry run, while the
+   multi-architecture build runs under emulation on `ubuntu-latest`. So the
+   order that keeps the public window shortest is: rehearse while private,
+   then go public, then release. The moment it is public its README
    advertises `ddev add-on get NoiXdev/ddev-sync`, and until step 3 has run
    there is no release for that command to install: the same defect decision 9
    exists to prevent, pointing the other way. Public is still required before
