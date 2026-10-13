@@ -69,10 +69,13 @@ the first matrix assertion that reads a `.env` at all. Run 2026-10-13 on
 `laravel` row's env claim rests on that assertion instead of on a hand reading
 of a kept tree.
 
-Two line numbers above are the pre-change ones, kept so the finding still reads
-as it was found: the key now sits at `profiles/laravel.yaml:115`, in
-`env.default`, and the `patch_keys` docstring is
-`src/ddev_sync/operations/env.py:32`.
+One line number above is the pre-change one, kept so the finding still reads as
+it was found: the key now sits at `profiles/laravel.yaml:115`, in `env.default`.
+The `src/ddev_sync/operations/env.py:33` citation in the first paragraph is
+**correct and stays**: line 32 is the `def`, line 33 is the docstring. An
+earlier pass added a closing sentence here giving it as `:32`, on an instruction
+that said so, and reported that as verified without counting the lines. It is
+back to `:33`, here and in `profiles/VERIFIED.md`.
 
 ### 2. The same pin switches `CACHE_STORE` and `SESSION_DRIVER` to `file` — half closed
 
@@ -112,8 +115,9 @@ which is imposed as well). The obstacle is not that a `set` versus `default`
 split cannot express it: `php artisan optimize:clear --except=cache` exists at
 12.47.0, and with it `CACHE_STORE` could be defaulted. The fix lives in the
 profile's setup command rather than its `env` block, and it needs a version
-check nobody has done - whether the flag exists on Laravel 11 and below.
-Carried out by `docs/plans/2026-10-13-laravel-env-defaults.md`.
+check nobody has done - whether the flag exists on Laravel 11 and below. That
+check is still nobody's: `docs/plans/2026-10-13-laravel-env-defaults.md` carried
+out the half this item records as closed and left this half exactly as stated.
 
 **How far the run goes on each half.** `SESSION_DRIVER`: the env test reads
 `SESSION_DRIVER=file` out of the written `.env` in the `mxfeathorizon` cell,
@@ -283,15 +287,19 @@ statement about reach, and none of them is exercised by any cell.
    `docker-compose.*.yaml` override) puts variables into the web container, and
    the env step never touches either file — it reads and writes exactly one
    `.env`. A real variable wins over a `.env` line, which is Laravel's own
-   doing and is measured rather than assumed: `Illuminate\Support\Env`'s
-   repository is built `immutable()` (line 89 of the copy in the kept
-   `mxfeathorizon` tree) and `LoadEnvironmentVariables::createDotenv` hands
-   that repository to `Dotenv::create`, and an immutable repository does not
-   overwrite a variable that is already set. So a `DB_URL` or `REDIS_HOST` set
-   through `web_environment` outranks every pin in this profile. No cell sets
-   `web_environment`, and the DDEV side of it — that `web_environment` reaches
-   the web container as a real variable — is read from DDEV's documented
-   behaviour, not shown here.
+   doing — **read from source in the kept `mxfeathorizon` tree, with nothing
+   run**: `Illuminate\Support\Env::getRepository()` builds its repository
+   `immutable()` (`Env.php:89`), `LoadEnvironmentVariables::createDotenv` hands
+   that repository to `Dotenv::create`
+   (`Bootstrap/LoadEnvironmentVariables.php:84-87`), and the decisive link is
+   phpdotenv's own writer: `ImmutableWriter::write()` returns false for a name
+   that `isExternallyDefined`, under the comment "Don't overwrite existing
+   environment variables" (`vendor/vlucas/phpdotenv/src/Repository/Adapter/ImmutableWriter.php:53-59`).
+   So a `DB_URL` or `REDIS_HOST` set through `web_environment` outranks every
+   pin in this profile. No cell sets `web_environment`, no probe was run against
+   one, and the DDEV side of it — that `web_environment` reaches the web
+   container as a real variable — is read from DDEV's documented behaviour, not
+   shown here either.
 3. **Other hosts, for the two keys the profile now defaults.** A kept
    `beanstalkd` queue or a memcached session store names a host of its own, and
    only `REDIS_HOST` is pinned — so "a synced project cannot reach production's
@@ -301,9 +309,13 @@ statement about reach, and none of them is exercised by any cell.
    all.
 
 **Not a fourth gap:** `REDIS_PORT` and `REDIS_PASSWORD` stay unpinned on
-purpose. 6379 is both Laravel's default and the add-on's exposed port, and a
-`.env` carrying production's port or password fails closed against the local
-service, which is the direction the design wants (spec decision 5).
+purpose. 6379 is both Laravel's default and the add-on's exposed port, and the
+design's ground for leaving them is that a `.env` carrying production's port or
+password fails closed against the local service, which is the direction it wants
+(spec decision 5). That failing-closed is the design's **inference, not a
+measurement**: no run here has pointed a wrong port or a stale password at the
+DDEV Redis and watched it refuse, so what the two keys actually do to a synced
+project is unobserved in either direction.
 
 ## A rule this session earned four times over
 

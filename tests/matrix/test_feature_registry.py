@@ -157,11 +157,25 @@ def test_every_env_marker_is_consistent_with_its_profile_and_its_recipe() -> Non
                     f"{where}: the profile imposes the same value, so nothing is overridden"
                 )
                 # Alone, an overridden key also passes when the profile has
-                # stopped writing it; the imposed keys beside it are the other
-                # half of the evidence.
+                # stopped writing it: the project's would be the only value
+                # left and would still read back. The other half of the
+                # evidence is an imposed key that landed in the same file -
+                # and it has to be one the recipe does not declare. An imposed
+                # key the recipe writes with the same value is no control at
+                # all, which `cells.py` says of `DB_HOST` and `REDIS_HOST` in
+                # as many words: a step that never ran would leave those
+                # reading correctly, so would a step that kept running and
+                # stopped writing the overridden key.
                 assert any(
-                    other.kind == "imposed" and other.key in imposed for other in cell.env_markers
-                ), f"{cell.name} declares an overridden marker with no imposed marker beside it"
+                    other.kind == "imposed"
+                    and other.key in imposed
+                    and not _recipe_values(cell.name, other.key)
+                    for other in cell.env_markers
+                ), (
+                    f"{cell.name} declares an overridden marker with no imposed marker beside it "
+                    "whose key the recipe leaves undeclared; an imposed key the recipe writes too "
+                    "would read correctly even from a step that had stopped writing this one"
+                )
             if marker.contrary is not None:
                 assert marker.kind == "imposed", f"{where} has a contrary value but is not imposed"
                 assert marker.contrary != marker.expected, f"{where}: contrary equals expected"

@@ -28,7 +28,18 @@ production's Redis from the developer's machine.
 ## What was measured
 
 Everything in this section was observed on this repository at `73363a9`, in the
-`mxfeathorizon` and `mxfeatlaravel` cells or in the sources named.
+`mxfeathorizon` and `mxfeatlaravel` cells or in the sources named - so a bullet
+describes the tree **before** this change, and some of what it records (the
+`env.set` pins, the early return, the `.env` arithmetic) is deliberately no
+longer true of the tree that implemented it. Two bullets carry newer material
+and say so inline: the per-key merge was **re-measured** on `feat/env-defaults`
+on 2026-10-13, and the `patch_keys` arithmetic is corrected by a **reading** of
+the recipe and the profile with no run behind it. Nothing else in this section
+was re-read. The only line numbers re-checked are the three those two bullets
+name (`operations/env.py:33`, `config/merge.py:87-89`,
+`features/schema.py:30`); every other citation here is as it stood at
+`73363a9`, and at least one is known stale - the early-return bullet below
+describes a guard this change widened.
 
 - **The harm.** `profiles/laravel.yaml:9-11` opens the `env` block with `file: [.env]` and
   `strategy: patch_keys`, and lines 25-27 hold `QUEUE_CONNECTION: sync`,
@@ -41,12 +52,21 @@ Everything in this section was observed on this repository at `73363a9`, in the
   measurable after adding `env: set: QUEUE_CONNECTION: redis` to its own
   `ddev-sync.yaml`.
 - **`patch_keys` appends absent keys**, not only overwrites present ones
-  (`src/ddev_sync/operations/env.py:32`, whose docstring says so in as many
+  (`src/ddev_sync/operations/env.py:33`, whose docstring says so in as many
   words: "Replace each key's value in place; append keys that are not
-  present."). Observed: the
-  `mxfeathorizon` recipe writes a 13-line `.env`, and after a sync the file is
-  19 lines, the six added being `APP_DEBUG`, three `MAIL_*`, `SESSION_DRIVER`
-  and `CACHE_STORE`, in the profile's `env.set` order.
+  present." Line 32 is the `def`; an earlier correction of this citation to
+  `:32` was wrong, and both places that took it have been put back.) Observed
+  at `73363a9`, and the figures belong to that tree: the `mxfeathorizon` recipe
+  wrote a 13-line `.env`, and after a sync the file was 19 lines, the six added
+  being `APP_DEBUG`, three `MAIL_*`, `SESSION_DRIVER` and `CACHE_STORE`, in the
+  profile's `env.set` order. *That arithmetic no longer describes the tree*, and
+  what follows is a reading of the recipe and the profile rather than a fresh
+  run: the recipe now writes 17 keys, `CACHE_STORE` and the three URL keys among
+  them, so those four are overwrites, and what the step appends is `APP_DEBUG`,
+  the three `MAIL_*`, `CACHE_DRIVER` and `SESSION_DRIVER`.
+  `profiles/VERIFIED.md`'s `horizon` row carries the current form, where
+  `CACHE_DRIVER` and `SESSION_DRIVER` are the appends an assertion covers and
+  `APP_DEBUG` and `MAIL_MAILER` are the two covered by nothing.
 - **Only `laravel` pins driver choices.** `symfony` and `shopware6` also run
   `patch_keys`, but their `env.set` holds connection targets (`DATABASE_*`,
   `DATABASE_URL`, `MAILER_DSN`) plus `APP_ENV`/`APP_DEBUG` and nothing else.
@@ -60,9 +80,12 @@ Everything in this section was observed on this repository at `73363a9`, in the
   absent** (`src/ddev_sync/operations/env.py:105-106`).
 - **The `env` mapping merges per key, and a feature could contribute one.** Two
   halves, resting on different things, so they are stated apart.
-  *The merge is asserted:* `src/ddev_sync/config/merge.py` recurses into
-  mappings with `DEFAULT_LIST_MODE = "extend"`, so a later layer overrides an
-  earlier one per key rather than replacing the mapping - and the
+  *The merge is asserted, and re-measured on `feat/env-defaults` on 2026-10-13
+  rather than at `73363a9`:* `src/ddev_sync/config/merge.py`'s `merge_layers`
+  recurses into mappings (`merge.py:87-89`), so a later layer overrides an
+  earlier one per key rather than replacing the mapping. `DEFAULT_LIST_MODE =
+  "extend"` is a different behaviour and governs list directives, not this; an
+  earlier wording of this bullet credited the per-key mapping merge to it. The
   `mxfeathorizon` cell's own `ddev-sync.yaml` sets `MAIL_PORT: "2525"` against
   the profile's imposed `1025`, after which the written `.env` reads
   `MAIL_PORT=2525` beside the profile's own `MAIL_HOST=localhost`. The pair is
@@ -70,7 +93,10 @@ Everything in this section was observed on this repository at `73363a9`, in the
   `2525` just as well had the profile stopped writing the key
   (`test_the_env_step_imposed_what_it_must_and_kept_what_it_should`, with each
   key's layer membership checked statically by
-  `test_every_env_marker_is_consistent_with_its_profile_and_its_recipe`).
+  `test_every_env_marker_is_consistent_with_its_profile_and_its_recipe`, which
+  also requires the imposed key standing beside an overridden one to be a key
+  the cell's recipe does not itself declare - otherwise the control would read
+  correctly even from a step that had stopped writing the overridden key).
   *The feature half is the schema only:* `src/ddev_sync/features/schema.py:30`
   lists `env` in `CONTRIBUTION_KEYS`, so a feature may carry an `env` block -
   but no shipped feature declares one and no cell exercises it, so that a
