@@ -11,10 +11,10 @@ composer create-project --no-interaction --prefer-dist laravel/laravel .
 # refuses in production without `--force` - the engine execs
 # non-interactively, so the prompt resolves to its default of false, the
 # command returns 1 and clears nothing, and `allow_failure: true` reports that
-# as fine. But what keeps this cell out of that state is the same profile step
-# credited below for `CACHE_STORE`: `profiles/laravel.yaml`'s `env.set` carries
-# `APP_ENV: local`, `patch_keys` appends keys the file does not already have,
-# and `engine/steps.py` puts ENV in the `db` group, ordered before SETUP. So on
+# as fine. But what keeps this cell out of that state is the profile's env
+# step: `profiles/laravel.yaml`'s `env.set` carries `APP_ENV: local`,
+# `patch_keys` appends keys the file does not already have, and
+# `engine/steps.py` puts ENV in the `db` group, ordered before SETUP. So on
 # any sync that includes `db` - the default, and what the whole-sync test runs
 # before the queue test - the key reads `local` by the time the command runs,
 # whether or not the project ever set it. Deleting this line would not fail the
@@ -23,23 +23,52 @@ composer create-project --no-interaction --prefer-dist laravel/laravel .
 # `env: strategy: none`, and a project override that pins APP_ENV itself.
 #
 # `QUEUE_CONNECTION=redis` because the skeleton ships `database`, and a job on
-# the database queue is not in the queue Horizon clears. The profile's env step
-# rewrites this key to `sync` on every sync, which would take Horizon's queue
-# out of use; the cell's `ddev-sync.yaml` overrides it back, and the comment
-# there is where that interaction is written down. `REDIS_CLIENT=predis`
-# because the skeleton ships `phpredis` and this image has no redis extension.
+# the database queue is not in the queue Horizon clears. The profile defaults
+# this key (`env.default`) rather than imposing it, so the sync leaves the
+# line below as it is, and this cell's `ddev-sync.yaml` needs no override.
+# That is the point of writing it here: the env test reads the key back after
+# the sync, and a profile that took the queue away again would turn it red.
+# `REDIS_CLIENT=predis` because the skeleton ships `phpredis` and this image
+# has no redis extension.
 #
-# What this .env deliberately does NOT set is `CACHE_STORE`. The laravel
-# profile's setup runs `php artisan optimize:clear`, which includes
-# `cache:clear`, and `Illuminate\Cache\RedisStore::flush()` is a `flushdb()`
-# (vendor/laravel/framework/src/Illuminate/Cache/RedisStore.php) - it wipes
-# the whole Redis database, every `queues:*` key included, so a Redis cache
-# store would empty the planted queue and leave the cell green for an effect
-# `horizon:clear` did not cause. What rules that out is the profile, not this
-# silence: its env step pins `CACHE_STORE: file` on every sync. The key is
-# left unset so the recipe does not state a value the profile then contradicts
-# - unset, the pre-sync store is `database`, which `config/cache.php` declares
-# (`env('CACHE_STORE', 'database')`) and the skeleton's `.env.example` ships.
+# `CACHE_STORE=redis` is a contrary value, written on purpose: the one a
+# developer running a Redis cache would have. The laravel profile's setup runs
+# `php artisan optimize:clear`, which includes `cache:clear`, so the sync
+# empties whatever cache store the project configured - and for a remote store
+# that is somebody else's data (`MemcachedStore::flush()` flushes a whole
+# server). That is why the profile's `env.set` imposes `CACHE_STORE: file` on
+# every sync instead of leaving it to the project. Writing `redis` here makes
+# that a measured overwrite: the env test reads `file` after the sync where
+# this file says `redis`, so it fails if the key is ever defaulted or dropped
+# instead. Unset, the key would read `file` after a sync either way and prove
+# nothing; the registry test checks this line is still here.
+#
+# The contrary value does not endanger the queue evidence, and the reason is the
+# skeleton's own config rather than luck: `config/database.php` gives the
+# `default` Redis connection `env('REDIS_DB', '0')` and the `cache` connection
+# `env('REDIS_CACHE_DB', '1')`. `RedisStore::flush()` is a `flushdb()` on the
+# cache connection, so a Redis cache would empty database 1 while the planted
+# queue sits in database 0. Had this recipe pointed both at one database, the
+# flush would have wiped `queues:*` too and left the cell green for an effect
+# `horizon:clear` did not cause.
+#
+# `CACHE_DRIVER` (the Laravel 10 name of the same key) and `SESSION_DRIVER` are
+# deliberately left unset. One contrary cache key is enough to prove the
+# mechanism. `CACHE_DRIVER` is read as an imposed key the recipe never wrote,
+# which only the step can have put there. `SESSION_DRIVER` is read as `file`,
+# which says the profile's value is present and nothing more: for one key in one
+# run a default and an imposition write the same line, so that it is a default
+# is checked statically against the profile in `test_feature_registry.py`, and
+# the mechanism is proven by `QUEUE_CONNECTION` above, where an imposed key
+# would have produced `sync`.
+#
+# The three URL keys (`REDIS_URL`, `DB_URL`, `DATABASE_URL`) are appended
+# further down, after the install's artisan calls, with production-like values.
+# The profile imposes each as empty, and the env test reads them back empty,
+# because a non-empty URL is `array_merge`d over every discrete host, port,
+# user and password key beside it and would send a synced project to
+# production's Redis or database whatever those pins say. They cannot sit in
+# this file: `migrate` below would read `DB_URL` and connect to the remote host.
 cat > .env <<'ENV'
 APP_ENV=local
 APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
@@ -54,6 +83,7 @@ QUEUE_CONNECTION=redis
 REDIS_CLIENT=predis
 REDIS_HOST=ddev-mxfeathorizon-redis
 REDIS_PORT=6379
+CACHE_STORE=redis
 ENV
 
 php artisan migrate --force --no-interaction
@@ -78,6 +108,15 @@ composer require --no-interaction laravel/horizon predis/predis
 # empty, which is all the marker needs: what is asserted is that one entry
 # sits in the queue Horizon is about to clear, not what the entry would do.
 php artisan make:job MatrixMarkerJob --no-interaction
+
+# Production-like and unmistakably remote (`.invalid` never resolves), so a
+# reader of the kept tree sees what the sync neutralised. Appended only now:
+# every artisan call above that touches a database has already run.
+cat >> .env <<'ENV'
+REDIS_URL=redis://:s3cret@redis.production.invalid:6379
+DB_URL=mysql://acme:s3cret@db.production.invalid:3306/acme_prod
+DATABASE_URL=mysql://acme:s3cret@db.production.invalid:3306/acme_prod
+ENV
 
 composer show laravel/framework | grep -E '^(name|versions) '
 composer show laravel/horizon | grep -E '^(name|versions) '

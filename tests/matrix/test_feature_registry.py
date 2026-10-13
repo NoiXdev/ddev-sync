@@ -13,8 +13,9 @@ import itertools
 import re
 
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT, FeatureRegistry
+from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT, ProfileRegistry
 from tests.matrix.cells import CELLS
-from tests.matrix.paths import HERE
+from tests.matrix.paths import HERE, cell_dir
 
 # The charset stated above `Cell.name`: the `mx` prefix, then letters and
 # digits, which is what excludes the hyphen `-k` cannot match and the
@@ -78,3 +79,64 @@ def test_every_declared_service_is_a_compose_profile() -> None:
             f"cell service {name!r} is not a compose profile in docker-compose.yaml; "
             "each service's `profiles:` entry carries the service's own name"
         )
+
+
+def test_some_cell_declares_env_markers_of_each_kind() -> None:
+    # Against a registry where every `env_markers` is empty, the assertion in
+    # `test_matrix.py` skips for every cell and proves nothing. Each kind is
+    # required separately because they are three different promises: imposed,
+    # kept, and defaulted.
+    kinds = {marker.kind for cell in CELLS for marker in cell.env_markers}
+    assert kinds == {"imposed", "kept", "defaulted"}, (
+        f"only {sorted(kinds)} are asserted anywhere; the env step's other promises "
+        "have no cell behind them"
+    )
+
+
+def _recipe_values(cell_name: str, key: str) -> list[str]:
+    """Every value the cell's `install.sh` assigns to `key` at the start of a line."""
+    text = (cell_dir(cell_name) / "install.sh").read_text(encoding="utf-8")
+    return re.findall(rf"^{re.escape(key)}=(.*)$", text, flags=re.MULTILINE)
+
+
+def test_every_env_marker_is_consistent_with_its_profile_and_its_recipe() -> None:
+    # The run cannot show some of what a marker claims, so this checks it
+    # statically. For one key in one run a `defaulted` key and an `imposed`
+    # key write the same line, so only the profile can say which list the key
+    # is in; and an `imposed` marker is a measured overwrite only while the
+    # recipe still declares the contrary value, which deleting one line from
+    # `install.sh` would otherwise undo with every test still green.
+    profiles = ProfileRegistry(DEFAULT_PROFILE_ROOT)
+    checked = 0
+    for cell in CELLS:
+        if not cell.env_markers:
+            continue
+        env = profiles.resolve(cell.profile, None).data["env"]
+        imposed, defaulted = env.get("set", {}), env.get("default", {})
+        for marker in cell.env_markers:
+            checked += 1
+            where = f"{cell.name}: {marker.kind} marker {marker.key}"
+            written = _recipe_values(cell.name, marker.key)
+            if marker.kind == "imposed":
+                assert marker.key in imposed, f"{where} is not in {cell.profile}'s env.set"
+            if marker.kind == "defaulted":
+                assert marker.key in defaulted, f"{where} is not in {cell.profile}'s env.default"
+                assert marker.key not in imposed, (
+                    f"{where} is in env.set too, so the run cannot tell the two apart"
+                )
+                assert not written, f"{where} is declared by the recipe, so it is not defaulted"
+            if marker.kind == "kept":
+                assert marker.key in defaulted and marker.key not in imposed, (
+                    f"{where} must be in env.default and not in env.set, or keeping proves nothing"
+                )
+                assert written == [marker.expected], (
+                    f"{where}: the recipe must write {marker.expected!r}, found {written}"
+                )
+            if marker.contrary is not None:
+                assert marker.kind == "imposed", f"{where} has a contrary value but is not imposed"
+                assert marker.contrary != marker.expected, f"{where}: contrary equals expected"
+                assert written == [marker.contrary], (
+                    f"{where}: install.sh must write {marker.contrary!r} before the sync, "
+                    f"found {written}; without it the marker no longer measures an overwrite"
+                )
+    assert checked, "no cell declares an env marker, so the loop above checked nothing"

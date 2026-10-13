@@ -689,6 +689,44 @@ def test_the_feature_rule_removed_the_planted_row(stack: Stack, cell: Cell) -> N
         )
 
 
+def test_the_env_step_imposed_what_it_must_and_kept_what_it_should(
+    stack: Stack, cell: Cell
+) -> None:
+    # The claim: the env step writes what the profile imposes, leaves what the
+    # project declared, and fills what neither did. Until this test, nothing in
+    # the matrix read a `.env` at all - the evidence for the step's effect was
+    # a hand reading of a kept tree, which leaves no trace and turns nothing
+    # red on regression.
+    #
+    # `.env` rather than the profile's candidate list: no cell creates a
+    # `.env.local`, so that list resolves to `.env` for every cell that
+    # declares markers, and mirroring `_find_env_file`'s search here would
+    # duplicate the logic under test.
+    if not cell.env_markers:
+        pytest.skip(f"{cell.name} asserts no env keys")
+    path = work_dir(cell.name) / ".env"
+    assert path.is_file(), f"{cell.name} declares env markers but has no .env after the sync"
+    # Same shape as `_ASSIGNMENT` in `operations/env.py` - an anchored key,
+    # then `\s*=\s*` - and the value stripped as well. The operation treats
+    # `KEY = value` as a clean declaration; a parser that split on a bare `=`
+    # would read the key as `KEY ` and disagree with it about the same file
+    # format, which is the defect the operation's own `declared_keys` exists
+    # to avoid. Comments and indented lines are not assignments to either.
+    declared: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        found = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", line)
+        if found is not None:
+            declared[found.group(1)] = found.group(2).strip()
+    for marker in cell.env_markers:
+        assert marker.key in declared, (
+            f"{marker.key} is absent from .env, and the cell says it should be "
+            f"{marker.kind} as {marker.expected!r}"
+        )
+        assert declared[marker.key] == marker.expected, (
+            f"{marker.key} is {declared[marker.key]!r}, not the {marker.kind} {marker.expected!r}"
+        )
+
+
 def test_the_feature_command_emptied_the_planted_queue(stack: Stack, cell: Cell) -> None:
     # The claim: a feature whose effect lands in Redis really clears it. Same
     # device as the planted cache row, in a different store: the entry is

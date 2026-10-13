@@ -7,6 +7,7 @@ recipe files, not a new test.
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,41 @@ class FeatureCheck:
     row_marker: FlushMarker | None = None
     redis_marker: RedisMarker | None = None
     index_marker: IndexMarker | None = None
+
+
+@dataclass(frozen=True)
+class EnvMarker:
+    """One key the project's `.env` must carry after a sync, and who wrote it.
+
+    Three kinds, because the env step makes three different promises:
+
+    - `imposed`: the profile's `env.set` carries the key, so the value must be
+      the profile's whatever the project said. Only a recipe that declares a
+      contrary value (`contrary`) makes this a measured overwrite; without one
+      the key merely reads right, which an absent key filled by a default
+      would do too.
+    - `kept`: the project declared the key itself and the profile only
+      `env.default`s it, so the project's value must survive the sync. This is
+      the kind that proves the default mechanism: an imposed key would have
+      overwritten the recipe's value.
+    - `defaulted`: the project declared nothing, and the profile's default
+      value is present. For a single key in a single run this is
+      indistinguishable from `imposed` - a key in `env.set` writes the same
+      line - so the run cannot show that the key sits in `env.default`.
+      `test_feature_registry.py` checks that against the profile statically;
+      the mechanism itself is proven by a `kept` marker.
+
+    `contrary` is the value the cell's recipe writes before the sync, for an
+    `imposed` key whose imposition the cell means to measure. It must differ
+    from `expected` and `test_feature_registry.py` checks the recipe really
+    declares it, so deleting that line cannot silently turn the marker back
+    into a control.
+    """
+
+    key: str
+    expected: str
+    kind: Literal["imposed", "kept", "defaulted"]
+    contrary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,6 +219,7 @@ class Cell:
     remote_packages: str = "mariadb-client|rsync"
     features: tuple[FeatureCheck, ...] = ()
     services: tuple[str, ...] = ()
+    env_markers: tuple[EnvMarker, ...] = ()
 
 
 # Every TYPO3 cell keeps the same cache tables, so they all plant the same row.
@@ -297,6 +334,65 @@ CELLS: tuple[Cell, ...] = (
         docroot="public",
         php_image="php:8.3-cli",
         services=("redis",),
+        env_markers=(
+            # The reason this cell needs no override: `install.sh` writes
+            # QUEUE_CONNECTION=redis, the profile only defaults it, so the
+            # project's value has to survive the sync. The cell's first run
+            # lost its planted job to the old behaviour, which set `sync`.
+            EnvMarker(key="QUEUE_CONNECTION", expected="redis", kind="kept"),
+            # Declared by nothing in the recipe, so the profile's value must
+            # be there. This does not show that the key is a default rather
+            # than imposed - the run writes the same line either way; the
+            # registry test checks `env.default` against the profile, and
+            # QUEUE_CONNECTION above is what proves the mechanism.
+            EnvMarker(key="SESSION_DRIVER", expected="file", kind="defaulted"),
+            # CACHE_STORE is imposed, and this is the measured case: the recipe
+            # writes `CACHE_STORE=redis`, a contrary value chosen on purpose,
+            # so reading `file` after the sync is an overwrite the step made
+            # rather than an absence it filled. The sync's own `optimize:clear`
+            # flushes whatever cache store is configured, which for a remote
+            # store is somebody else's data; a regression that defaulted the
+            # key would keep `redis` here and turn this red. CACHE_DRIVER is the same key
+            # under its Laravel 10 name and is left undeclared by the recipe,
+            # so it is an appended imposed key, not a second proof of
+            # overwriting.
+            EnvMarker(key="CACHE_STORE", expected="file", kind="imposed", contrary="redis"),
+            EnvMarker(key="CACHE_DRIVER", expected="file", kind="imposed"),
+            # The three URL keys, which the recipe fills with production-like
+            # values and the profile must blank. A non-empty URL is
+            # `array_merge`d over every discrete host, port, user and password
+            # key beside it, so an unblanked one would point this synced
+            # project at production's Redis or database whatever the pins say.
+            # Empty is the value that makes them inert. They are written after
+            # the install's own artisan calls (see `install.sh`), which would
+            # otherwise connect to the remote host.
+            EnvMarker(
+                key="REDIS_URL",
+                expected="",
+                kind="imposed",
+                contrary="redis://:s3cret@redis.production.invalid:6379",
+            ),
+            EnvMarker(
+                key="DB_URL",
+                expected="",
+                kind="imposed",
+                contrary="mysql://acme:s3cret@db.production.invalid:3306/acme_prod",
+            ),
+            EnvMarker(
+                key="DATABASE_URL",
+                expected="",
+                kind="imposed",
+                contrary="mysql://acme:s3cret@db.production.invalid:3306/acme_prod",
+            ),
+            # Imposed, but not evidence that the step ran: the recipe writes
+            # these same two hosts, so a step that never executed would leave
+            # them reading correctly. The keys above are what rule that out,
+            # since the recipe declares each of them with another value or not
+            # at all. These two check that the pin resolves `${DDEV_SITENAME}`
+            # to the cell's name.
+            EnvMarker(key="DB_HOST", expected="ddev-mxfeathorizon-db", kind="imposed"),
+            EnvMarker(key="REDIS_HOST", expected="ddev-mxfeathorizon-redis", kind="imposed"),
+        ),
         # `mxlaravel`'s profile-shaped values, verbatim: `Cell`'s docstring
         # defines None/() as "the profile has no such rule", so emptying them
         # would make that meaning false and print a lying skip reason.
@@ -334,12 +430,12 @@ CELLS: tuple[Cell, ...] = (
                     # job sits in the queue Horizon is about to clear, not what
                     # the job would have done.
                     #
-                    # A plain `dispatch` reaches Redis only because the cell's
-                    # `ddev-sync.yaml` overrides the profile's
-                    # `QUEUE_CONNECTION: sync` back to `redis` - see the
-                    # comment there, which is where that interaction is
-                    # documented. The feature's own command does not depend on
-                    # that override: `horizon:clear` takes its connection from
+                    # A plain `dispatch` reaches Redis only because the sync
+                    # leaves the recipe's `QUEUE_CONNECTION=redis` alone: the
+                    # profile defaults that key rather than imposing it, and
+                    # `env_markers` above asserts it survived. The feature's
+                    # own command does not depend on that: `horizon:clear`
+                    # takes its connection from
                     # the first entry of `horizon.defaults`, which is `redis`
                     # (vendor/laravel/horizon/src/Console/ClearCommand.php),
                     # not from `queue.default`.
