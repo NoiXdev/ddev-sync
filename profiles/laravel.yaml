@@ -9,6 +9,8 @@ detect:
 env:
   file: [.env]
   strategy: patch_keys
+  # Imposed on every sync: a foreign value here could reach outside this
+  # machine, or contradict what the sync has just done.
   set:
     APP_ENV: local
     APP_DEBUG: "true"
@@ -22,6 +24,21 @@ env:
     MAIL_MAILER: smtp
     MAIL_HOST: localhost
     MAIL_PORT: "1025"
+    # The connection target, pinned the way DB_HOST is. DDEV's Redis add-on
+    # sets no environment variable at all - its compose file declares
+    # `container_name: ddev-${DDEV_SITENAME}-redis` and
+    # `hostname: ${REDIS_HOSTNAME:-redis}` and nothing else - so this collides
+    # with nothing, and the container name is the half a project cannot rename
+    # out from under us. A project whose Redis is elsewhere overrides this key;
+    # that is the accepted cost of not letting a production .env reach
+    # production's Redis from a developer's machine.
+    REDIS_HOST: "ddev-${DDEV_SITENAME}-redis"
+  # The project's own choices. Written only when the project declares nothing,
+  # so a Horizon installation keeps its queue and a Redis-backed cache or
+  # session survives a sync. Getting these wrong costs the developer a loud
+  # local failure and nothing outside the machine, which is what puts them
+  # here rather than above.
+  default:
     QUEUE_CONNECTION: sync
     SESSION_DRIVER: file
     CACHE_STORE: file
@@ -43,7 +60,7 @@ sanitize:
   rules:
     # These TRUNCATE tables that may not exist depending on project config:
     # `sessions` only exists with the `database` session driver (not `file`,
-    # the profile's own default - see env.set.SESSION_DRIVER above); `jobs`
+    # the profile's own default - see env.default.SESSION_DRIVER above); `jobs`
     # and `failed_jobs` only exist if the project ran the `queue:table` /
     # `queue:failed-table` migrations, which a Redis- or SQS-backed queue
     # never needs. `_run_sql` raises unconditionally and the executor stops

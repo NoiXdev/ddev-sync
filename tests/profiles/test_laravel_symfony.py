@@ -142,3 +142,22 @@ def test_symfony_user_table_is_overridable(tmp_path: Path) -> None:
     assert anonymize.sql == "UPDATE app_user SET email = CONCAT('user', id, '@example.invalid')"
     assert anonymize.requires_table == "app_user"
     assert reset.params["table"] == "app_user"
+
+
+def test_the_driver_choices_are_defaults_and_the_targets_are_imposed() -> None:
+    # The rule the spec settles on: impose a key when a foreign value could
+    # reach outside the machine or contradict what the sync just did; default
+    # it when a wrong value stays local. MAIL_MAILER is a driver choice and
+    # still imposed, because a local app holding freshly imported production
+    # addresses must not send real mail.
+    env = REGISTRY.resolve("laravel", None).data["env"]
+    assert env["default"] == {
+        "QUEUE_CONNECTION": "sync",
+        "SESSION_DRIVER": "file",
+        "CACHE_STORE": "file",
+    }
+    assert env["set"]["REDIS_HOST"] == "ddev-${DDEV_SITENAME}-redis"
+    for key in ("APP_ENV", "APP_URL", "DB_HOST", "DB_DATABASE", "MAIL_MAILER", "MAIL_HOST"):
+        assert key in env["set"], f"{key} must stay imposed"
+    for key in ("QUEUE_CONNECTION", "SESSION_DRIVER", "CACHE_STORE"):
+        assert key not in env["set"], f"{key} must no longer be imposed"
