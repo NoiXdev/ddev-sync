@@ -79,7 +79,7 @@ from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import CollectedTarget, collect_targets, resolve_target
 from ddev_sync.config.writer import WriteRefused, render_target, write_settings, write_target
 from ddev_sync.errors import ConfigError, DdevSyncError, DeployerError
-from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.base import ExecutionContext, OperationError, discard_progress
 from ddev_sync.operations.database import DATABASE_ENV_FILE_KEY, remote_env_candidates
 from ddev_sync.operations.placeholders import (
     PRODUCTION_URL_CONFIG_KEY,
@@ -194,8 +194,16 @@ def init_command(
             runner=runner,
             deployer=deployer,
         )
+        # `init` is a conversation: it asks, waits for an answer, and asks
+        # again. Progress lines belong to a run that is working while the user
+        # watches, which this is not.
         execution = _execution_context(
-            context, runner=runner, assume_yes=True, secrets=set(), stdout_is_terminal=False
+            context,
+            runner=runner,
+            assume_yes=True,
+            secrets=set(),
+            stdout_is_terminal=False,
+            progress=discard_progress,
         )
         wordpress = resolution.profile.name == WORDPRESS_PROFILE
         fixed, wrote_legacy_credentials = _fix_credentials(execution, paths, wordpress, echo)

@@ -204,3 +204,23 @@ def test_without_secrets_nothing_is_touched() -> None:
     reporter, lines = capture()
     reporter.notice("nothing to hide")
     assert lines == ["  !     nothing to hide"]
+
+
+def test_a_progress_line_sits_under_the_step_name() -> None:
+    """Same column as a failure's text: both belong to the step above them."""
+    reporter, lines = capture()
+    reporter.starting(step(StepKind.PREFLIGHT))
+    reporter.progress("reaching deploy@web01.example")
+
+    assert lines[1] == "        reaching deploy@web01.example"
+
+
+def test_a_progress_line_is_scrubbed_like_every_other_line() -> None:
+    """It is built from a target's own fields, and a target can carry a
+    password in a URL; the reporter's single gate covers this line too."""
+    lines: list[str] = []
+    reporter = ConsoleReporter(write=lines.append, secrets={"hunter2"})
+
+    reporter.progress("reaching deploy:hunter2@web01.example")
+
+    assert "hunter2" not in lines[0]

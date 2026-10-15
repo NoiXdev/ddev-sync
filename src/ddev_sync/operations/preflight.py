@@ -37,7 +37,7 @@ from ddev_sync.operations.files import validate_path_pairs
 from ddev_sync.operations.sanitize import SanitizeRule, parse_rules
 from ddev_sync.transport.container import web_command
 from ddev_sync.transport.runner import CommandResult
-from ddev_sync.transport.ssh import ssh_command
+from ddev_sync.transport.ssh import remote_endpoint, ssh_command
 
 MIN_FREE_BYTES = 2 * 1024**3
 
@@ -134,6 +134,12 @@ class PreflightOperation:
         pairs have already rsynced.
         """
         validate_path_pairs(context)
+        # Announced before the round trip, not after: a probe that is still
+        # waiting is the one worth naming, and the next line appearing is how
+        # a reader learns this one came back. `validate_path_pairs` above gets
+        # none - it is local and instant, and a line for it would only teach
+        # the reader to skip these.
+        context.progress(f"reaching {remote_endpoint(context.target)}")
         report, stderr = self._probe(context)
         if not report.ssh_ok:
             raise OperationError(self._ssh_help(context, stderr))
@@ -152,10 +158,12 @@ class PreflightOperation:
             # run, because everything after this reads the database. Gated on
             # the selection: a `files`-only sync never reads credentials, and
             # refusing it over them would break a run that was going to work.
+            context.progress("reading the remote database credentials")
             ok, detail = self._check_credentials(context, report)
             if ok is False:
                 raise OperationError(detail)
         if bool(params.get("sanitize_selected", False)):
+            context.progress("checking the tables the sanitize rules name")
             self._probe_sanitize_tables(context)
 
     def check(self, context: ExecutionContext) -> PreflightReport:

@@ -24,7 +24,9 @@ _NAME_WIDTH = 14
 _RUNNING = ".."
 _MARKS = {"ok": "OK", "failed": "FAIL", "skipped": "--"}
 # Failure text sits under the step name, one column in from the marker.
-_ERROR_INDENT = " " * (2 + _MARK_WIDTH)
+# A progress line sits in the same column and for the same reason: both
+# belong to the step above them rather than standing on their own.
+_UNDER_NAME = " " * (2 + _MARK_WIDTH)
 _MARK_COLOURS = {"ok": Colour.GREEN, "failed": Colour.RED}
 
 
@@ -89,7 +91,17 @@ class ConsoleReporter:
         self._write(line.rstrip())
         if outcome.error is not None:
             for text in str(outcome.error).splitlines():
-                self._write(f"{_ERROR_INDENT}{text}")
+                self._write(f"{_UNDER_NAME}{text}")
+
+    def progress(self, text: str) -> None:
+        """Say what the running step is waiting for.
+
+        Written before the wait, not after, so the line a reader is looking
+        at is the one still outstanding; the next line appearing is how they
+        learn this one came back. Unmarked on purpose - a marker column would
+        claim it is a step, and the step is the line above.
+        """
+        self._write(f"{_UNDER_NAME}{text}")
 
     def notice(self, text: str) -> None:
         """Report something the user should read."""

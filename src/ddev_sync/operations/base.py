@@ -1,7 +1,7 @@
 """Shared context and the protocol every operation implements."""
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -82,6 +82,16 @@ def redact(text: str, secret: str) -> str:
     return text.replace(secret, "<REDACTED>") if secret else text
 
 
+def discard_progress(text: str) -> None:
+    """Throw away a progress line, for a context nobody is watching.
+
+    A module-level function rather than a lambda or `None`: it is the default
+    of a dataclass field, so it has to be a single shared object, and a caller
+    that wanted to silence progress explicitly can name it.
+    """
+    return None
+
+
 @dataclass(frozen=True)
 class ExecutionContext:
     """Everything an operation needs, and nothing it does not."""
@@ -126,6 +136,14 @@ class ExecutionContext:
     # without a pty, and would answer differently in the sidecar than on a
     # host.
     stdout_is_terminal: bool = False
+    # Where a long step says what it is about to wait for. An operation calls
+    # this and never asks whether anyone is listening: the default discards
+    # the text, so `doctor`, the matrix cells and every test that builds a
+    # context without one are unaffected. Who listens - and whether a
+    # non-terminal run listens at all - is decided at the CLI edge, for the
+    # same reason as the flag above. `compare=False` so that two otherwise
+    # identical contexts stay equal when only their listener differs.
+    progress: Callable[[str], None] = field(default=discard_progress, compare=False, repr=False)
 
     def setting(self, path: str) -> Any:
         """The raw value at a dotted path in the merged config, or `None`.

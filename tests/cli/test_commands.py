@@ -7,8 +7,11 @@ import pytest
 from ddev_sync.cli import commands
 from ddev_sync.cli.context import build_context
 from ddev_sync.cli.main import main
+from ddev_sync.cli.reporter import ConsoleReporter
 from ddev_sync.config.merge import MergeResult
 from ddev_sync.errors import DdevSyncError
+from ddev_sync.operations.base import discard_progress
+from ddev_sync.transport.fake import FakeCommandRunner
 from ddev_sync.transport.runner import CommandResult, SubprocessRunner
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
@@ -803,6 +806,7 @@ def test_the_secrets_set_is_handed_to_the_execution_context_not_copied(
         context,
         runner=SubprocessRunner(),
         assume_yes=True,
+        progress=discard_progress,
         secrets=secrets,
         stdout_is_terminal=False,
     )
@@ -1102,3 +1106,93 @@ def test_nothing_available_reads_none_rather_than_an_empty_list() -> None:
         commands.resolve_selection("db", assume_yes=True, available=frozenset())
     with pytest.raises(DdevSyncError, match=r"Available: none\."):
         commands.resolve_selection("", assume_yes=True, available=frozenset())
+
+
+def test_progress_lines_reach_the_reporter_on_a_terminal() -> None:
+    lines: list[str] = []
+    reporter = ConsoleReporter(write=lines.append)
+
+    listen = commands._progress_listener(reporter, stdout_is_terminal=True)
+    listen("reaching deploy@web01.example")
+
+    assert lines == ["        reaching deploy@web01.example"]
+
+
+def test_progress_lines_go_nowhere_without_a_terminal() -> None:
+    """A CI log is read after the fact, where "it is still waiting" has no
+    reader left to reassure - and the lines would outlive their reason."""
+    lines: list[str] = []
+    reporter = ConsoleReporter(write=lines.append)
+
+    listen = commands._progress_listener(reporter, stdout_is_terminal=False)
+    listen("reaching deploy@web01.example")
+
+    assert listen is discard_progress
+    assert lines == []
+
+
+def test_a_sync_on_a_terminal_names_the_round_trip_it_is_waiting_for(
+    project: Path, tmp_path: Path
+) -> None:
+    """The whole chain, not its links: `run_command` builds the listener, puts
+    it on the context, and the preflight operation writes through it.
+
+    Each half of this is covered on its own, which is exactly why this exists:
+    two correct halves can still be wired to different contexts, and nothing
+    else here would notice.
+    """
+    lines: list[str] = []
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout="ddev-sync-ok\n")
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="generic",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag=None,
+        no_features=False,
+    )
+
+    commands.run_command(
+        context,
+        [],
+        runner=runner,
+        dry_run=False,
+        assume_yes=True,
+        echo=lines.append,
+        stdout_is_terminal=True,
+    )
+
+    assert "        reaching deploy@web01.example" in lines
+
+
+def test_the_same_sync_in_a_log_names_nothing(project: Path, tmp_path: Path) -> None:
+    lines: list[str] = []
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout="ddev-sync-ok\n")
+    context = build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="generic",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag=None,
+        no_features=False,
+    )
+
+    commands.run_command(
+        context,
+        [],
+        runner=runner,
+        dry_run=False,
+        assume_yes=True,
+        echo=lines.append,
+        stdout_is_terminal=False,
+    )
+
+    assert not any("reaching" in line for line in lines)

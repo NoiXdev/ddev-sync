@@ -1,3 +1,4 @@
+import dataclasses
 import os
 from collections.abc import Sequence
 from pathlib import Path
@@ -9,7 +10,7 @@ from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations import preflight
-from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.base import ExecutionContext, OperationError, discard_progress
 from ddev_sync.operations.preflight import (
     MIN_FREE_BYTES,
     PreflightOperation,
@@ -1106,3 +1107,63 @@ def test_the_remote_table_probe_does_not_relax_tls(tmp_path: Path) -> None:
     # reach the remote probe unnoticed - verified by injecting it, which the
     # constant-based assertion did not catch.
     assert "--skip-ssl" not in probe
+
+
+def test_preflight_says_which_remote_round_trip_it_is_about_to_make(tmp_path: Path) -> None:
+    """The progress lines exist so a hanging probe can be named.
+
+    They are emitted *before* each round trip, not after: the point is to see
+    the one that is still waiting, and the next line appearing is how a reader
+    learns the previous one finished.
+    """
+    seen: list[str] = []
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="ddev-sync-ok\n")
+    context = make_context(
+        runner,
+        tmp_path,
+        database={
+            "remote_credentials": "explicit",
+            "credentials": {
+                "name": "db",
+                "user": "u",
+                "password": "p",
+                "host": "db.internal",
+                "port": "3306",
+            },
+        },
+        sanitize={"rules": []},
+    )
+    context = dataclasses.replace(context, progress=seen.append)
+
+    PreflightOperation().execute(context, {"db_selected": True, "sanitize_selected": True})
+
+    assert seen == [
+        "reaching deploy@web01.example",
+        "reading the remote database credentials",
+        "checking the tables the sanitize rules name",
+    ]
+
+
+def test_a_files_only_sync_only_announces_the_connection(tmp_path: Path) -> None:
+    """The two database round trips do not happen, so they are not announced."""
+    seen: list[str] = []
+    context = dataclasses.replace(make_context(healthy_runner(), tmp_path), progress=seen.append)
+
+    PreflightOperation().execute(context, {})
+
+    assert seen == ["reaching deploy@web01.example"]
+
+
+def test_preflight_announces_nothing_when_nobody_is_listening(tmp_path: Path) -> None:
+    """A context built without a listener discards the lines, so an operation
+    never has to ask whether anyone is watching - and `doctor`, the matrix
+    cells and every test that builds a context without one are unaffected.
+
+    The call still happens; it is the default that throws the text away. That
+    is what keeps the check out of `preflight.py`.
+    """
+    context = make_context(healthy_runner(), tmp_path)
+    assert context.progress is discard_progress
+
+    PreflightOperation().execute(context, {})

@@ -21,7 +21,7 @@ from ddev_sync.engine.executor import Executor
 from ddev_sync.engine.plan import build_plan
 from ddev_sync.engine.steps import steps_for_selection
 from ddev_sync.errors import DdevSyncError, TargetError
-from ddev_sync.operations.base import ExecutionContext
+from ddev_sync.operations.base import ExecutionContext, discard_progress
 from ddev_sync.operations.preflight import PreflightOperation
 from ddev_sync.transport.runner import CommandRunner
 
@@ -55,8 +55,16 @@ def doctor_command(
     environment; this function only passes it on to the renderer.
     """
     # The doctor runs read-only probes, none of which has progress to show.
+    # Nor does it narrate them: it prints one table when every probe is in,
+    # and a running commentary above that table would be read after the fact,
+    # when the waiting it describes is over.
     execution = _execution_context(
-        context, runner=runner, assume_yes=True, secrets=set(), stdout_is_terminal=False
+        context,
+        runner=runner,
+        assume_yes=True,
+        secrets=set(),
+        stdout_is_terminal=False,
+        progress=discard_progress,
     )
     report = PreflightOperation().check(execution)
     echo(render_doctor(report, context.target, colour=colour))
@@ -129,6 +137,7 @@ def run_command(
         assume_yes=assume_yes,
         secrets=secrets,
         stdout_is_terminal=stdout_is_terminal,
+        progress=_progress_listener(reporter, stdout_is_terminal=stdout_is_terminal),
     )
     report = Executor(reporter=reporter).run(plan, execution)
     if "sanitize" not in selection:
@@ -213,6 +222,20 @@ def resolve_target_name(explicit: str | None, project_root: Path, home: Path) ->
     return chosen
 
 
+def _progress_listener(
+    reporter: ConsoleReporter, *, stdout_is_terminal: bool
+) -> Callable[[str], None]:
+    """Who hears the lines a long step writes while it waits.
+
+    Off a terminal, nobody: those lines exist to show a reader that a wait is
+    still a wait, and a log read after the fact has no such reader - only the
+    noise. The choice is made here at the edge rather than inside the reporter
+    or the operation, which is the rule `stdout_is_terminal` and the colour
+    flag already follow.
+    """
+    return reporter.progress if stdout_is_terminal else discard_progress
+
+
 def _execution_context(
     context: RunContext,
     *,
@@ -220,6 +243,7 @@ def _execution_context(
     assume_yes: bool,
     secrets: set[str],
     stdout_is_terminal: bool,
+    progress: Callable[[str], None],
 ) -> ExecutionContext:
     return ExecutionContext(
         project=context.project,
@@ -231,6 +255,7 @@ def _execution_context(
         keep_dump=_keep_dump(context.merged),
         secrets=secrets,
         stdout_is_terminal=stdout_is_terminal,
+        progress=progress,
     )
 
 
