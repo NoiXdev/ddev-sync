@@ -141,12 +141,6 @@ jobs:
             'python -c "from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT; print(DEFAULT_PROFILE_ROOT)"')" \
             = "/opt/ddev-sync/profiles"
 
-      # The version the image reports has to be the version that was released.
-      # The expected string is read from `pyproject.toml` at the release tag
-      # rather than derived from the semver tag: that file is exactly what the
-      # wheel was built from (the image is built after the version is written,
-      # and the tag is created on that same tree), and it holds the PEP 440
-      # form `--version` prints.
       # The endpoint image, against the artifact an operator would pull. The
       # same three things `ci.yaml`'s endpoint job asserts against a locally
       # built image, now on both architectures: it refuses to start without a
@@ -164,7 +158,7 @@ jobs:
       - name: The endpoint refuses to start with no authorized key
         run: |
           set -euo pipefail
-          if docker run --rm "${ENDPOINT}"; then
+          if docker run --rm --network none "${ENDPOINT}"; then
             echo "::error::the endpoint started with no DDEV_SYNC_AUTHORIZED_KEYS"
             exit 1
           fi
@@ -179,6 +173,12 @@ jobs:
                ! command -v "$b" || { echo "PRESENT: $b"; exit 1; }
              done'
 
+      # The version the image reports has to be the version that was released.
+      # The expected string is read from `pyproject.toml` at the release tag
+      # rather than derived from the semver tag: that file is exactly what the
+      # wheel was built from (the image is built after the version is written,
+      # and the tag is created on that same tree), and it holds the PEP 440
+      # form `--version` prints.
       - name: Check out the release tag
         # Read the file instead of converting the tag: the semver and PEP 440
         # forms differ (`1.2.3-beta.4` is `1.2.3b4`), and a second

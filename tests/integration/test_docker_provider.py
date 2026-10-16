@@ -299,29 +299,28 @@ def test_a_replaced_host_key_is_refused_and_says_where_it_came_from(
     assert "volume" in output.lower()
 
 
-def test_the_endpoint_image_under_test_is_the_one_in_this_tree(endpoint_image: str) -> None:
+@pytest.mark.parametrize("path", ["/usr/local/bin/ddev-sync-endpoint", "/etc/ssh/sshd_config"])
+def test_the_endpoint_the_stack_runs_is_the_one_in_this_tree(
+    endpoint_image: str, path: str
+) -> None:
     # The stack builds the endpoint from `../../endpoint`, and this module's
-    # claims are only about this tree's image if that is true. Compared by
-    # the entrypoint's own identity rather than by a tag, which compose and
-    # the fixture spell differently.
-    built = _run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--entrypoint",
-            "sha256sum",
-            endpoint_image,
-            "/usr/local/bin/ddev-sync-endpoint",
-        ]
-    )
-    running = _run(
-        [*COMPOSE, "exec", "-T", "endpoint", "sha256sum", "/usr/local/bin/ddev-sync-endpoint"]
-    )
+    # claims are only about this tree's image if that is true. Compared by the
+    # files' own identity rather than by a tag, which compose and the fixture
+    # spell differently.
+    #
+    # Both files, not just the entrypoint: compose builds a service only when
+    # its image is *missing*, so an edit to `sshd_config` alone used to leave
+    # the stack running the previous image while every test here reported
+    # green. `conftest.py` passes `--build` for that reason, and this is the
+    # assertion that would notice if it stopped.
+    built = _run(["docker", "run", "--rm", "--entrypoint", "sha256sum", endpoint_image, path])
+    running = _run([*COMPOSE, "exec", "-T", "endpoint", "sha256sum", path])
 
     assert built.returncode == 0, built.stderr
     assert running.returncode == 0, running.stderr
-    assert built.stdout.split()[0] == running.stdout.split()[0]
+    assert built.stdout.split()[0] == running.stdout.split()[0], (
+        f"the stack is running a different {path} than this tree builds"
+    )
 
 
 def test_the_endpoint_says_which_host_key_it_started_with() -> None:

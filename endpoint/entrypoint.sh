@@ -57,6 +57,11 @@ chown "${uid}:${gid}" "$HOME_DIR"
 # decision 6). Root-owned and 0644: sshd drops to the account to open this
 # file, so it has to be readable by it, and StrictModes only asks that nobody
 # else can write it.
+# The directory is in the image, but a stack that mounts a tmpfs over /run -
+# a common hardening recipe - replaces it, and busybox's "can't create ...:
+# nonexistent directory" is not one of this file's named refusals.
+mkdir -p "$(dirname "$COMPOSED_KEYS")"
+chmod 755 "$(dirname "$COMPOSED_KEYS")"
 : > "$COMPOSED_KEYS"
 chmod 644 "$COMPOSED_KEYS"
 if [ -n "${DDEV_SYNC_AUTHORIZED_KEYS:-}" ]; then
@@ -70,6 +75,13 @@ fi
 # reachable, and be impossible to enter.
 grep -qE '^[[:space:]]*[^#[:space:]]' "$COMPOSED_KEYS" ||
     refuse "no authorized keys. Set DDEV_SYNC_AUTHORIZED_KEYS, or mount a key file at ${MOUNTED_KEYS}, or both - the endpoint does not start without one."
+# And they have to *be* keys. A key pasted with CRLF line endings, or
+# truncated by a mangled multi-line secret, passes the check above and
+# produces the one state worth refusing outright: an endpoint that listens, is
+# reachable, and cannot be entered. `ssh-keygen -l` is already in this image
+# for the host key, so this costs nothing it does not already carry.
+ssh-keygen -l -f "$COMPOSED_KEYS" > /dev/null 2>&1 ||
+    refuse "the authorized keys are not readable as public keys. Check for truncated lines or CRLF line endings in DDEV_SYNC_AUTHORIZED_KEYS and ${MOUNTED_KEYS}."
 
 # Said out loud either way: a developer whose connection was just refused as a
 # changed host key needs to know whether this container generated a new one.

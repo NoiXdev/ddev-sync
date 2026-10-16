@@ -13,7 +13,11 @@
 services:
   ddev-sync:
     # Written by tools/set_version.py; pin it rather than tracking a moving
-    # tag, so a redeploy cannot change what listens here.
+    # tag, so a redeploy cannot change what listens here. On `main` between
+    # releases this names the version in version.json, which is published for
+    # the engine image and - until the first release that builds both - not
+    # yet for this one. Check the tag exists before deploying a stack from a
+    # template copied out of the repository rather than out of a release.
     image: noixdev/ddev-sync-endpoint:0.1.0-rc.1
     restart: unless-stopped
 

@@ -64,6 +64,41 @@ of them worse is very welcome.
   root-group access to the daemon there, not merely membership of a `docker`
   group.
 
+- **A sync endpoint grants a shell beside production, and read *and write* on
+  production's database.** Under `provider: docker` the stack publishes a small
+  endpoint container and whoever holds a key in its `authorized_keys` gets a shell in
+  it. That shell sits on the production stack's network, reads production's own `.env`
+  from a mounted file, and the image carries a MariaDB client - so "may sync" means
+  "may change the production database", not only "may read it". The read-only mounts
+  stop the *files* being written and nothing more, and the engine's own code only ever
+  pulls; the limit is the key list, not the container.
+
+  What the design does remove is the privilege that was previously needed to sync from
+  a Docker host at all: no Docker socket, no membership of the `docker` group, no root
+  on the host. That privilege is spent once, at deploy time, by whoever already has
+  it. What it does not do is make a key-holder's reach smaller than a database client
+  pointed at production.
+
+  Three further properties follow from the same design and are worth knowing before
+  you deploy one:
+
+  - **The container runs as root inside itself**, because an sshd can only serve a uid
+    that has a passwd entry and only root can write one - the session's uid arrives as
+    `DDEV_SYNC_UID` and the login runs as that. The container has no Docker socket, no
+    added capabilities, read-only payload mounts and a port published on the host's
+    loopback address only, so this is container-local root with nothing to take over.
+    It is still root: drop capabilities in your own compose file if your environment
+    expects it.
+  - **One account for every developer.** The endpoint has a single `sync` account by
+    design, so the only attribution of a sync is the key fingerprint in the endpoint's
+    sshd log. Revocation is per key, which is the part that matters; "who synced" is
+    answerable only from those logs.
+  - **Rate limiting is deliberately off** (`PerSourcePenalties no`). Every developer
+    reaches the endpoint through the same Docker host, so OpenSSH's per-source
+    penalties would let one stale key's retries lock out the whole team for minutes.
+    Keys and a loopback-only port are what protect the endpoint; nothing throttles a
+    client that already holds a key.
+
 - **An unknown ssh host is trusted the first time it is seen.** Every ssh, scp and
   rsync the engine runs sets `StrictHostKeyChecking=accept-new`, so a host that is not
   yet in `known_hosts` is accepted without asking. Whoever answers on the very first

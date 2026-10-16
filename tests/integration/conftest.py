@@ -404,7 +404,12 @@ def stack(ssh_key: Path, remote_layout: Path) -> Iterator[None]:
     if _run(["docker", "info"]).returncode != 0:
         pytest.skip("docker is not available")
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
-    up = _run([*COMPOSE, "up", "-d", "--wait"])
+    # `--build`, not a bare `up`: compose builds a service only when its image
+    # is *missing*, so without this an edit to endpoint/sshd_config or the
+    # Dockerfile is tested against the image the previous run left behind -
+    # green locally, on the developer's machine, which is where the next
+    # change to that image will be made. The matrix harness passes it too.
+    up = _run([*COMPOSE, "up", "-d", "--build", "--wait"])
     if up.returncode != 0:
         pytest.fail(f"could not start the integration stack:\n{up.stderr}")
     try:

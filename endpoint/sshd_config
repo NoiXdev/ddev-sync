@@ -29,12 +29,32 @@ PermitEmptyPasswords no
 # The endpoint is a destination, never a way onwards. The engine opens its own
 # hop *to* here through the Docker host; nothing needs to forward out of here,
 # and a compromised endpoint should not be able to reach the rest of the
-# stack's network on anyone's behalf.
+# stack's network on anyone's behalf. All five, because the claim is "never",
+# and `AllowStreamLocalForwarding` defaults to yes - today nothing in this
+# container listens on a Unix socket, which makes the omission a wrong
+# sentence rather than an open door.
 AllowTcpForwarding no
+AllowStreamLocalForwarding no
 AllowAgentForwarding no
 GatewayPorts no
 X11Forwarding no
 PermitTunnel no
+
+# Every developer who may sync shares this one account, so anything one of
+# them can leave behind runs in the others' sessions. `~/.ssh/rc` is the only
+# such hook sshd offers, and nothing here wants it.
+PermitUserRC no
+
+# Off, and this is a deliberate availability trade rather than an oversight.
+# OpenSSH 9.8 and newer penalise a *source address* for connections that fail
+# to authenticate, refusing it for up to ten minutes. Every developer reaches
+# this endpoint through the same Docker host, so they all share one bucket:
+# one stale key retrying in someone's loop would lock the whole team out, with
+# "Connection closed by remote host" and nothing to point at the cause. The
+# address carries no information here, so penalising it punishes the wrong
+# people. What protects this endpoint is that it accepts keys only and is
+# published on the host's loopback address alone - not rate limiting.
+PerSourcePenalties no
 
 PrintMotd no
 LogLevel INFO

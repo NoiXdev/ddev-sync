@@ -319,6 +319,81 @@ def test_it_carries_nothing_the_endpoint_has_no_business_with(
     assert found.returncode != 0, f"{binary} has no business in the endpoint image"
 
 
+# What the server must resolve these to, as `sshd -T` prints them. Asserted
+# against sshd's own resolution rather than by reading the file, because that
+# is what the running endpoint will do with it - and because a behavioural
+# test cannot see most of them: a client in batch mode never offers a password
+# whatever the server allows, so "the login failed" is not evidence that
+# password authentication is off.
+EFFECTIVE_SETTINGS = (
+    "permitrootlogin no",
+    "passwordauthentication no",
+    "kbdinteractiveauthentication no",
+    "permitemptypasswords no",
+    "allowtcpforwarding no",
+    "allowstreamlocalforwarding no",
+    "allowagentforwarding no",
+    "permituserrc no",
+    # Every developer arrives through the same Docker host, so a per-source
+    # penalty would lock the whole team out for one stale key's retries.
+    "persourcepenalties no",
+    "allowusers sync",
+)
+
+
+@pytest.mark.parametrize("setting", EFFECTIVE_SETTINGS)
+def test_the_server_resolves_its_hardening_as_shipped(endpoint_image: str, setting: str) -> None:
+    # `sshd -T` needs a host key to exist before it will print anything, which
+    # is what the keygen is for; the config it then prints is the one the
+    # endpoint runs with.
+    resolved = _run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "sh",
+            endpoint_image,
+            "-c",
+            'ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/keys/ssh_host_ed25519_key '
+            "&& /usr/sbin/sshd -T",
+        ]
+    )
+
+    assert resolved.returncode == 0, resolved.stderr
+    assert setting in resolved.stdout.lower().splitlines(), (
+        f"sshd does not resolve {setting!r}; what it printed:\n{resolved.stdout}"
+    )
+
+
+def test_the_server_offers_nothing_but_public_keys(endpoint_image: str, tmp_path: Path) -> None:
+    key = keypair(tmp_path, "id")
+
+    with endpoint(
+        endpoint_image,
+        environment={
+            "DDEV_SYNC_AUTHORIZED_KEYS": key.with_suffix(".pub").read_text(encoding="utf-8")
+        },
+    ):
+        # Over the wire, with a key the server does not know, so the server
+        # answers with the methods it would accept next. `-v` is what makes
+        # that line visible; the test above pins the same property from the
+        # server's side, and neither alone is enough: this one would pass
+        # against a server that also offered a password, and that one proves
+        # nothing about what reaches the client.
+        stranger = keypair(tmp_path, "stranger")
+        attempt = _run(
+            ["ssh", "-v", "-i", str(stranger), "-p", PORT, *SSH_OPTIONS, "sync@127.0.0.1", "true"]
+        )
+
+    offered = [line for line in attempt.stderr.splitlines() if "can continue" in line]
+    assert offered, f"the server offered no methods at all:\n{attempt.stderr}"
+    for line in offered:
+        assert "publickey" in line
+        assert "password" not in line
+        assert "keyboard-interactive" not in line
+
+
 def test_password_authentication_is_refused(endpoint_image: str, tmp_path: Path) -> None:
     key = keypair(tmp_path, "id")
 
@@ -347,6 +422,43 @@ def test_password_authentication_is_refused(endpoint_image: str, tmp_path: Path)
     # authentication could be switched off would reach production by accident
     # and be invisible in `docker ps`.
     assert result.returncode != 0, result.stdout
+
+
+def test_a_key_that_is_not_a_key_is_refused(endpoint_image: str, tmp_path: Path) -> None:
+    truncated = tmp_path / "authorized_keys"
+    # A line that is neither blank nor a comment, and not a key either - what
+    # a CRLF paste or a mangled multi-line secret leaves behind.
+    truncated.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1\r\n", encoding="utf-8")
+
+    result = start_in_foreground(
+        endpoint_image, mounts=((truncated, "/etc/ddev-sync/authorized_keys"),)
+    )
+
+    # Without this the endpoint listens, is reachable, and cannot be entered -
+    # and nothing says why.
+    assert result.returncode != 0, result.stdout
+    assert "public keys" in result.stderr
+
+
+def test_the_image_reports_its_own_health(endpoint_image: str, tmp_path: Path) -> None:
+    key = keypair(tmp_path, "id")
+
+    with endpoint(
+        endpoint_image,
+        environment={
+            "DDEV_SYNC_AUTHORIZED_KEYS": key.with_suffix(".pub").read_text(encoding="utf-8")
+        },
+    ) as container:
+        # The healthcheck is in the image rather than in the compose template,
+        # so every stack inherits it. An sshd that died otherwise leaves a
+        # container that is still `Up` and a sync that fails days later.
+        for _ in range(40):
+            state = _run(["docker", "inspect", "--format", "{{.State.Health.Status}}", container])
+            if state.stdout.strip() == "healthy":
+                break
+            time.sleep(0.5)
+        else:
+            pytest.fail(f"the endpoint never reported healthy: {state.stdout!r}")
 
 
 def test_the_endpoint_does_not_forward_tcp(endpoint_image: str, tmp_path: Path) -> None:

@@ -74,4 +74,13 @@ COPY sshd_config /etc/ssh/sshd_config
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/ddev-sync-endpoint
 
 EXPOSE 22
+
+# In the image, so every stack that runs this endpoint inherits it: an sshd
+# that died leaves a container that is still `Up`, nothing restarts it, and
+# the first symptom is a developer's failed sync days later. Port 22 in LISTEN
+# read out of /proc, which needs none of the binaries this image deliberately
+# does not have.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD grep -qiE ':0016 [0-9A-F]+:0000 0A' /proc/net/tcp
+
 ENTRYPOINT ["/usr/local/bin/ddev-sync-endpoint"]

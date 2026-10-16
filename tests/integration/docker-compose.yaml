@@ -88,13 +88,13 @@ services:
       context: ../../endpoint
     network_mode: "service:jump"
     environment:
-      # The uid that owns the mounted fixtures as this suite's containers see
-      # them. Root-owned on a Linux runner's bind mount, so the default 33
-      # would be a uid mismatch here rather than in production - the thing
-      # the doctor's own test creates on purpose, and must not meet by
-      # accident everywhere else.
-      - DDEV_SYNC_UID=${DDEV_SYNC_ENDPOINT_UID:-33}
-      - DDEV_SYNC_GID=${DDEV_SYNC_ENDPOINT_GID:-33}
+      # The image's own default. The fixtures this endpoint reads are
+      # world-readable (a checkout's 644 files under 755 directories), so any
+      # uid can read them and this suite has no reason to vary it - the test
+      # that needs a uid mismatch creates one inside the container instead.
+      # The matrix cell is where the uid is pinned to the files' real owner.
+      - DDEV_SYNC_UID=33
+      - DDEV_SYNC_GID=33
     volumes:
       # The *file* source of the authorised keys, deliberately: task 1's own
       # tests cover the environment variable, so between them both halves of
