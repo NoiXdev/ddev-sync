@@ -70,6 +70,17 @@ jobs:
       version_file: version.json
       version_script: tools/set_version.py
       product_name: ddev-sync
+      # The second image this product ships: the endpoint a stack publishes
+      # so a developer can sync from a Docker host without Docker rights on
+      # it. Built by the same job as the engine image, from the same tree,
+      # after the version is written and under the same `dry_run` gate -
+      # which is what makes "one version, two images" true rather than a
+      # convention someone has to remember. Its own context, because the
+      # image is four files and a context of the whole repository would
+      # rebuild it on every unrelated commit.
+      extra_image: ddev-sync-endpoint
+      extra_image_dockerfile: endpoint/Dockerfile
+      extra_image_context: endpoint
       # The shared workflow checks out `main` by default. `gates` and `verify`
       # above ran on this dispatch's commit, and the matrix can queue behind
       # the nightly run, so by the time they finish `main` may have moved -
@@ -136,6 +147,38 @@ jobs:
       # wheel was built from (the image is built after the version is written,
       # and the tag is created on that same tree), and it holds the PEP 440
       # form `--version` prints.
+      # The endpoint image, against the artifact an operator would pull. The
+      # same three things `ci.yaml`'s endpoint job asserts against a locally
+      # built image, now on both architectures: it refuses to start without a
+      # key, and it carries the far side of what the engine invokes over ssh
+      # and nothing that would undo the privilege this provider removes.
+      - name: Pull the endpoint image that was just published
+        env:
+          ENDPOINT: docker.io/${{ vars.DOCKERHUB_NAMESPACE }}/ddev-sync-endpoint:${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "${ENDPOINT}"
+          docker pull "${ENDPOINT}"
+          echo "ENDPOINT=${ENDPOINT}" >> "$GITHUB_ENV"
+
+      - name: The endpoint refuses to start with no authorized key
+        run: |
+          set -euo pipefail
+          if docker run --rm "${ENDPOINT}"; then
+            echo "::error::the endpoint started with no DDEV_SYNC_AUTHORIZED_KEYS"
+            exit 1
+          fi
+
+      - name: The endpoint carries the far side of what the engine invokes
+        run: |
+          docker run --rm --network none --entrypoint sh "${ENDPOINT}" -c \
+            'for b in sh rsync mysqldump mysql; do
+               command -v "$b" || { echo "MISSING: $b"; exit 1; }
+             done
+             for b in php docker rclone ssh; do
+               ! command -v "$b" || { echo "PRESENT: $b"; exit 1; }
+             done'
+
       - name: Check out the release tag
         # Read the file instead of converting the tag: the semver and PEP 440
         # forms differ (`1.2.3-beta.4` is `1.2.3b4`), and a second

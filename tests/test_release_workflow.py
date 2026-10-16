@@ -75,3 +75,33 @@ def test_ci_and_matrix_can_be_called_by_the_release() -> None:
             "cannot resolve the job that uses it, so the release fails to start "
             "at all"
         )
+
+
+def test_the_release_builds_the_endpoint_image_from_its_own_context() -> None:
+    passed = _jobs("release.yaml")["release"]["with"]
+
+    # The product ships two images and they are one version: the engine, and
+    # the endpoint a stack publishes. Built by the same job so neither can be
+    # released without the other, and from `endpoint/` rather than from the
+    # repository root so an unrelated commit does not invalidate its cache.
+    assert passed["extra_image"] == "ddev-sync-endpoint"
+    assert passed["extra_image_dockerfile"] == "endpoint/Dockerfile"
+    assert passed["extra_image_context"] == "endpoint"
+
+
+def test_the_smoke_job_touches_both_published_images() -> None:
+    smoke = _jobs("release.yaml")["smoke"]
+    steps = yaml.safe_dump(smoke["steps"])
+
+    # Both artifacts a user can pull, on both architectures: the engine image
+    # the add-on starts as a sidecar, and the endpoint image an operator puts
+    # into a production stack. The second one was published by the same job as
+    # the first, so nothing but a smoke test says it can run at all.
+    assert smoke["strategy"]["matrix"]["runner"] == ["ubuntu-latest", "ubuntu-24.04-arm"]
+    assert "vars.DOCKERHUB_IMAGE" in steps
+    assert "ddev-sync-endpoint" in steps
+    # The endpoint's own promise, against the image a user would pull: it does
+    # not start without a key, and it carries the far side of what the engine
+    # invokes.
+    assert "DDEV_SYNC_AUTHORIZED_KEYS" in steps
+    assert "mysqldump" in steps
