@@ -6,7 +6,7 @@ import pytest
 
 from ddev_sync.config.deployer import DeployerConnection
 from ddev_sync.config.merge import LayerDoc
-from ddev_sync.config.models import Layout, ResolvedTarget, Stage
+from ddev_sync.config.models import Layout, Provider, ResolvedTarget, Stage
 from ddev_sync.config.targets import (
     _DEPLOYER_DETAIL_KEYS,
     CollectedTarget,
@@ -785,3 +785,69 @@ def test_a_deployer_target_without_a_resolver_says_so() -> None:
     with pytest.raises(TargetError) as error:
         resolve_target("prod", collected)
     assert "deployer" in str(error.value).lower()
+
+
+def resolve_one(fields: dict[str, Any]) -> ResolvedTarget:
+    """Resolve a single inline target, the shape most provider tests want."""
+    return resolve_target("production", collected_from({"production": fields}))
+
+
+def test_a_docker_target_resolves_to_the_jump_host_shape() -> None:
+    resolved = resolve_one(
+        {
+            "provider": "docker",
+            "host": "prod.example",
+            "user": "deploy",
+            "sync_port": 2222,
+            "path": "/data/",
+            "stage": "production",
+        }
+    )
+
+    assert (resolved.jump_host, resolved.jump_host_user, resolved.jump_host_port) == (
+        "prod.example",
+        "deploy",
+        22,
+    )
+    assert (resolved.host, resolved.user, resolved.port) == ("127.0.0.1", "sync", 2222)
+    assert resolved.provider is Provider.DOCKER
+
+
+def test_a_docker_target_with_an_ssh_alias_jumps_through_the_alias() -> None:
+    """The alias names the Docker host, which is the hop and not the destination.
+
+    This is why the translation runs *after* the alias branch: whatever that
+    branch leaves in `host` is the machine a human connects to, and the
+    endpoint behind it is an address, so the alias flag has to be taken back.
+    """
+    resolved = resolve_one(
+        {
+            "provider": "docker",
+            "ssh_alias": "prod",
+            "sync_port": 2222,
+            "path": "/data/",
+            "stage": "production",
+        }
+    )
+
+    assert resolved.jump_host == "prod"
+    assert resolved.jump_host_user is None
+    assert (resolved.host, resolved.port) == ("127.0.0.1", 2222)
+    assert resolved.via_ssh_alias is False
+
+
+def test_a_server_target_resolves_exactly_as_before() -> None:
+    """The default provider changes nothing; every existing config depends on it."""
+    resolved = resolve_one(
+        {
+            "host": "web01.example",
+            "user": "deploy",
+            "port": 22,
+            "path": "/srv/app/",
+            "stage": "production",
+        }
+    )
+
+    assert (resolved.host, resolved.user, resolved.port) == ("web01.example", "deploy", 22)
+    assert resolved.jump_host is None
+    assert resolved.provider is Provider.SERVER

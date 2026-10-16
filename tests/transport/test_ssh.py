@@ -3,7 +3,7 @@ from collections.abc import Callable
 
 import pytest
 
-from ddev_sync.config.models import ResolvedTarget, Stage
+from ddev_sync.config.models import Provider, ResolvedTarget, Stage
 from ddev_sync.transport.ssh import (
     quote_remote,
     remote_endpoint,
@@ -264,3 +264,34 @@ def test_rsync_option_values_survive_rsyncs_split_on_spaces() -> None:
         "-p",
         "22",
     ]
+
+
+def docker_target() -> ResolvedTarget:
+    """What `provider: docker` resolves to, written out.
+
+    Built here as a literal rather than resolved through `config/targets.py`:
+    this file is about the command line, and a literal makes it obvious which
+    field produces which argument. `tests/config/test_targets.py` owns the
+    other half - that a declared docker target really does resolve into these
+    values.
+    """
+    return ResolvedTarget(
+        name="production",
+        provider=Provider.DOCKER,
+        host="127.0.0.1",
+        user="sync",
+        port=2222,
+        jump_host="prod.example",
+        jump_host_user="deploy",
+        path="/data/",
+        stage=Stage.PRODUCTION,
+    )
+
+
+def test_a_docker_target_builds_a_jumped_ssh_command() -> None:
+    argv = ssh_command(docker_target(), ["sh", "-c", "true"])
+
+    assert "-J" in argv
+    assert argv[argv.index("-J") + 1] == "deploy@prod.example:22"
+    assert "sync@127.0.0.1" in argv
+    assert argv[argv.index("-p") + 1] == "2222"

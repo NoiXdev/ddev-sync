@@ -8,7 +8,14 @@ from pydantic import ValidationError
 
 from ddev_sync.config.deployer import DeployerConnection
 from ddev_sync.config.merge import LayerDoc, merge_layers
-from ddev_sync.config.models import DEPLOYER_OWNED_KEYS, ResolvedTarget, TargetSpec
+from ddev_sync.config.models import (
+    DEPLOYER_OWNED_KEYS,
+    ENDPOINT_HOST,
+    ENDPOINT_USER,
+    Provider,
+    ResolvedTarget,
+    TargetSpec,
+)
 from ddev_sync.errors import ConfigError, TargetError
 
 MAX_EXTENDS_DEPTH = 16
@@ -317,6 +324,21 @@ def _build(
         flattened.pop("port", None)
     else:
         flattened.setdefault("port", 22)
+
+    # The third rewrite in this function, after `deployer:` and `ssh_alias`
+    # above, and deliberately after both: whatever they left in `host`/`user`
+    # is the Docker host, alias or not, and that is what becomes the jump. The
+    # endpoint behind it is an address rather than an alias, so `via_ssh_alias`
+    # is taken back.
+    if flattened.get("provider") == Provider.DOCKER:
+        flattened["jump_host"] = flattened["host"]
+        user = flattened.pop("user", None)
+        if user is not None:
+            flattened["jump_host_user"] = user
+        flattened["host"] = ENDPOINT_HOST
+        flattened["user"] = ENDPOINT_USER
+        flattened["port"] = flattened.pop("sync_port")
+        flattened["via_ssh_alias"] = False
 
     missing = [key for key in ("host", "path", "stage") if key not in flattened]
     if missing:

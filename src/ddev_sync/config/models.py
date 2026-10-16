@@ -28,6 +28,37 @@ class Layout(StrEnum):
     DEPLOYER = "deployer"
 
 
+class Provider(StrEnum):
+    """How a target's far side is reached.
+
+    `SERVER` is ssh to a host that carries the project on its filesystem, and
+    it is what every target meant before this existed. `DOCKER` is an
+    ssh-speaking endpoint container inside a stack, reached *through* the
+    Docker host rather than on it - so that syncing needs no Docker rights,
+    which on any host are equivalent to root.
+
+    The distinction is resolved away: `config/targets.py::_build` turns a
+    `DOCKER` target into the jump-host form, and nothing below that line asks
+    which provider it came from.
+    """
+
+    SERVER = "server"
+    DOCKER = "docker"
+
+
+# The account the endpoint image offers. Fixed rather than configurable: the
+# endpoint has one user and no reason for a second, and a key in its
+# `authorized_keys` is by definition allowed in as that account. A setting
+# here would be a value every configuration carries and none ever varies.
+ENDPOINT_USER = "sync"
+
+# The endpoint's address *as the jump host resolves it*: ProxyJump opens the
+# final hop from the Docker host, so this loopback is that host's, not the
+# developer's. It is the published side of `127.0.0.1:<sync_port>:22` in the
+# stack's compose file, which is what keeps the endpoint off the network.
+ENDPOINT_HOST = "127.0.0.1"
+
+
 class DeployerRef(BaseModel):
     """A reference to a host in the project's own Deployer configuration.
 
@@ -75,6 +106,12 @@ class TargetSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     extends: str | None = None
+    provider: Provider = Provider.SERVER
+    # Only meaningful under `provider: docker`, where it is the port the stack
+    # publishes the endpoint on. Optional here and required there: the refusal
+    # that pairs them lives in `targets.py::_build`, which is where a target is
+    # judged as a whole.
+    sync_port: int | None = None
     host: str | None = None
     ssh_alias: str | None = None
     user: str | None = None
@@ -132,6 +169,13 @@ class ResolvedTarget(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str
+    # Carried past resolution for one purpose: text a human reads. The doctor
+    # has to be able to say "the sync endpoint did not answer" rather than
+    # naming the host, which under `docker` may have answered perfectly well.
+    # No command builder may read this - the provider is resolved away in
+    # `targets.py::_build`, and a transport that branched on it would undo
+    # the only thing that keeps this design small.
+    provider: Provider = Provider.SERVER
     host: str
     path: str
     stage: Stage
