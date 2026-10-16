@@ -851,3 +851,59 @@ def test_a_server_target_resolves_exactly_as_before() -> None:
     assert (resolved.host, resolved.user, resolved.port) == ("web01.example", "deploy", 22)
     assert resolved.jump_host is None
     assert resolved.provider is Provider.SERVER
+
+
+def test_a_docker_target_without_a_sync_port_is_refused() -> None:
+    """Without it the port would fall back to 22 and the sync would meet the
+    *host's* sshd as the endpoint user: a plausible connection to the wrong
+    machine, which is worse than no connection."""
+    with pytest.raises(TargetError, match="sync_port"):
+        resolve_one(
+            {"provider": "docker", "host": "prod.example", "path": "/data/", "stage": "production"}
+        )
+
+
+def test_a_docker_target_with_an_explicit_jump_host_is_refused() -> None:
+    """The provider sets the jump itself; a second one is the two-hop chain
+    that is deferred. Refuse rather than overwrite what the author wrote."""
+    with pytest.raises(TargetError, match="jump_host"):
+        resolve_one(
+            {
+                "provider": "docker",
+                "host": "prod.example",
+                "sync_port": 2222,
+                "jump_host": "bastion.example",
+                "path": "/data/",
+                "stage": "production",
+            }
+        )
+
+
+def test_a_docker_target_with_a_deployer_layout_is_refused() -> None:
+    """A deployer layout resolves `releases/current` on the far side, and the
+    endpoint has no such structure."""
+    with pytest.raises(TargetError, match="layout"):
+        resolve_one(
+            {
+                "provider": "docker",
+                "host": "prod.example",
+                "sync_port": 2222,
+                "layout": "deployer",
+                "path": "/data/",
+                "stage": "production",
+            }
+        )
+
+
+def test_a_sync_port_without_the_docker_provider_is_refused() -> None:
+    """It can only mean the author believed the provider was set, and ignoring
+    it would sync the wrong thing from the wrong place."""
+    with pytest.raises(TargetError, match="provider: docker"):
+        resolve_one(
+            {
+                "host": "web01.example",
+                "sync_port": 2222,
+                "path": "/srv/app/",
+                "stage": "production",
+            }
+        )

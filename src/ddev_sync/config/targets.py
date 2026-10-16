@@ -12,6 +12,7 @@ from ddev_sync.config.models import (
     DEPLOYER_OWNED_KEYS,
     ENDPOINT_HOST,
     ENDPOINT_USER,
+    Layout,
     Provider,
     ResolvedTarget,
     TargetSpec,
@@ -325,12 +326,44 @@ def _build(
     else:
         flattened.setdefault("port", 22)
 
+    # Judged before the rewrite below, so a refused target is never left half
+    # translated. Each of these is a configuration that would otherwise
+    # connect somewhere plausible and wrong rather than fail.
+    provider = flattened.get("provider", Provider.SERVER)
+    sync_port = flattened.get("sync_port")
+    if provider == Provider.DOCKER:
+        if sync_port is None:
+            raise TargetError(
+                f"target {name!r} (from {source}) uses provider: docker but sets no sync_port; "
+                "without it the connection would fall back to port 22 and meet the Docker "
+                "host's own sshd as the endpoint user - set sync_port to the port the stack "
+                "publishes the endpoint on"
+            )
+        if "jump_host" in flattened:
+            raise TargetError(
+                f"target {name!r} (from {source}) uses provider: docker and also sets "
+                "jump_host; the provider sets the jump itself (the Docker host), and a "
+                "second hop in front of it is not supported yet - remove one of them"
+            )
+        if flattened.get("layout") == Layout.DEPLOYER:
+            raise TargetError(
+                f"target {name!r} (from {source}) uses provider: docker with layout: deployer; "
+                "a deployer layout resolves releases/current on the far side, and the sync "
+                "endpoint has no such structure - use the default layout"
+            )
+    elif sync_port is not None:
+        raise TargetError(
+            f"target {name!r} (from {source}) sets sync_port without provider: docker; "
+            "sync_port only means anything for a Docker endpoint, and ignoring it would "
+            "sync from the host instead - add provider: docker, or remove sync_port"
+        )
+
     # The third rewrite in this function, after `deployer:` and `ssh_alias`
     # above, and deliberately after both: whatever they left in `host`/`user`
     # is the Docker host, alias or not, and that is what becomes the jump. The
     # endpoint behind it is an address rather than an alias, so `via_ssh_alias`
     # is taken back.
-    if flattened.get("provider") == Provider.DOCKER:
+    if provider == Provider.DOCKER:
         flattened["jump_host"] = flattened["host"]
         user = flattened.pop("user", None)
         if user is not None:

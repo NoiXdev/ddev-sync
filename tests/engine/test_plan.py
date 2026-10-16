@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
-from ddev_sync.config.models import Layout, ResolvedTarget, Stage
+from ddev_sync.config.models import Layout, Provider, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.plan import Plan, available_selection_groups, build_plan
 from ddev_sync.engine.steps import SELECTION_GROUPS, StepKind, steps_for_selection
@@ -1128,3 +1128,82 @@ def test_a_malformed_env_file_is_a_config_error_naming_the_key(bad: object) -> N
 
 def test_every_name_it_returns_is_a_real_selection_group() -> None:
     assert available_for() <= set(SELECTION_GROUPS)
+
+
+def test_wp_cli_credentials_are_refused_under_the_docker_provider() -> None:
+    """wp-cli needs PHP and a WordPress install, and the endpoint has neither.
+
+    Refused here rather than in `_build` because only the plan sees the
+    database block; the target knows nothing about it. The message has to name
+    `${WP_TABLE_PREFIX}` too: `wp_cli` is also its only source, so a reader who
+    only learns "use env instead" will reach for the placeholder next and fail
+    deeper, after the dump.
+    """
+    docker = ResolvedTarget(
+        name="production",
+        provider=Provider.DOCKER,
+        host="127.0.0.1",
+        user="sync",
+        port=2222,
+        jump_host="prod.example",
+        jump_host_user="deploy",
+        path="/data/",
+        stage=Stage.PRODUCTION,
+    )
+    layers = [
+        LayerDoc("profile:typo3@12", PROFILE_DATA),
+        LayerDoc("project", {"database": {"remote_credentials": "wp_cli"}}),
+    ]
+
+    with pytest.raises(ConfigError, match="WP_TABLE_PREFIX"):
+        build_plan(
+            target=docker,
+            project=project(),
+            profile=ResolvedProfile(
+                name="typo3",
+                label="typo3@12",
+                data=PROFILE_DATA,
+                layers=(LayerDoc("profile:typo3@12", PROFILE_DATA),),
+            ),
+            merged=merge_layers(layers),
+            steps=steps_for_selection(["db"]),
+        )
+
+
+def test_a_docker_target_plans_normally_with_env_credentials() -> None:
+    """The refusal is about wp-cli, not about the provider.
+
+    Found by the coverage gate rather than by foresight: the branch that lets
+    a docker target through was never taken, which means nothing proved the
+    refusal stops at the one source it is about.
+    """
+    docker = ResolvedTarget(
+        name="production",
+        provider=Provider.DOCKER,
+        host="127.0.0.1",
+        user="sync",
+        port=2222,
+        jump_host="prod.example",
+        jump_host_user="deploy",
+        path="/data/",
+        stage=Stage.PRODUCTION,
+    )
+    layers = [
+        LayerDoc("profile:typo3@12", PROFILE_DATA),
+        LayerDoc("project", {"database": {"remote_credentials": "env"}}),
+    ]
+
+    plan = build_plan(
+        target=docker,
+        project=project(),
+        profile=ResolvedProfile(
+            name="typo3",
+            label="typo3@12",
+            data=PROFILE_DATA,
+            layers=(LayerDoc("profile:typo3@12", PROFILE_DATA),),
+        ),
+        merged=merge_layers(layers),
+        steps=steps_for_selection(["db"]),
+    )
+
+    assert next(entry.kind for entry in plan.steps) is StepKind.PREFLIGHT

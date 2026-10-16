@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ddev_sync.config.merge import LIST_MODES, MergeResult
-from ddev_sync.config.models import ResolvedTarget
+from ddev_sync.config.models import Provider, ResolvedTarget
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.steps import SELECTION_GROUPS, StepKind, hook_name, steps_for_selection
 from ddev_sync.errors import ConfigError
@@ -86,6 +86,37 @@ class Plan:
     features_disabled_reason: str = "~/.ddev/ddev-sync/config.yaml"
 
 
+def _refuse_wp_cli_under_docker(target: ResolvedTarget, merged: MergeResult) -> None:
+    """Refuse `remote_credentials: wp_cli` when the far side is an endpoint.
+
+    wp-cli needs PHP and a WordPress installation, and the endpoint image
+    carries neither - nor should it, or a container standing in production
+    grows a language runtime to answer one question.
+
+    Refused here rather than in `config/targets.py::_build` because only the
+    plan sees the database block: a target knows where to connect and nothing
+    about what will be read there.
+
+    The message names `${WP_TABLE_PREFIX}` on purpose. `wp_cli` is also its
+    only source, so a reader who learns no more than "use env instead" will
+    reach for the placeholder next and fail deeper - after the dump, which is
+    the expensive place to find out.
+    """
+    if target.provider is not Provider.DOCKER:
+        return
+    database = merged.data.get("database")
+    source = database.get("remote_credentials") if isinstance(database, dict) else None
+    if source != "wp_cli":
+        return
+    raise ConfigError(
+        "database.remote_credentials: wp_cli cannot be used with provider: docker - "
+        "wp-cli needs PHP and a WordPress installation, and the sync endpoint has "
+        "neither. Use 'env' or 'explicit'. Note that wp_cli is also the only source "
+        "of ${WP_TABLE_PREFIX}, so a sanitize rule naming that placeholder cannot be "
+        "resolved under this provider either."
+    )
+
+
 def build_plan(
     *,
     target: ResolvedTarget,
@@ -108,6 +139,7 @@ def build_plan(
     is dropped only if it belongs to the SETUP step and was not contributed
     by a feature layer.
     """
+    _refuse_wp_cli_under_docker(target, merged)
     builder = _Builder(target=target, project=project, merged=merged, steps=steps)
     entries: list[_Entry] = []
     for kind in steps:
