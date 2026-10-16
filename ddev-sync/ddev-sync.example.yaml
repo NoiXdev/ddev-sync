@@ -46,6 +46,25 @@ version: 1
 #       host: web01.example     # Deployer's alias; omit if there is only one
 #     stage: production
 
+# Or, when production runs in Docker and you have no rights on its host
+# beyond ordinary SSH. The stack publishes a small sync endpoint on the host's
+# own loopback address, and the engine reaches it through the host - so
+# `host` and `user` are the *Docker host*, as you connect to it today, and
+# `sync_port` is the port the stack publishes.
+#   production:
+#     provider: docker          # server (the default) | docker
+#     host: prod.example
+#     user: deploy
+#     sync_port: 2222
+#     path: /data/              # the path inside the endpoint, not on the host
+#     stage: production
+# Three things differ from a server target. `path` is read inside the
+# endpoint, so it names the mount points the stack gave it. `layout: deployer`
+# is refused: the endpoint has no releases/current structure to resolve.
+# And WordPress is not supported under this provider, because its credentials
+# and its table prefix both come from WP-CLI, which needs a PHP the endpoint
+# deliberately does not carry - the refusal says so rather than failing later.
+
 # Where the remote's database credentials come from:
 #   env      - read from a .env on the remote (the default)
 #   explicit - from `database.credentials` below; they are secrets, so put

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write one version into every file in this repository that names one.
 
-Five files carry a version and three different forms of it, which is why this
+Six files carry a version and three different forms of it, which is why this
 exists rather than a `sed` line in the release workflow:
 
 - `pyproject.toml` feeds `importlib.metadata`, so it must hold a PEP 440
@@ -19,6 +19,10 @@ exists rather than a `sed` line in the release workflow:
   resolves the same image again to read `/etc/passwd` out of it. A default that
   names a tag nobody published does not fail at sync time - the project refuses
   to start at all.
+- `endpoint/docker-compose.ddev-sync-endpoint.yaml` names the endpoint image's
+  tag, in the same semver form and for the same reason: it is the template an
+  operator copies into a production stack, and a tag nobody published is a
+  stack that does not start.
 - `uv.lock` records the root project's own version, and `uv run` rewrites it to
   match `pyproject.toml` on sight, so it holds the PEP 440 form too; a release
   that bumped `pyproject.toml` alone would be followed by the next `uv run`
@@ -99,6 +103,13 @@ TARGETS: tuple[Target, ...] = (
     (
         "ddev-sync/prepare-sidecar.sh",
         re.compile(r"setting DDEV_SYNC_VERSION (?P<version>[^)]+)\)"),
+        _unchanged,
+    ),
+    # Anchored on the image name rather than on `image:`, so the operator
+    # comments around it can be rewritten without moving the target.
+    (
+        "endpoint/docker-compose.ddev-sync-endpoint.yaml",
+        re.compile(r"ddev-sync-endpoint:(?P<version>[\w.+-]+)"),
         _unchanged,
     ),
     # Anchored on the project's own block: every other package has a

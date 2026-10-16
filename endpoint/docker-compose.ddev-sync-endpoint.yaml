@@ -1,0 +1,68 @@
+# The sync endpoint, for the stack whose production you want to sync from.
+#
+# Copy this service into your stack's own compose file. That boundary is the
+# authorisation: whoever can reach the endpoint of this stack cannot reach
+# another one, because the stack already draws that line. Placing it is the
+# job of whoever deploys the stack - the person who already holds that
+# privilege - and after that a developer needs nothing but ordinary SSH to the
+# Docker host: no Docker rights, no socket, no root.
+#
+# Four lines are yours to change: the two uids, the mounts, and the published
+# port. The image tag is written by the release.
+
+services:
+  ddev-sync:
+    # Written by tools/set_version.py; pin it rather than tracking a moving
+    # tag, so a redeploy cannot change what listens here.
+    image: noixdev/ddev-sync-endpoint:0.1.0-rc.1
+    restart: unless-stopped
+
+    # Only through an SSH forward. The engine reaches this port by ProxyJump
+    # from the Docker host, so it never has to be exposed on an interface
+    # anyone else can reach - and `127.0.0.1:` is what keeps that true. The
+    # left-hand port is what your target's `sync_port:` names.
+    ports:
+      - "127.0.0.1:2222:22"
+
+    # The stack's own network, so the endpoint reaches `db` - or whatever your
+    # database service is called - by service name. That is also why the
+    # endpoint needs no database credentials of its own: the engine reads them
+    # from the .env below, and the host named in it resolves here.
+    networks:
+      - default
+
+    environment:
+      # The public keys allowed in, one per line. Keep them in your
+      # deployment's own secrets and hand them in through the environment, or
+      # mount a file at /etc/ddev-sync/authorized_keys, or do both - the
+      # endpoint reads the union. With neither it refuses to start, which is
+      # deliberate: there is no mode in which it accepts anyone.
+      DDEV_SYNC_AUTHORIZED_KEYS: "${DDEV_SYNC_AUTHORIZED_KEYS}"
+      # The uid and gid the session runs as. Set them to the ones that own the
+      # files mounted below - the application's - or the sync fails halfway
+      # through an rsync instead of here. `ddev sync doctor` checks it and
+      # says so when it does not match.
+      #
+      # Not compose's `user:`: an sshd cannot serve a uid that has no passwd
+      # entry, so a `user:` this image was not built for exits immediately
+      # with "No user exists for uid ...". These two are written into the
+      # account at start instead, which works for any uid.
+      DDEV_SYNC_UID: "33"
+      DDEV_SYNC_GID: "33"
+
+    volumes:
+      # What the sync pulls, read-only: the sync only ever reads production,
+      # and that is enforced here rather than left to the engine's good
+      # behaviour. Your target's `path:` is a path *inside this container*, so
+      # these mount points are what it names.
+      - app_storage:/data/storage:ro
+      - ./.env:/data/.env:ro
+      # The host key, which has to outlive the container: the engine trusts a
+      # key on first sight and refuses a *changed* one, so without this volume
+      # the first redeploy breaks the sync for every developer at once, with a
+      # message that reads like an attack.
+      - ddev_sync_hostkeys:/etc/ssh/keys
+
+volumes:
+  # Declare the host-key volume; `app_storage` is your stack's own.
+  ddev_sync_hostkeys:

@@ -26,6 +26,12 @@ SIDECAR = """\
 image="$(setting DDEV_SYNC_IMAGE noixdev/ddev-sync):$(setting DDEV_SYNC_VERSION 0.1.0)"
 """
 
+ENDPOINT_TEMPLATE = """\
+services:
+  ddev-sync:
+    image: noixdev/ddev-sync-endpoint:0.1.0
+"""
+
 
 UV_LOCK = """\
 version = 1
@@ -53,6 +59,10 @@ def build_tree(root: Path) -> None:
     (root / "uv.lock").write_text(UV_LOCK, encoding="utf-8")
     (root / "ddev-sync").mkdir()
     (root / "ddev-sync" / "prepare-sidecar.sh").write_text(SIDECAR, encoding="utf-8")
+    (root / "endpoint").mkdir()
+    (root / "endpoint" / "docker-compose.ddev-sync-endpoint.yaml").write_text(
+        ENDPOINT_TEMPLATE, encoding="utf-8"
+    )
 
 
 def snapshot(root: Path) -> dict[Path, str]:
@@ -66,6 +76,7 @@ def test_it_writes_the_version_into_every_target(tmp_path: Path) -> None:
     changed = rewrite("0.2.0", root=tmp_path)
 
     assert sorted(path.name for path in changed) == [
+        "docker-compose.ddev-sync-endpoint.yaml",
         "docker-compose.ddev-sync.yaml",
         "prepare-sidecar.sh",
         "pyproject.toml",
@@ -80,6 +91,10 @@ def test_it_writes_the_version_into_every_target(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "version.json").read_text())["version"] == "0.2.0"
     assert "DDEV_SYNC_VERSION:-0.2.0}" in (tmp_path / "docker-compose.ddev-sync.yaml").read_text()
     assert "DDEV_SYNC_VERSION 0.2.0)" in (tmp_path / "ddev-sync" / "prepare-sidecar.sh").read_text()
+    assert (
+        "ddev-sync-endpoint:0.2.0"
+        in (tmp_path / "endpoint" / "docker-compose.ddev-sync-endpoint.yaml").read_text()
+    )
 
 
 def test_a_prerelease_lands_as_semver_everywhere_but_pep440_in_pyproject(
@@ -102,6 +117,12 @@ def test_a_prerelease_lands_as_semver_everywhere_but_pep440_in_pyproject(
     assert (
         "DDEV_SYNC_VERSION 0.1.0-rc.1)"
         in (tmp_path / "ddev-sync" / "prepare-sidecar.sh").read_text()
+    )
+    # The endpoint's template names an image tag too, so the hyphen stays here
+    # as well - a published tag is semver, never PEP 440.
+    assert (
+        "ddev-sync-endpoint:0.1.0-rc.1"
+        in (tmp_path / "endpoint" / "docker-compose.ddev-sync-endpoint.yaml").read_text()
     )
 
 

@@ -1,4 +1,4 @@
-"""The five files that name a version must name the same one.
+"""The six files that name a version must name the same one.
 
 `tools/set_version.py` writes them together, so they can only drift through a
 hand edit - which is exactly what this test is for. It runs in the ordinary
@@ -28,6 +28,7 @@ def test_every_file_that_names_an_image_tag_names_the_same_one() -> None:
             "version.json",
             "docker-compose.ddev-sync.yaml",
             "ddev-sync/prepare-sidecar.sh",
+            "endpoint/docker-compose.ddev-sync-endpoint.yaml",
         )
     }
 
