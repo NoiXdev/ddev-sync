@@ -107,6 +107,63 @@ jobs:
             'python -c "from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT; print(DEFAULT_PROFILE_ROOT)"')" \
             = "/opt/ddev-sync/profiles"
 
+  endpoint-image:
+    name: Build and smoke-test the endpoint image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # Its own context, `endpoint/`: the endpoint is four files and three
+      # packages, and a context of the whole repository would rebuild it on
+      # every unrelated commit. amd64 and `load:` for the same reasons as the
+      # engine image above - the multi-arch build and the push are the release
+      # pipeline's.
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: endpoint
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ddev-sync-endpoint:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The `integration` job below asserts this against a running container
+      # too, with both key sources. It is repeated here because this job is
+      # the one that runs when the suite is skipped, and an endpoint that
+      # starts without a key is reachable and impossible to enter.
+      - name: It refuses to start with no authorized key
+        run: |
+          set -euo pipefail
+          if docker run --rm ddev-sync-endpoint:ci; then
+            echo "::error::the endpoint started with no authorized key"
+            exit 1
+          fi
+
+      # One `command -v` per binary, as in the engine image's job above and
+      # for the same busybox reason. These four are the server side of what
+      # the engine invokes over ssh; the three after them would each undo a
+      # decision this image exists to keep - the daemon, the developer's own
+      # S3 client, and the PHP that WordPress's credential source would need.
+      - name: It carries the far side of what the engine invokes, and nothing else
+        run: |
+          docker run --rm --entrypoint sh ddev-sync-endpoint:ci -c \
+            'for b in sh rsync mysqldump mysql; do
+               command -v "$b" || { echo "MISSING: $b"; exit 1; }
+             done
+             for b in php docker rclone ssh; do
+               ! command -v "$b" || { echo "PRESENT: $b"; exit 1; }
+             done'
+
+      - name: sshd accepts the configuration it ships with
+        run: |
+          docker run --rm --entrypoint sh ddev-sync-endpoint:ci -c \
+            'ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/keys/ssh_host_ed25519_key &&
+             /usr/sbin/sshd -t'
+
   integration:
     # The suite `gates` cannot see. `pyproject.toml`'s addopts deselect
     # `integration`, so the unit gate above is blind to every test that drives

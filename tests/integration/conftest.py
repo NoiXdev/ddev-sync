@@ -16,6 +16,11 @@ from tests.integration.paths import PROJECT_DIR
 
 HERE = Path(__file__).parent
 COMPOSE = ["docker", "compose", "-f", str(HERE / "docker-compose.yaml")]
+# The endpoint image, built from this repository rather than pulled: the point
+# of these tests is the image in this tree, and a published tag would verify
+# whatever was released last.
+ENDPOINT_IMAGE = "ddev-sync-endpoint:test"
+ENDPOINT_CONTEXT = HERE.parent.parent / "endpoint"
 REMOTE_PORT = "22022"
 REMOTE_HOST_ENTRY = f"[127.0.0.1]:{REMOTE_PORT}"
 # Matches `name:` at the top of docker-compose.yaml; compose derives the
@@ -190,6 +195,21 @@ def dockerized_mysql_clients(tmp_path_factory: pytest.TempPathFactory) -> Iterat
         yield
     finally:
         os.environ["PATH"] = previous_path
+
+
+@pytest.fixture(scope="session")
+def endpoint_image() -> str:
+    """Build the endpoint image once per session and return its tag.
+
+    Here rather than in `test_endpoint_image.py` because more than one module
+    starts an endpoint: that module asks what the image promises, and
+    `test_docker_provider.py` runs the engine against it. One build either
+    way - the image is four files and three packages.
+    """
+    built = _run(["docker", "build", "-t", ENDPOINT_IMAGE, str(ENDPOINT_CONTEXT)])
+    if built.returncode != 0:
+        pytest.fail(f"could not build the endpoint image:\n{built.stdout}\n{built.stderr}")
+    return ENDPOINT_IMAGE
 
 
 @pytest.fixture(scope="session")
