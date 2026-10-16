@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
-from ddev_sync.config.models import ResolvedTarget, Stage
+from ddev_sync.config.models import Provider, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations import preflight
 from ddev_sync.operations.base import ExecutionContext, OperationError, discard_progress
@@ -1198,6 +1198,71 @@ def test_a_sync_refuses_to_start_when_the_path_cannot_be_read(tmp_path: Path) ->
 
     with pytest.raises(OperationError, match="cannot be read"):
         PreflightOperation().execute(make_context(runner, tmp_path), {})
+
+
+def test_the_unreadable_path_message_names_the_setting_that_fixes_it(tmp_path: Path) -> None:
+    """The advice has to name a setting that exists.
+
+    An endpoint cannot take compose's `user:` at all - measured: a container
+    started with a uid the image was not built for exits 255 with "No user
+    exists for uid ...", because an sshd needs a passwd entry for the uid it
+    serves. The session's uid arrives as DDEV_SYNC_UID instead, so that is
+    what a reader must be sent to.
+    """
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout=f"{preflight._UNREADABLE}\n")
+
+    with pytest.raises(OperationError, match="DDEV_SYNC_UID") as refusal:
+        PreflightOperation().execute(make_context(runner, tmp_path), {})
+
+    assert "user:" not in str(refusal.value)
+
+
+def test_a_changed_host_key_on_a_docker_target_points_at_the_volume(tmp_path: Path) -> None:
+    """`accept-new` refuses a changed key with a message about an attack.
+
+    For this provider the overwhelmingly likely cause is a redeploy that
+    dropped the endpoint's host-key volume, and nothing else in the output
+    points there - the address in the message is the Docker host's own
+    loopback, which is as unhelpful as an address can be.
+    """
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["ssh"],
+        returncode=255,
+        stderr="@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\n",
+    )
+    # The provider lives on the resolved target, not in the merged config:
+    # `make_context`'s keyword arguments are config layers. `ResolvedTarget`
+    # is a pydantic model, so it is copied with `model_copy`.
+    context = make_context(runner, tmp_path)
+    context = dataclasses.replace(
+        context, target=context.target.model_copy(update={"provider": Provider.DOCKER})
+    )
+
+    with pytest.raises(OperationError, match="host-key volume") as refusal:
+        PreflightOperation().execute(context, {})
+
+    assert "redeploy" in str(refusal.value)
+
+
+def test_a_changed_host_key_on_a_server_target_says_nothing_about_volumes(
+    tmp_path: Path,
+) -> None:
+    """A server's key changes for different reasons - a rebuilt host, or a
+    connection that is not going where the reader thinks - and advice about a
+    container volume would send them somewhere that does not exist."""
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["ssh"],
+        returncode=255,
+        stderr="@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\n",
+    )
+
+    with pytest.raises(OperationError) as refusal:
+        PreflightOperation().execute(make_context(runner, tmp_path), {})
+
+    assert "volume" not in str(refusal.value)
 
 
 def test_an_ssh_failure_about_forwarding_says_what_to_turn_on(tmp_path: Path) -> None:

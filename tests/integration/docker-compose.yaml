@@ -59,8 +59,10 @@ services:
       - PASSWORD_ACCESS=false
     volumes:
       - ./.keys:/keys:ro
-      # Turns on the one setting a jump host needs; see the script.
-      - ./jump-init:/custom-cont-init.d:ro
+      # Turns on the one setting a jump host needs; see the script. One
+      # directory above this suite, because the matrix stack mounts the same
+      # hook into its own jump - one copy, two suites.
+      - ../jump-init:/custom-cont-init.d:ro
     ports:
       - "127.0.0.1:22023:2222"
     # Same reason as `remote` below: the image ships no HEALTHCHECK, so
@@ -68,6 +70,44 @@ services:
     # retries than `remote` needs, because nothing is being installed here.
     healthcheck:
       test: ["CMD-SHELL", "test -s /config/.ssh/authorized_keys && nc -z localhost 2222"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # The sync endpoint the stack publishes, built from this repository: the
+  # far side of `provider: docker`, and the thing the engine actually talks
+  # to once the jump has opened the hop.
+  #
+  # `network_mode` rather than a network of its own, because that is what a
+  # published port *is*: the endpoint has no address anything outside can
+  # reach, `127.0.0.1:22` on the jump is this container, and `db` below still
+  # resolves here - which is how the endpoint reads credentials from a .env
+  # naming a compose service and needs none of its own.
+  endpoint:
+    build:
+      context: ../../endpoint
+    network_mode: "service:jump"
+    environment:
+      # The uid that owns the mounted fixtures as this suite's containers see
+      # them. Root-owned on a Linux runner's bind mount, so the default 33
+      # would be a uid mismatch here rather than in production - the thing
+      # the doctor's own test creates on purpose, and must not meet by
+      # accident everywhere else.
+      - DDEV_SYNC_UID=${DDEV_SYNC_ENDPOINT_UID:-33}
+      - DDEV_SYNC_GID=${DDEV_SYNC_ENDPOINT_GID:-33}
+    volumes:
+      # The *file* source of the authorised keys, deliberately: task 1's own
+      # tests cover the environment variable, so between them both halves of
+      # the union are exercised by a real sync.
+      - ./.keys/id_ed25519.pub:/etc/ddev-sync/authorized_keys:ro
+      # The same tree the `remote` service serves, so a docker target and a
+      # server target can be pointed at the same path and compared.
+      - ./fixtures/remote:/srv/app:ro
+      - endpoint-hostkeys:/etc/ssh/keys
+    healthcheck:
+      # Port 22 in LISTEN, read from /proc because the image carries three
+      # binaries on purpose and a healthcheck is no reason for a fourth.
+      test: ["CMD-SHELL", "grep -qiE ':0016 [0-9A-F]+:0000 0A' /proc/net/tcp"]
       interval: 2s
       timeout: 5s
       retries: 30
@@ -136,3 +176,9 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+
+volumes:
+  # The endpoint's host key has to outlive the container here too: the test
+  # that drops this volume is the one proving what happens when a real stack
+  # does, and it would prove nothing if every recreate rolled the key anyway.
+  endpoint-hostkeys:

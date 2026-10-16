@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ddev_sync.config.models import Provider
 from ddev_sync.operations.base import ExecutionContext, OperationError, redact
 from ddev_sync.operations.database import RemoteCredentials, read_remote_credentials
 from ddev_sync.operations.files import validate_path_pairs
@@ -155,9 +156,9 @@ class PreflightOperation:
         if report.path_readable is False:
             raise OperationError(
                 f"the path {context.target.path!r} exists on the far side but cannot be read. "
-                "Under provider: docker this is usually a uid mismatch - the endpoint's "
-                "'user:' has to match the uid that owns the mounted volumes. Left to the "
-                "sync it would surface in the middle of the file transfer instead."
+                "Under provider: docker this is usually a uid mismatch - set the endpoint's "
+                "DDEV_SYNC_UID and DDEV_SYNC_GID to the ids that own the mounted volumes. "
+                "Left to the sync it would surface in the middle of the file transfer instead."
             )
         if not report.remote_path_ok:
             raise OperationError(
@@ -358,6 +359,22 @@ class PreflightOperation:
 
     @staticmethod
     def _ssh_help(context: ExecutionContext, stderr: str) -> str:
+        if (
+            "REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr
+            and context.target.provider is Provider.DOCKER
+        ):
+            # ssh is right to refuse and right to shout, but for this provider
+            # the overwhelmingly likely cause is a redeploy that dropped the
+            # endpoint's host-key volume - and nothing in ssh's own message
+            # points there, because the address it names is the Docker host's
+            # loopback rather than anything a reader can go and look at.
+            return (
+                "the sync endpoint's host key is not the one recorded for it. "
+                "Under provider: docker a redeploy that dropped the endpoint's "
+                "host-key volume looks exactly like this; check that the volume "
+                "mounted at /etc/ssh/keys survived, then remove the stale "
+                f"known_hosts entry.\n{stderr.strip()}"
+            )
         if "administratively prohibited" in stderr:
             # ProxyJump opens its hop with stdio forwarding, which a hardened
             # sshd refuses with a message that explains nothing. Worth naming,

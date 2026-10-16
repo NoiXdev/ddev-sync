@@ -19,8 +19,7 @@ own `-e` string and splits it on spaces, which is the one place the jump flag
 could be mangled without any unit test noticing.
 """
 
-import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -32,7 +31,6 @@ from ddev_sync.transport.ssh import rsync_pull_command
 pytestmark = pytest.mark.integration
 
 JUMP_PORT = "22023"
-JUMP_HOST_ENTRY = f"[127.0.0.1]:{JUMP_PORT}"
 # The inner host as the *jump* resolves it: a compose service name on the
 # stack's own network, which is the whole point of a jump.
 INNER_HOST = "remote"
@@ -44,50 +42,22 @@ INNER_PORT = 2222
 INNER_HOST_ENTRY = f"[{INNER_HOST}]:{INNER_PORT}"
 
 
-def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, capture_output=True, text=True, check=False)
-
-
 @pytest.fixture
-def known_hosts_for_both_hops(stack: None) -> Iterator[None]:
-    """Trust both hops for this test only, then forget them.
+def both_hops(jump_host_key: None, known_hosts_for: Callable[[str], None]) -> None:
+    """Trust both hops, which are not symmetrical.
 
-    The suite's own `known_host` fixture covers the published remote; this
-    connection meets two different identities — the jump on its published
-    port, and the inner host under the name the jump resolves. Both are
-    regenerated whenever a container is recreated, so an entry left behind
-    would fail a later run as "REMOTE HOST IDENTIFICATION HAS CHANGED", which
-    from ssh's point of view is indistinguishable from an attack. Scrubbed
-    before as well as after, in case an interrupted run never reached its own
-    cleanup.
+    The jump's key has to be *registered*, because the ProxyJump child never
+    sees the engine's options: it is exec'd as
+    `ssh -l deploy -p 22023 -W '[remote]:2222' 127.0.0.1`, measured, so the
+    outer `-o StrictHostKeyChecking=accept-new` does not reach it and the
+    default policy applies. `jump_host_key` does that once per session, and
+    says there why it must not be per test.
+
+    The inner hop needs no such help: it is verified by the outer ssh, which
+    does carry the engine's options - so its entry is only scrubbed, which is
+    what keeps a regenerated container from failing the next run.
     """
-    known_hosts = Path.home() / ".ssh" / "known_hosts"
-    known_hosts.parent.mkdir(parents=True, exist_ok=True)
-    known_hosts.touch(exist_ok=True)
-    for entry in (JUMP_HOST_ENTRY, INNER_HOST_ENTRY):
-        _run(["ssh-keygen", "-R", entry, "-f", str(known_hosts)])
-
-    # The jump's key has to be *registered*, not merely scrubbed, because the
-    # engine's own options never reach the process that verifies it. ProxyJump
-    # execs a child - measured here as
-    # `ssh -l deploy -p 22023 -W '[remote]:2222' 127.0.0.1` - and the outer
-    # `-o StrictHostKeyChecking=accept-new` is not handed down, so that child
-    # uses the default policy. On a developer's machine a global
-    # `StrictHostKeyChecking no` can hide this; on CI, with an empty
-    # known_hosts and no tty, it is "Host key verification failed".
-    #
-    # The inner hop needs no such help: it is verified by the *outer* ssh,
-    # which does carry the engine's options.
-    scan = _run(["ssh-keyscan", "-p", JUMP_PORT, "-T", "5", "127.0.0.1"])
-    if scan.returncode != 0 or not scan.stdout.strip():
-        pytest.fail(f"could not scan the jump host key:\n{scan.stderr}")
-    with known_hosts.open("a", encoding="utf-8") as handle:
-        handle.write(scan.stdout)
-    try:
-        yield
-    finally:
-        for entry in (JUMP_HOST_ENTRY, INNER_HOST_ENTRY):
-            _run(["ssh-keygen", "-R", entry, "-f", str(known_hosts)])
+    known_hosts_for(INNER_HOST_ENTRY)
 
 
 def jumped_target() -> ResolvedTarget:
@@ -105,7 +75,7 @@ def jumped_target() -> ResolvedTarget:
 
 
 def test_a_pull_through_a_jump_host_brings_the_files_across(
-    known_hosts_for_both_hops: None, tmp_path: Path
+    both_hops: None, tmp_path: Path
 ) -> None:
     destination = tmp_path / "pulled"
     destination.mkdir()
