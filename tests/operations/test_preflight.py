@@ -1167,3 +1167,21 @@ def test_preflight_announces_nothing_when_nobody_is_listening(tmp_path: Path) ->
     assert context.progress is discard_progress
 
     PreflightOperation().execute(context, {})
+
+
+def test_a_present_but_unreadable_path_is_reported_as_such(tmp_path: Path) -> None:
+    """A directory that cannot be listed is the uid mismatch a docker endpoint
+    makes likely: the mounts belong to the application's user, and a `user:`
+    that does not match sees a path that exists and yields nothing.
+
+    `remote_path_ok` stays true on purpose. The path *is* there, and folding
+    the two together is what makes today's message misleading - it would send
+    a reader to check the path they already typed correctly.
+    """
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout=f"{preflight._UNREADABLE}\n")
+
+    report = PreflightOperation().check(make_context(runner, tmp_path))
+
+    assert report.remote_path_ok is True
+    assert report.path_readable is False

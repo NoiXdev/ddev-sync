@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ddev_sync.cli.render import render_doctor, render_features, render_plan, render_targets
 from ddev_sync.config.merge import merge_layers
-from ddev_sync.config.models import DeployerRef, ResolvedTarget, Stage, TargetSpec
+from ddev_sync.config.models import DeployerRef, Provider, ResolvedTarget, Stage, TargetSpec
 from ddev_sync.config.targets import CollectedTarget
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.engine.plan import Plan, PlannedStep, PostSyncEntry, build_plan
@@ -867,4 +867,53 @@ def test_render_targets_keeps_the_literal_endpoint_and_its_alignment() -> None:
         "  bare        ?:?   [global]\n"
         "  no_path     u@h.example:?   [global]\n"
         "  no_user     h.example:/srv/y   [g]\n"
+    )
+
+
+def test_the_doctor_reports_an_unreadable_path() -> None:
+    report = PreflightReport(
+        ssh_ok=True, remote_path_ok=True, free_bytes=50 * 1024**3, path_readable=False
+    )
+
+    rendered = render_doctor(report, docker_target())
+
+    assert "readable" in rendered
+    assert "FAIL" in rendered
+
+
+def test_the_doctor_names_the_endpoint_for_a_docker_target() -> None:
+    """When the endpoint is silent the Docker host usually answered perfectly
+    well, so naming the host sends a reader to debug the wrong machine."""
+    report = PreflightReport(ssh_ok=False, remote_path_ok=False, free_bytes=50 * 1024**3)
+
+    rendered = render_doctor(report, docker_target())
+
+    assert "endpoint" in rendered
+
+
+def test_the_doctor_says_a_docker_path_is_inside_the_endpoint() -> None:
+    """The one deliberate break with a reader's intuition: under
+    `provider: docker`, `path` is the path inside the endpoint, not on the
+    host. Someone staring at a correct /data/ while /srv/app/ sits on the host
+    concludes the tool is broken."""
+    report = PreflightReport(
+        ssh_ok=True, remote_path_ok=True, free_bytes=50 * 1024**3, path_readable=True
+    )
+
+    rendered = render_doctor(report, docker_target())
+
+    assert "in the endpoint" in rendered
+
+
+def docker_target() -> ResolvedTarget:
+    return ResolvedTarget(
+        name="production",
+        provider=Provider.DOCKER,
+        host="127.0.0.1",
+        user="sync",
+        port=2222,
+        jump_host="prod.example",
+        jump_host_user="deploy",
+        path="/data/",
+        stage=Stage.PRODUCTION,
     )

@@ -8,7 +8,7 @@ in a golden file instead of being discovered in production.
 from collections.abc import Mapping
 
 from ddev_sync.cli.colour import Colour, paint_padded
-from ddev_sync.config.models import ResolvedTarget, TargetSpec
+from ddev_sync.config.models import Provider, ResolvedTarget, TargetSpec
 from ddev_sync.config.targets import CollectedTarget
 from ddev_sync.engine.plan import Plan, PlannedStep
 from ddev_sync.operations.preflight import PreflightReport
@@ -176,17 +176,38 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget, *, colour: bo
     (see `ddev_sync.cli.colour.colour_enabled`). It defaults to off so every
     caller that predates it, and every snapshot test, keeps its plain output.
     """
+    # Under `provider: docker` the far side is a container inside the stack,
+    # and the two rows that name it say so. When the endpoint is silent the
+    # Docker host itself has usually answered perfectly well, so "web01
+    # did not respond" would send a reader to debug the wrong machine; and
+    # `path` is the path *inside* the endpoint, which is the one place a
+    # reader's intuition from a server target is wrong.
+    endpoint = target.provider is Provider.DOCKER
+    connection_label = "sync endpoint" if endpoint else "ssh connection"
+    path_detail = f"{target.path} (in the endpoint)" if endpoint else target.path
     checks = [
         # `ssh_detail` carries ssh's own reason when the connection failed;
         # the bare host is the fallback for a report that predates the field.
-        ("ssh connection", report.ssh_ok, report.ssh_detail or target.host),
-        ("deploy path", report.remote_path_ok, target.path),
+        (connection_label, report.ssh_ok, report.ssh_detail or target.host),
+        ("deploy path", report.remote_path_ok, path_detail),
         (
             "disk space",
             report.free_space_ok,
             f"{report.free_bytes // 1024**3} GB free",
         ),
     ]
+    if report.path_readable is not None:
+        # Omitted when the probe never ran, as every other conditional row is.
+        # A path that exists and cannot be listed is the uid mismatch a docker
+        # endpoint makes likely, and it has always failed later and deeper on a
+        # server target too.
+        checks.append(
+            (
+                "path readable",
+                report.path_readable,
+                "" if report.path_readable else "exists but cannot be listed - check the uid",
+            )
+        )
     if report.credentials_ok is not None:
         checks.append(("credentials", report.credentials_ok, report.credentials_detail))
     if report.sanitize_tables_ok is not None:

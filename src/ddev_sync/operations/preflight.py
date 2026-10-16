@@ -47,6 +47,12 @@ DOCKER_SOCKET = Path("/var/run/docker.sock")
 
 _OK = "ddev-sync-ok"
 _NO_PATH = "ddev-sync-no-path"
+# A directory that exists and cannot be listed. Its own outcome rather than
+# a flavour of `_NO_PATH`: under `provider: docker` this is the likely
+# misconfiguration - mounts owned by the application's uid and a `user:`
+# that does not match - and telling someone their path is missing sends them
+# to check the one thing they got right.
+_UNREADABLE = "ddev-sync-unreadable"
 
 
 @dataclass(frozen=True)
@@ -106,6 +112,9 @@ class PreflightReport:
     ssh_detail: str = ""
     credentials_ok: bool | None = None
     credentials_detail: str = ""
+    # `None` when the probe never ran: connectivity failed, so the question
+    # was not asked. `False` means the path is there and could not be listed.
+    path_readable: bool | None = None
 
     @property
     def free_space_ok(self) -> bool:
@@ -208,6 +217,9 @@ class PreflightOperation:
             credentials_detail=credentials_detail,
             agent_detail=agent_detail,
             ssh_detail=self._ssh_detail(context, report, stderr),
+            # Carried from `_probe`'s report: this rebuild lists every field
+            # by hand, so a new one is dropped unless it is named here.
+            path_readable=report.path_readable,
         )
 
     def _probe(self, context: ExecutionContext) -> tuple[PreflightReport, str]:
@@ -219,16 +231,32 @@ class PreflightOperation:
         `check` having been called first.
         """
         quoted_path = shlex.quote(context.target.path)
-        probe = f"if [ -d {quoted_path} ]; then echo {_OK}; else echo {_NO_PATH}; fi"
+        # Three outcomes from one round trip rather than a second connection
+        # for the readability question. `-r` and `-x` together are what
+        # listing a directory needs: readable to see the names, executable to
+        # reach what they name.
+        probe = (
+            f"if [ ! -d {quoted_path} ]; then echo {_NO_PATH}; "
+            f"elif [ -r {quoted_path} ] && [ -x {quoted_path} ]; then echo {_OK}; "
+            f"else echo {_UNREADABLE}; fi"
+        )
         result = context.runner.run(ssh_command(context.target, ["sh", "-c", probe]))
         if not result.ok:
             return PreflightReport(False, False, self._free_bytes(context)), result.stderr
         output = result.stdout.strip()
-        if output not in {_OK, _NO_PATH}:
+        if output not in {_OK, _NO_PATH, _UNREADABLE}:
             raise OperationError(
                 f"unexpected output from the remote probe on {context.target.host}: {output}"
             )
-        return PreflightReport(True, output == _OK, self._free_bytes(context)), ""
+        return (
+            PreflightReport(
+                True,
+                output in {_OK, _UNREADABLE},
+                self._free_bytes(context),
+                path_readable=output == _OK,
+            ),
+            "",
+        )
 
     @staticmethod
     def _check_web_container(context: ExecutionContext) -> tuple[bool, str]:
