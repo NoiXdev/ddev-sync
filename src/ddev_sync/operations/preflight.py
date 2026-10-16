@@ -152,6 +152,13 @@ class PreflightOperation:
         report, stderr = self._probe(context)
         if not report.ssh_ok:
             raise OperationError(self._ssh_help(context, stderr))
+        if report.path_readable is False:
+            raise OperationError(
+                f"the path {context.target.path!r} exists on the far side but cannot be read. "
+                "Under provider: docker this is usually a uid mismatch - the endpoint's "
+                "'user:' has to match the uid that owns the mounted volumes. Left to the "
+                "sync it would surface in the middle of the file transfer instead."
+            )
         if not report.remote_path_ok:
             raise OperationError(
                 f"the deploy path {context.target.path!r} does not exist on "
@@ -253,7 +260,11 @@ class PreflightOperation:
                 True,
                 output in {_OK, _UNREADABLE},
                 self._free_bytes(context),
-                path_readable=output == _OK,
+                # `None`, not `False`, when the path is not there: the
+                # question was never asked, and the field's contract says so.
+                # Reported as False it would fire the readability refusal with
+                # a message about uids for a path that simply does not exist.
+                path_readable=None if output == _NO_PATH else output == _OK,
             ),
             "",
         )
@@ -347,6 +358,16 @@ class PreflightOperation:
 
     @staticmethod
     def _ssh_help(context: ExecutionContext, stderr: str) -> str:
+        if "administratively prohibited" in stderr:
+            # ProxyJump opens its hop with stdio forwarding, which a hardened
+            # sshd refuses with a message that explains nothing. Worth naming,
+            # because the setting is on the machine being jumped through and
+            # nothing else in the output points there.
+            return (
+                "the host in between refused to forward the connection. "
+                "A jump host needs 'AllowTcpForwarding yes' in its sshd_config; "
+                f"many hardened images ship 'no'.\n{stderr.strip()}"
+            )
         return (
             f"cannot reach {context.target.host} over ssh. "
             "Run 'ddev auth ssh' and try again, or check the target's host, "

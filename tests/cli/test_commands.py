@@ -1196,3 +1196,23 @@ def test_the_same_sync_in_a_log_names_nothing(project: Path, tmp_path: Path) -> 
     )
 
     assert not any("reaching" in line for line in lines)
+
+
+def test_doctor_exits_nonzero_when_the_path_cannot_be_read(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row that reads FAIL while the command reports success is worse than
+    no row: a script gating on the exit code would carry on."""
+    from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
+
+    monkeypatch.setattr(
+        PreflightOperation,
+        "check",
+        lambda _self, _context: PreflightReport(True, True, 50 * 1024**3, path_readable=False),
+    )
+
+    assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
+    assert "path readable" in capsys.readouterr().out

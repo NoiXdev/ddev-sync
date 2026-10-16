@@ -283,6 +283,7 @@ def docker_target() -> ResolvedTarget:
         port=2222,
         jump_host="prod.example",
         jump_host_user="deploy",
+        host_key_alias="ddev-sync-endpoint-prod.example-2222",
         path="/data/",
         stage=Stage.PRODUCTION,
     )
@@ -295,3 +296,19 @@ def test_a_docker_target_builds_a_jumped_ssh_command() -> None:
     assert argv[argv.index("-J") + 1] == "deploy@prod.example:22"
     assert "sync@127.0.0.1" in argv
     assert argv[argv.index("-p") + 1] == "2222"
+
+
+def test_a_host_key_alias_is_passed_to_every_transport_shape() -> None:
+    """Without it two stacks share one `known_hosts` entry, and the files and
+    download paths would disagree with the command path about which host they
+    are talking to."""
+    expected = "HostKeyAlias=ddev-sync-endpoint-prod.example-2222"
+    target = docker_target()
+
+    assert expected in ssh_command(target, ["true"])
+    assert expected in scp_download_command(target, "/data/x", "/tmp/x")
+    assert expected in " ".join(rsync_pull_command(target, "/data/", "/tmp/here"))
+
+
+def test_a_server_target_passes_no_host_key_alias() -> None:
+    assert not any("HostKeyAlias" in part for part in ssh_command(direct(), ["true"]))

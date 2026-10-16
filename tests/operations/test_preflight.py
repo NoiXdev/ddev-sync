@@ -1185,3 +1185,30 @@ def test_a_present_but_unreadable_path_is_reported_as_such(tmp_path: Path) -> No
 
     assert report.remote_path_ok is True
     assert report.path_readable is False
+
+
+def test_a_sync_refuses_to_start_when_the_path_cannot_be_read(tmp_path: Path) -> None:
+    """The probe detects the uid mismatch; the step has to act on it.
+
+    Otherwise it resurfaces as a failure in the middle of the rsync, which is
+    exactly the place the design says is the wrong one to find it.
+    """
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout=f"{preflight._UNREADABLE}\n")
+
+    with pytest.raises(OperationError, match="cannot be read"):
+        PreflightOperation().execute(make_context(runner, tmp_path), {})
+
+
+def test_an_ssh_failure_about_forwarding_says_what_to_turn_on(tmp_path: Path) -> None:
+    """ProxyJump opens its hop with stdio forwarding, and a hardened sshd
+    refuses it with a message that explains nothing to the reader."""
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["ssh"],
+        returncode=255,
+        stderr="channel 0: open failed: administratively prohibited: open failed\n",
+    )
+
+    with pytest.raises(OperationError, match="AllowTcpForwarding"):
+        PreflightOperation().execute(make_context(runner, tmp_path), {})

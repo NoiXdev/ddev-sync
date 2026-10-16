@@ -297,6 +297,14 @@ def _build(
     resolve_deployer: DeployerResolver | None,
 ) -> ResolvedTarget:
     deployer = flattened.pop("deployer", None)
+    if deployer is not None and flattened.get("provider") == Provider.DOCKER:
+        raise TargetError(
+            f"target {name!r} (from {source}) uses provider: docker with a 'deployer:' block; "
+            "a Deployer block resolves a server connection from the project's deploy.php - its "
+            "host, its port and its deploy path, which describe the machine and not a container "
+            "inside it - so its path would silently become the path inside the endpoint. "
+            "Set the Docker host and the endpoint's path directly."
+        )
     if deployer is not None:
         if resolve_deployer is None:
             raise TargetError(
@@ -364,14 +372,26 @@ def _build(
     # endpoint behind it is an address rather than an alias, so `via_ssh_alias`
     # is taken back.
     if provider == Provider.DOCKER:
-        flattened["jump_host"] = flattened["host"]
+        jump_host = flattened["host"]
+        flattened["jump_host"] = jump_host
         user = flattened.pop("user", None)
         if user is not None:
             flattened["jump_host_user"] = user
+        # The declared port is the *Docker host's*, because that is the machine
+        # being connected to; the destination's port is the endpoint's and
+        # comes from `sync_port`. Dropping this is how a host whose sshd is not
+        # on 22 became unreachable with no message naming the port.
+        declared_port = flattened.get("port")
+        if declared_port is not None:
+            flattened["jump_host_port"] = declared_port
         flattened["host"] = ENDPOINT_HOST
         flattened["user"] = ENDPOINT_USER
         flattened["port"] = flattened.pop("sync_port")
         flattened["via_ssh_alias"] = False
+        # Every endpoint has the same address, so without a name of its own
+        # two stacks collide in `known_hosts`. Host and port together are the
+        # endpoint's identity: two stacks on one host cannot share a port.
+        flattened["host_key_alias"] = f"ddev-sync-endpoint-{jump_host}-{flattened['port']}"
 
     missing = [key for key in ("host", "path", "stage") if key not in flattened]
     if missing:

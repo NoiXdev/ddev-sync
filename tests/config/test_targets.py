@@ -907,3 +907,64 @@ def test_a_sync_port_without_the_docker_provider_is_refused() -> None:
                 "stage": "production",
             }
         )
+
+
+def test_a_docker_target_keeps_the_docker_hosts_own_ssh_port() -> None:
+    """`port` on a docker target is the Docker host's, because that is the
+    machine the developer connects to; it must not be lost when the
+    destination's port becomes the endpoint's."""
+    resolved = resolve_one(
+        {
+            "provider": "docker",
+            "host": "prod.example",
+            "user": "deploy",
+            "port": 2201,
+            "sync_port": 2222,
+            "path": "/data/",
+            "stage": "production",
+        }
+    )
+
+    assert resolved.jump_host_port == 2201
+    assert resolved.port == 2222
+
+
+def test_a_docker_target_gets_a_host_key_alias_of_its_own() -> None:
+    """Every endpoint otherwise resolves to the same `[127.0.0.1]:2222` in
+    known_hosts, so two stacks on that port would collide and the second
+    would be refused as a changed host key - which reads like an attack."""
+    resolved = resolve_one(
+        {
+            "provider": "docker",
+            "host": "prod.example",
+            "sync_port": 2222,
+            "path": "/data/",
+            "stage": "production",
+        }
+    )
+
+    assert resolved.host_key_alias == "ddev-sync-endpoint-prod.example-2222"
+
+
+def test_a_deployer_block_with_the_docker_provider_is_refused() -> None:
+    """A Deployer block resolves a *server* connection from deploy.php: its
+    host, its port and its deploy path, all of which describe the machine and
+    not a container inside it. Accepted, it would silently use that path as
+    the path inside the endpoint."""
+    with pytest.raises(TargetError, match="deployer"):
+        resolve_target(
+            "production",
+            collected_from(
+                {
+                    "production": {
+                        "provider": "docker",
+                        "sync_port": 2222,
+                        "deployer": {"host": "prod"},
+                        "stage": "production",
+                    }
+                }
+            ),
+            resolve_deployer=lambda _host: DeployerConnection(
+                host="prod.example", user="deploy", port=22, path="/srv/app/", layout=Layout.PLAIN
+            ),
+        )

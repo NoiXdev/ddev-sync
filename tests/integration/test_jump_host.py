@@ -66,6 +66,23 @@ def known_hosts_for_both_hops(stack: None) -> Iterator[None]:
     known_hosts.touch(exist_ok=True)
     for entry in (JUMP_HOST_ENTRY, INNER_HOST_ENTRY):
         _run(["ssh-keygen", "-R", entry, "-f", str(known_hosts)])
+
+    # The jump's key has to be *registered*, not merely scrubbed, because the
+    # engine's own options never reach the process that verifies it. ProxyJump
+    # execs a child - measured here as
+    # `ssh -l deploy -p 22023 -W '[remote]:2222' 127.0.0.1` - and the outer
+    # `-o StrictHostKeyChecking=accept-new` is not handed down, so that child
+    # uses the default policy. On a developer's machine a global
+    # `StrictHostKeyChecking no` can hide this; on CI, with an empty
+    # known_hosts and no tty, it is "Host key verification failed".
+    #
+    # The inner hop needs no such help: it is verified by the *outer* ssh,
+    # which does carry the engine's options.
+    scan = _run(["ssh-keyscan", "-p", JUMP_PORT, "-T", "5", "127.0.0.1"])
+    if scan.returncode != 0 or not scan.stdout.strip():
+        pytest.fail(f"could not scan the jump host key:\n{scan.stderr}")
+    with known_hosts.open("a", encoding="utf-8") as handle:
+        handle.write(scan.stdout)
     try:
         yield
     finally:
@@ -98,6 +115,8 @@ def test_a_pull_through_a_jump_host_brings_the_files_across(
     )
 
     assert result.ok, result.stderr
-    assert sorted(path.name for path in destination.iterdir()), (
+    # The fixture's own file, by name and by content: "something arrived" would
+    # also be true of an empty directory listing that happened to be truthy.
+    assert (destination / "public" / "fileadmin" / "brochure.pdf").is_file(), (
         f"nothing arrived through the jump host: {result.stderr}"
     )

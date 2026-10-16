@@ -65,11 +65,25 @@ def ssh_command(target: ResolvedTarget, remote_command: Sequence[str]) -> list[s
 
 
 def _ssh_prefix(target: ResolvedTarget) -> list[str]:
-    prefix = ["ssh", *SSH_CONNECTION_OPTIONS]
+    prefix = ["ssh", *SSH_CONNECTION_OPTIONS, *_host_key_alias_flag(target)]
     prefix.extend(_jump_flag(target))
     if target.port is not None:
         prefix.extend(["-p", str(target.port)])
     return prefix
+
+
+def _host_key_alias_flag(target: ResolvedTarget) -> list[str]:
+    """Record this destination in `known_hosts` under a name of its own.
+
+    For a target whose address is its name this is nothing. It exists for one
+    whose address is shared - a Docker endpoint, which every stack reaches at
+    the Docker host's own loopback - where without it the second stack is
+    refused as a changed host key. Read as a field rather than decided here:
+    the transport does not know what a provider is, and must not learn.
+    """
+    if target.host_key_alias is None:
+        return []
+    return ["-o", f"HostKeyAlias={target.host_key_alias}"]
 
 
 def _jump_flag(target: ResolvedTarget) -> list[str]:
@@ -83,7 +97,7 @@ def _jump_flag(target: ResolvedTarget) -> list[str]:
 
 def scp_download_command(target: ResolvedTarget, remote_path: str, local_path: str) -> list[str]:
     """Build `scp [-o ...] [-J jump] [-P port] endpoint:remote local`."""
-    command = ["scp", *SSH_CONNECTION_OPTIONS]
+    command = ["scp", *SSH_CONNECTION_OPTIONS, *_host_key_alias_flag(target)]
     command.extend(_jump_flag(target))
     if target.port is not None:
         command.extend(["-P", str(target.port)])
@@ -113,7 +127,7 @@ def _rsync_ssh_option(target: ResolvedTarget) -> str:
     # rsync splits `-e` on spaces and ssh receives the pieces as separate
     # arguments, so every option above is written without a space inside its
     # value. Keep it that way: a value with a space would be torn in two.
-    parts = ["ssh", *SSH_CONNECTION_OPTIONS, *_jump_flag(target)]
+    parts = ["ssh", *SSH_CONNECTION_OPTIONS, *_host_key_alias_flag(target), *_jump_flag(target)]
     if target.port is not None:
         parts.extend(["-p", str(target.port)])
     return " ".join(parts)

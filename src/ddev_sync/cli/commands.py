@@ -80,6 +80,7 @@ def doctor_command(
         0
         if report.ssh_ok
         and report.remote_path_ok
+        and report.path_readable is not False
         and report.free_space_ok
         and report.credentials_ok is not False
         and report.sanitize_tables_ok is not False

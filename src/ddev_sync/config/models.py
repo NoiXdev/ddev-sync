@@ -169,13 +169,23 @@ class ResolvedTarget(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str
-    # Carried past resolution for one purpose: text a human reads. The doctor
-    # has to be able to say "the sync endpoint did not answer" rather than
-    # naming the host, which under `docker` may have answered perfectly well.
-    # No command builder may read this - the provider is resolved away in
-    # `targets.py::_build`, and a transport that branched on it would undo
-    # the only thing that keeps this design small.
+    # Carried past resolution for two purposes, both above the transport:
+    # text a human reads (the doctor says "the sync endpoint did not answer"
+    # rather than naming the host, which under `docker` may have answered
+    # perfectly well) and the one refusal that only the plan can make
+    # (`engine/plan.py::_refuse_wp_cli_under_docker`). What must not read it
+    # is a command builder: the provider is resolved away in
+    # `targets.py::_build`, and a transport that branched on it would undo the
+    # only thing that keeps this design small. `host_key_alias` below exists
+    # precisely so the transport needs no such branch.
     provider: Provider = Provider.SERVER
+    # What ssh records this destination as in `known_hosts`, when its address
+    # alone is not a name. Every Docker endpoint resolves to the Docker host's
+    # own loopback, so two stacks that both publish on 2222 would otherwise
+    # share one entry and the second would be refused as a changed host key -
+    # which reads like an attack and is a collision. Read generically by
+    # `transport/ssh.py`: a field, not a provider check.
+    host_key_alias: str | None = None
     host: str
     path: str
     stage: Stage
