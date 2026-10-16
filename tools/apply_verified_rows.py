@@ -40,6 +40,18 @@ def emit_row(name: str, *, image: str, run: str) -> str:
     # `laravel` row and replace a run that verified that profile's
     # credentials, env step, sanitize rules and setup commands with one that
     # asserts almost none of it.
+    #
+    # A cell that verifies a *transport* fills nothing. It runs some profile's
+    # commands to have something real to sync and asks nothing about them, so
+    # a profile-keyed row would overwrite the evidence of the cell that did
+    # ask - the same trap as above, one step further. Said out loud rather
+    # than returned empty, because a workflow puts this straight into a job
+    # summary and silence there reads as a broken step.
+    if not cell.verified_row:
+        return (
+            f"# {cell.name} verifies the {cell.profile} profile's commands only "
+            "incidentally; no profiles/VERIFIED.md row"
+        )
     keys = [check.feature for check in cell.features] or [cell.profile]
     return "\n".join(f"| {key} | {image} on {cell.php_image} | {today} | {run} |" for key in keys)
 

@@ -27,6 +27,44 @@ def test_emit_rejects_a_cell_that_is_not_in_the_registry() -> None:
         emit_row("nosuchcell", image="x", run="y")
 
 
+def test_a_transport_cell_emits_no_row_but_says_so() -> None:
+    # `mxdocker` runs the laravel profile to have something real to sync, and
+    # asks nothing about that profile's commands. A row keyed by `laravel`
+    # would replace `mxlaravel`'s evidence with a run that never looked.
+    emitted = emit_row("mxdocker", image="ddev-sync:ci", run="https://example.invalid/run/1")
+
+    assert not emitted.startswith("|")
+    assert "mxdocker" in emitted
+    # A workflow puts this straight into a job summary, so silence would read
+    # as a broken step rather than as a deliberate absence.
+    assert emitted.startswith("#")
+
+
+def test_apply_passes_over_what_a_transport_cell_emitted(tmp_path: Path) -> None:
+    # The comment travels to `--apply` through the same copy-and-paste as the
+    # rows beside it, so it has to be passed over rather than refused - a
+    # batch that fails on one line records none of the others.
+    verified = tmp_path / "VERIFIED.md"
+    verified.write_text(
+        "| Profile | Verified against | Date | By | Notes |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| laravel | - | - | - | keep |\n",
+        encoding="utf-8",
+    )
+    rows = tmp_path / "rows.md"
+    rows.write_text(
+        "# mxdocker verifies the docker provider; no profiles/VERIFIED.md row\n"
+        "| laravel | ddev-sync:ci on php:8.3-cli | 2026-10-16 | run/1 |\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["--apply", str(rows), "--verified", str(verified)])
+
+    assert exit_code == 0
+    written = verified.read_text(encoding="utf-8")
+    assert "| laravel | ddev-sync:ci on php:8.3-cli | 2026-10-16 | run/1 | keep |" in written
+
+
 def test_a_feature_cell_emits_one_row_per_feature_and_no_profile_row() -> None:
     # The silent failure this guards: `mxfeatlaravel` runs the laravel
     # profile, so a row keyed by the profile would be applied to the

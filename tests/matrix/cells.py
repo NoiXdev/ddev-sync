@@ -181,6 +181,13 @@ class Cell:
     a cell that declares no check states nothing about features and keeps
     asserting exactly what it asserted before this field existed.
 
+    `verified_row` is whether a green run of this cell is evidence for a
+    `profiles/VERIFIED.md` row. True for every cell that exists to verify a
+    profile's or a feature's commands - which is all of them but one. A cell
+    that verifies a *transport* runs some profile's commands incidentally and
+    asks nothing about them, so a row keyed by that profile would replace the
+    evidence of the cell that did ask with a run that did not.
+
     `services` names the compose profiles this cell needs beyond the four
     services every cell starts. Each new service sits behind a `profiles:`
     entry of its own name, so one string selects the profile and names the
@@ -229,6 +236,7 @@ class Cell:
     features: tuple[FeatureCheck, ...] = ()
     services: tuple[str, ...] = ()
     env_markers: tuple[EnvMarker, ...] = ()
+    verified_row: bool = True
 
 
 # Every TYPO3 cell keeps the same cache tables, so they all plant the same row.
@@ -262,6 +270,37 @@ CELLS: tuple[Cell, ...] = (
         # Not `email`: the profile's sanitize rules rewrite it.
         identity_column="name",
         seeded_users=("Alice Hofer", "Bruno Kalb"),
+    ),
+    Cell(
+        name="mxdocker",
+        # `mxlaravel`'s assertions, reached through `provider: docker`. The
+        # framework is incidental here and the transport is the subject: the
+        # endpoint's session uid against files the harness wrote, the
+        # production database addressed by a compose service name out of a
+        # mounted .env, and a host key that outlives its container - three
+        # things the unit and integration suites can each only answer apart.
+        #
+        # Laravel rather than the generic profile because the design's claim
+        # is that a *real framework* syncs through the endpoint, and because
+        # its .env is where the credentials the endpoint does not have come
+        # from.
+        profile="laravel",
+        project_type="laravel",
+        docroot="public",
+        php_image="php:8.3-cli",
+        required_tables=("users",),
+        admin_user=None,
+        password_column=("users", "password"),
+        production_url=None,
+        truncated_tables=("sessions", "jobs", "failed_jobs"),
+        identity_column="name",
+        seeded_users=("Alice Hofer", "Bruno Kalb"),
+        services=("jump", "endpoint"),
+        # This cell verifies a transport, not a profile's commands, and
+        # `mxlaravel` already holds the `laravel` row with evidence about
+        # those commands. Emitting one here would overwrite that evidence
+        # with a run that never asked the question.
+        verified_row=False,
     ),
     Cell(
         name="mxfeatlaravel",

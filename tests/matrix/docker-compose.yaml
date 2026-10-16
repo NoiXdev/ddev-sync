@@ -105,6 +105,70 @@ services:
       timeout: 5s
       retries: 60
 
+  # The stand-in Docker host, for the cell that syncs through `provider:
+  # docker`. Behind a profile because only that cell has any use for it: the
+  # engine connects here as an ordinary user and ProxyJump opens the final hop
+  # from this container, which is why the endpoint below is addressed as
+  # `127.0.0.1:22` - an address that means something *here*, on the host, and
+  # nothing on the developer's machine.
+  #
+  # No DOCKER_MODS: a Docker host carries no sync tooling, and this one
+  # forwards a connection and runs nothing.
+  jump:
+    image: linuxserver/openssh-server:latest
+    profiles:
+      - jump
+    environment:
+      - PUBLIC_KEY_FILE=/keys/id_ed25519.pub
+      - USER_NAME=deploy
+      - SUDO_ACCESS=false
+      - PASSWORD_ACCESS=false
+    volumes:
+      - ${MATRIX_KEYS_DIR}:/keys:ro
+      # The one setting a jump host needs; the same hook the integration
+      # suite mounts, kept in one place for both.
+      - ../jump-init:/custom-cont-init.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /config/.ssh/authorized_keys && nc -z localhost 2222"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # The sync endpoint, built from this repository: the far side of `provider:
+  # docker`, inside the stack it belongs to.
+  #
+  # `network_mode` rather than a network of its own, because that is what a
+  # published port is: the endpoint has no address anything outside can reach,
+  # `127.0.0.1:22` on the jump is this container, and `remote-db` still
+  # resolves here - which is how it reads credentials from a .env naming a
+  # compose service and carries none of its own.
+  endpoint:
+    build:
+      context: ../../endpoint
+    profiles:
+      - endpoint
+    network_mode: "service:jump"
+    environment:
+      # The uid and gid that own the files the harness wrote on the host. The
+      # spec calls a mismatch here the likeliest misconfiguration of this
+      # provider, so the cell pins it to the value that is right rather than
+      # leaving the image's default to be right by luck.
+      - DDEV_SYNC_UID=${MATRIX_UID}
+      - DDEV_SYNC_GID=${MATRIX_GID}
+    volumes:
+      - ${MATRIX_KEYS_DIR}/id_ed25519.pub:/etc/ddev-sync/authorized_keys:ro
+      # The same tree the `remote` service serves, so what differs between
+      # this cell and a server-provider cell is the transport and nothing else.
+      - ${MATRIX_REMOTE_DIR}:/srv/app:ro
+      - endpoint-hostkeys:/etc/ssh/keys
+    healthcheck:
+      # Port 22 in LISTEN, read from /proc: the image carries three binaries
+      # on purpose and a healthcheck is no reason for a fourth.
+      test: ["CMD-SHELL", "grep -qiE ':0016 [0-9A-F]+:0000 0A' /proc/net/tcp"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
   # Behind a profile, like `elasticsearch` below: only the cells that name it
   # have any use for it, and a profile is how compose is told not to start a
   # service by default. `Cell.services` names the profile, and `stack.py::up`
@@ -157,3 +221,9 @@ services:
       interval: 2s
       timeout: 5s
       retries: 60
+
+volumes:
+  # Per stack, so the endpoint's host key outlives a recreated container here
+  # as it must in production: the engine refuses a *changed* key, and a cell
+  # whose key rolled under it would fail as though it were being attacked.
+  endpoint-hostkeys:

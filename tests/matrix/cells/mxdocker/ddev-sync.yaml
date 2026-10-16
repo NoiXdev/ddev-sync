@@ -1,0 +1,25 @@
+# The docker provider, end to end: the stack publishes a sync endpoint, the
+# engine reaches it through the host, and the endpoint reads the credentials
+# from the .env it mounts rather than carrying any of its own.
+#
+# `host`/`user`/`port` are the stand-in Docker host - the `jump` service -
+# and `sync_port` is where that host publishes the endpoint. Under this
+# provider `path` is read *inside* the endpoint, which is why it names the
+# mount point the compose file gave it rather than a path on the host.
+version: 1
+targets:
+  production:
+    provider: docker
+    host: jump
+    user: deploy
+    port: 2222
+    sync_port: 22
+    path: /srv/app/
+    stage: production
+database:
+  # `env`, where every other cell says `explicit`: this is the one claim of
+  # the design that only a real stack can settle - the endpoint has no
+  # credentials, it mounts production's own .env, and the database host named
+  # in that file is a compose service name that resolves because the endpoint
+  # sits inside the stack's network.
+  remote_credentials: env
