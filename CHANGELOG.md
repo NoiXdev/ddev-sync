@@ -1,4 +1,22 @@
-## 0.1.0-rc.1 (2026-10-13)
+## [0.1.0-rc.2](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.1...v0.1.0-rc.2) (2026-10-17)
+
+
+### Features
+
+* **cli:** say which remote round trip preflight is waiting for ([77e73c9](https://github.com/NoiXdev/ddev-sync/commit/77e73c99860ff1838d1aed1f1aabe4956cb7ea1e))
+* **config:** refuse the docker combinations that cannot work ([70181f0](https://github.com/NoiXdev/ddev-sync/commit/70181f0bcb4e1702ce77ba30f5cf24bd694aa699))
+* **config:** resolve a docker target into the jump-host shape ([0558ce8](https://github.com/NoiXdev/ddev-sync/commit/0558ce89e0648c91c0aaaada5c31536c101a5e33))
+* **endpoint:** a compose template that publishes only on loopback ([e6391fc](https://github.com/NoiXdev/ddev-sync/commit/e6391fc4d74ded148d33ac982d047611cc0fce15))
+* **endpoint:** an sshd that carries only what the engine invokes ([cad5040](https://github.com/NoiXdev/ddev-sync/commit/cad5040bf2f29f7ae1fcf5e6b06595c578566a11))
+* **preflight:** tell a missing path from an unreadable one ([3cb1b47](https://github.com/NoiXdev/ddev-sync/commit/3cb1b4782f4139d15aafe9f0c61d0c9e4179c1df))
+
+
+### Bug Fixes
+
+* close the findings of the whole-branch review ([89a3925](https://github.com/NoiXdev/ddev-sync/commit/89a392514c735be5da040411d65595388d17f07c))
+* close the findings of the whole-branch review ([c97addb](https://github.com/NoiXdev/ddev-sync/commit/c97addbf11f2220a40bc7b92238fd559f0232a3f))
+
+## [0.1.0-rc.1](https://github.com/NoiXdev/ddev-sync/compare/d7834dcacc517a21df87d36bf0292b615004599d...v0.1.0-rc.1) (2026-10-13)
 
 
 ### Features
