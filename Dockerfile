@@ -43,8 +43,8 @@ RUN apk add --no-cache \
       openssh-client-default=10.3_p1-r1 \
       rsync=3.5.0-r0 \
       mariadb-client=11.8.8-r0 \
-      rclone=1.74.1-r2 \
-      docker-cli=29.8.2-r0
+      rclone=1.74.1-r3 \
+      docker-cli=29.8.2-r1
 
 COPY --from=builder /dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
