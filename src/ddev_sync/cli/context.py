@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ddev_sync.cli.waiting import Wait, not_shown
 from ddev_sync.config.detect import Resolution, resolve_profile_name, resolve_version
 from ddev_sync.config.loader import discover_config_paths, load_user_layers
 from ddev_sync.config.merge import LayerDoc, MergeResult, merge_layers
@@ -151,6 +152,7 @@ def build_context(
     no_features: bool = False,
     runner: CommandRunner | None = None,
     deployer: ProjectDeployer | None = None,
+    wait: Wait = not_shown,
 ) -> RunContext:
     """Read config, detect type and version, resolve profile and target.
 
@@ -161,6 +163,9 @@ def build_context(
     `deployer` is a resolver somebody has already used, handed over so that
     its `dep config` output is reused rather than fetched again; it takes
     precedence over `runner` for resolving a target.
+
+    `wait` is told when the resolver starts the slow `dep config`, so the
+    CLI can say so while it runs.
     """
     resolved = resolve_project(
         project_root=project_root,
@@ -174,7 +179,7 @@ def build_context(
     )
     user_layers = list(resolved.user_layers)
     if deployer is None and runner is not None:
-        deployer = make_deployer_resolver(resolved.project, runner)
+        deployer = make_deployer_resolver(resolved.project, runner, wait=wait)
     target = resolve_target(
         _pick_target_name(target_name, user_layers),
         collect_targets(user_layers),

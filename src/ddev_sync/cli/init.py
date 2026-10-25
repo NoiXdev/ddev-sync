@@ -65,6 +65,7 @@ from ddev_sync.cli.prompts import (
     confirm_replacement,
 )
 from ddev_sync.cli.render import describe_endpoint
+from ddev_sync.cli.waiting import Wait, not_shown
 from ddev_sync.composer import requires
 from ddev_sync.config.detect import WORDPRESS_PROFILE
 from ddev_sync.config.loader import (
@@ -126,6 +127,7 @@ def init_command(
     colour: bool = False,
     type_flag: str | None = None,
     framework_version_flag: str | None = None,
+    wait: Wait = not_shown,
 ) -> int:
     """Create one target and run `doctor` against it.
 
@@ -153,12 +155,12 @@ def init_command(
     # One resolver for the whole command: it is lazy, so a manual entry never
     # runs `dep`, and when it does run it is once - for the host list, for the
     # check, and for reading back what was written.
-    deployer = make_deployer_resolver(project, runner)
+    deployer = make_deployer_resolver(project, runner, wait=wait)
     source = choose_connection_source(deployer_available=_has_deployer_recipe(project.root))
     if source is None:
         raise _no_terminal()
     connection = (
-        _deployer_connection(deployer, project, runner, echo)
+        _deployer_connection(deployer, project, runner, echo, wait)
         if source == DEPLOYER_SOURCE
         else _manual_connection()
     )
@@ -541,6 +543,7 @@ def _deployer_connection(
     project: DdevProject,
     runner: CommandRunner,
     echo: Callable[[str], None],
+    wait: Wait,
 ) -> dict[str, object]:
     """The `deployer:` block for the host the user picks from Deployer's own list.
 
@@ -561,7 +564,7 @@ def _deployer_connection(
     composer.json requires but `vendor/` does not have: see `_hosts`.
     """
     try:
-        hosts = _hosts(deployer, project, runner, echo)
+        hosts = _hosts(deployer, project, runner, echo, wait)
     except DeployerError as error:
         raise DeployerError(
             f"nothing was written: the hosts could not be read from Deployer: {error}. "
@@ -584,6 +587,7 @@ def _hosts(
     project: DdevProject,
     runner: CommandRunner,
     echo: Callable[[str], None],
+    wait: Wait,
 ) -> list[str]:
     """Deployer's hosts, offering `composer install` first when that is what is missing.
 
@@ -604,8 +608,10 @@ def _hosts(
             raise _no_terminal() from None
         if not answer:
             raise
-    echo(f"Running '{' '.join(COMPOSER_INSTALL)}' in the web container...")
-    install_composer_dependencies(project, runner)
+    installing = f"Running '{' '.join(COMPOSER_INSTALL)}' in the web container"
+    echo(f"{installing}...")
+    with wait(installing):
+        install_composer_dependencies(project, runner)
     return deployer.hosts()
 
 

@@ -1,11 +1,13 @@
 """The one part of the Deployer integration that runs anything."""
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 
 from ddev_sync.errors import DeployerError, DeployerNotFound
-from ddev_sync.transport.deployer import make_deployer_resolver
+from ddev_sync.transport.deployer import WAITING_FOR_DEP_CONFIG, make_deployer_resolver
 from ddev_sync.transport.fake import FakeCommandRunner
 from tests.transport.test_container import project
 
@@ -213,3 +215,22 @@ def test_an_empty_output_is_remembered_rather_than_asked_for_again() -> None:
             resolve.hosts()
 
     assert len(runner.calls) == 1
+
+
+def test_the_slow_dep_config_is_announced_once_while_it_runs() -> None:
+    # Measured at over twenty seconds on a real project: the CLI needs to be
+    # told when it starts and ends, and only the first call runs it.
+    runner = FakeCommandRunner()
+    runner.script_prefix(["docker", "exec"], stdout=PAYLOAD)
+    events: list[str] = []
+
+    @contextmanager
+    def wait(text: str) -> Iterator[None]:
+        events.append(f"start {text} ({len(runner.calls)} calls)")
+        yield
+        events.append(f"end ({len(runner.calls)} calls)")
+
+    resolve = make_deployer_resolver(project(), runner, wait=wait)
+    resolve.hosts()
+    resolve("staging")
+    assert events == [f"start {WAITING_FOR_DEP_CONFIG} (0 calls)", "end (1 calls)"]

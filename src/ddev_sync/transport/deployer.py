@@ -13,6 +13,9 @@ recipe, so repeating it would be both slow and a second chance to get a
 different answer inside one sync.
 """
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
+
 from ddev_sync.config.deployer import DeployerConnection, list_dep_hosts, parse_dep_config
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.errors import DeployerError, DeployerNotFound
@@ -35,6 +38,20 @@ _SUBCOMMAND = ("config", "--format=json")
 # a cause it cannot tell apart.
 _NOT_FOUND = 127
 
+# What the CLI shows while `dep config` runs, which on a real project was
+# measured at over twenty seconds: Deployer evaluates every host's whole
+# configuration to print it, some of it over SSH to the host.
+WAITING_FOR_DEP_CONFIG = "Asking Deployer where it deploys ('dep config')"
+
+# How a caller is told that a slow wait begins and ends: a function from the
+# sentence to a context held for its length. The CLI animates it; everything
+# else passes nothing and is told nothing.
+Wait = Callable[[str], AbstractContextManager[None]]
+
+
+def _not_shown(_text: str) -> AbstractContextManager[None]:
+    return nullcontext()
+
 
 class ProjectDeployer:
     """Resolves `deployer: {host: <alias>}`, and lists the hosts Deployer declares.
@@ -45,9 +62,12 @@ class ProjectDeployer:
     evaluated twice, once more than anything needs.
     """
 
-    def __init__(self, project: DdevProject, runner: CommandRunner) -> None:
+    def __init__(
+        self, project: DdevProject, runner: CommandRunner, *, wait: Wait = _not_shown
+    ) -> None:
         self._project = project
         self._runner = runner
+        self._wait = wait
         # `None` means "not asked yet", so an empty output is kept as the
         # answer it is instead of being asked for again.
         self._text: str | None = None
@@ -61,13 +81,16 @@ class ProjectDeployer:
 
     def _config(self) -> str:
         if self._text is None:
-            self._text = _dep_config(self._project, self._runner)
+            with self._wait(WAITING_FOR_DEP_CONFIG):
+                self._text = _dep_config(self._project, self._runner)
         return self._text
 
 
-def make_deployer_resolver(project: DdevProject, runner: CommandRunner) -> ProjectDeployer:
+def make_deployer_resolver(
+    project: DdevProject, runner: CommandRunner, *, wait: Wait = _not_shown
+) -> ProjectDeployer:
     """Build a resolver for `deployer: {host: <alias>}`, running `dep` at most once."""
-    return ProjectDeployer(project, runner)
+    return ProjectDeployer(project, runner, wait=wait)
 
 
 def _dep_config(project: DdevProject, runner: CommandRunner) -> str:

@@ -56,6 +56,7 @@ from ddev_sync.cli.commands import (
 )
 from ddev_sync.cli.context import RunContext, build_context
 from ddev_sync.cli.init import init_command
+from ddev_sync.cli.waiting import Waiting, waiting_enabled
 from ddev_sync.ddev.project import DEFAULT_PROJECT_ROOT
 from ddev_sync.engine.plan import available_selection_groups
 from ddev_sync.engine.steps import SELECTION_GROUPS
@@ -404,6 +405,7 @@ def init_cmd(options: _Options) -> int:
         colour=use_colour,
         type_flag=options.type_flag,
         framework_version_flag=options.framework_version_flag,
+        wait=Waiting(sys.stderr, enabled=waiting_enabled(os.environ, sys.stderr)),
     )
 
 
@@ -463,6 +465,11 @@ def _run(options: _Options, *, steps: str | None, dry_run: bool, assume_yes: boo
     )
 
 
+# Shown while the project is read and the target resolved, until something
+# slower says what it is doing instead.
+READING_THE_PROJECT = "Reading the project and its configuration"
+
+
 def _build_run_context(options: _Options) -> RunContext:
     """Assemble the run context, falling back to an interactive target pick.
 
@@ -487,19 +494,25 @@ def _build_run_context(options: _Options) -> RunContext:
     exactly what memoising the resolver exists to prevent.
     """
 
+    # Around the work and never around `resolve_target_name`, which may ask
+    # which target to use: nothing is drawn while a question is on screen.
+    waiting = Waiting(sys.stderr, enabled=waiting_enabled(os.environ, sys.stderr))
+
     def build(name: str | None) -> RunContext:
-        return build_context(
-            project_root=options.project_root,
-            home=options.home,
-            target_name=name,
-            type_flag=options.type_flag,
-            framework_version_flag=options.framework_version_flag,
-            profile_root=options.profile_root,
-            feature_root=options.feature_root,
-            features_flag=options.features_flag,
-            no_features=options.no_features,
-            runner=options.runner,
-        )
+        with waiting(READING_THE_PROJECT):
+            return build_context(
+                project_root=options.project_root,
+                home=options.home,
+                target_name=name,
+                type_flag=options.type_flag,
+                framework_version_flag=options.framework_version_flag,
+                profile_root=options.profile_root,
+                feature_root=options.feature_root,
+                features_flag=options.features_flag,
+                no_features=options.no_features,
+                runner=options.runner,
+                wait=waiting,
+            )
 
     if options.target_name is not None:
         return build(resolve_target_name(options.target_name, options.project_root, options.home))
