@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from ddev_sync.errors import DeployerError
+from ddev_sync.errors import DeployerError, DeployerNotFound
 from ddev_sync.transport.deployer import make_deployer_resolver
 from ddev_sync.transport.fake import FakeCommandRunner
 from tests.transport.test_container import project
@@ -184,6 +184,8 @@ def test_neither_candidate_found_carries_the_last_attempts_words() -> None:
     with pytest.raises(DeployerError) as error:
         resolve("web-1")
     message = str(error.value)
+    # Its own class, so `init` can offer the install instead of only saying so.
+    assert isinstance(error.value, DeployerNotFound)
     assert "could not find Deployer" in message
     assert "no such file or directory" in message
 

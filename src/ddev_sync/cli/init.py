@@ -60,10 +60,12 @@ from ddev_sync.cli.prompts import (
     choose_env_file,
     choose_features,
     choose_remote_env_file,
+    confirm_composer_install,
     confirm_detection,
     confirm_replacement,
 )
 from ddev_sync.cli.render import describe_endpoint
+from ddev_sync.composer import requires
 from ddev_sync.config.detect import WORDPRESS_PROFILE
 from ddev_sync.config.loader import (
     GLOBAL_LABEL,
@@ -78,7 +80,8 @@ from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget
 from ddev_sync.config.targets import CollectedTarget, collect_targets, resolve_target
 from ddev_sync.config.writer import WriteRefused, render_target, write_settings, write_target
-from ddev_sync.errors import ConfigError, DdevSyncError, DeployerError
+from ddev_sync.ddev.project import DdevProject
+from ddev_sync.errors import ConfigError, DdevSyncError, DeployerError, DeployerNotFound
 from ddev_sync.operations.base import ExecutionContext, OperationError, discard_progress
 from ddev_sync.operations.database import DATABASE_ENV_FILE_KEY, remote_env_candidates
 from ddev_sync.operations.placeholders import (
@@ -87,7 +90,12 @@ from ddev_sync.operations.placeholders import (
     validate_production_url,
 )
 from ddev_sync.operations.preflight import PreflightOperation, verify_credentials
-from ddev_sync.transport.deployer import ProjectDeployer, make_deployer_resolver
+from ddev_sync.transport.deployer import (
+    COMPOSER_INSTALL,
+    ProjectDeployer,
+    install_composer_dependencies,
+    make_deployer_resolver,
+)
 from ddev_sync.transport.runner import CommandRunner
 from ddev_sync.transport.ssh import ssh_command
 
@@ -150,7 +158,9 @@ def init_command(
     if source is None:
         raise _no_terminal()
     connection = (
-        _deployer_connection(deployer) if source == DEPLOYER_SOURCE else _manual_connection()
+        _deployer_connection(deployer, project, runner, echo)
+        if source == DEPLOYER_SOURCE
+        else _manual_connection()
     )
     stage = ask_stage()
     if stage is None:
@@ -526,7 +536,12 @@ def _manual_connection() -> dict[str, object]:
     return connection
 
 
-def _deployer_connection(deployer: ProjectDeployer) -> dict[str, object]:
+def _deployer_connection(
+    deployer: ProjectDeployer,
+    project: DdevProject,
+    runner: CommandRunner,
+    echo: Callable[[str], None],
+) -> dict[str, object]:
     """The `deployer:` block for the host the user picks from Deployer's own list.
 
     The block names the alias and nothing else. The engine rejects a host,
@@ -541,9 +556,12 @@ def _deployer_connection(deployer: ProjectDeployer) -> dict[str, object]:
     `deployer:` target the same way, so it is better met here, before a write.
     Nothing has been written at this point, which the message says, so there is
     no target to believe in.
+
+    The one failure fixed here instead of reported is a Deployer that
+    composer.json requires but `vendor/` does not have: see `_hosts`.
     """
     try:
-        hosts = deployer.hosts()
+        hosts = _hosts(deployer, project, runner, echo)
     except DeployerError as error:
         raise DeployerError(
             f"nothing was written: the hosts could not be read from Deployer: {error}. "
@@ -559,6 +577,36 @@ def _deployer_connection(deployer: ProjectDeployer) -> dict[str, object]:
     if alias is None:
         raise _no_terminal()
     return {"deployer": {"host": alias}}
+
+
+def _hosts(
+    deployer: ProjectDeployer,
+    project: DdevProject,
+    runner: CommandRunner,
+    echo: Callable[[str], None],
+) -> list[str]:
+    """Deployer's hosts, offering `composer install` first when that is what is missing.
+
+    Offered only when composer.json requires `deployer/deployer`: otherwise an
+    install would not bring `dep` and the error's own advice - require it -
+    is the one that helps. A declined offer ends with that same error, so the
+    user still learns the command to run themselves. The resolver memoises
+    only a successful `dep config`, which is what lets the second attempt
+    below run it again.
+    """
+    try:
+        return deployer.hosts()
+    except DeployerNotFound:
+        if not requires(project.root / "composer.json", "deployer/deployer"):
+            raise
+        answer = confirm_composer_install()
+        if answer is None:
+            raise _no_terminal() from None
+        if not answer:
+            raise
+    echo(f"Running '{' '.join(COMPOSER_INSTALL)}' in the web container...")
+    install_composer_dependencies(project, runner)
+    return deployer.hosts()
 
 
 def _has_deployer_recipe(root: Path) -> bool:

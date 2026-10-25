@@ -201,6 +201,14 @@ def choose_deployer_host(hosts: list[str]) -> str | None:
     return _select("Which Deployer host?", hosts)
 
 
+def confirm_composer_install() -> bool | None:
+    """Ask whether to install the project's Composer dependencies to get Deployer."""
+    return _confirm(
+        "Deployer is in composer.json but not installed. "
+        "Run 'composer install --no-scripts' in the web container now?"
+    )
+
+
 def ask_stage() -> str | None:
     """Ask which kind of environment the target is."""
     return _select("Which stage is it?", [stage.value for stage in Stage])

@@ -22,6 +22,7 @@ from ddev_sync.config.writer import WriteRefused
 from ddev_sync.operations.base import OperationError
 from ddev_sync.operations.preflight import PreflightOperation, PreflightReport
 from ddev_sync.transport.fake import FakeCommandRunner
+from ddev_sync.transport.runner import CommandResult
 
 CREDENTIALS = {
     "name": "acme_prod",
@@ -910,6 +911,138 @@ def test_a_failing_dep_config_stops_init_with_nothing_written(
     assert said in error
     assert "by hand" in error
     assert asked["choose_deployer_host"] == []
+    assert not project_file.exists()
+
+
+class _VendorlessProject(FakeCommandRunner):
+    """A web container with no `dep` until `composer install` has run there."""
+
+    def __init__(self, *, install_returncode: int = 0) -> None:
+        super().__init__()
+        # Only so `super().run` records the call; the answer is decided below.
+        self.script_prefix(["docker", "exec"])
+        self.install_returncode = install_returncode
+        self.installed = False
+
+    def run(self, argv: Any, **kwargs: Any) -> Any:
+        super().run(argv, **kwargs)
+        command = tuple(argv)
+        if "composer" in command:
+            self.installed = self.install_returncode == 0
+            return CommandResult(command, self.install_returncode, "", "composer said no")
+        if self.installed:
+            return CommandResult(command, 0, DEP_CONFIG, "")
+        return CommandResult(command, 127, 'exec: "dep": executable file not found', "")
+
+
+def _vendorless(
+    monkeypatch: pytest.MonkeyPatch, project: Path, *, require_dev: dict[str, str], **kw: Any
+) -> _VendorlessProject:
+    (project / "deploy.php").write_text("", encoding="utf-8")
+    (project / "composer.json").write_text(
+        json.dumps({"require-dev": require_dev}), encoding="utf-8"
+    )
+    runner = _VendorlessProject(**kw)
+    monkeypatch.setattr("ddev_sync.cli.main.SubprocessRunner", lambda: runner)
+    return runner
+
+
+def _composer_installs(runner: FakeCommandRunner) -> list[tuple[str, ...]]:
+    return [call for call in runner.calls if "composer" in call]
+
+
+def test_a_required_but_uninstalled_deployer_is_installed_on_request_and_read_again(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _vendorless(monkeypatch, project, require_dev={"deployer/deployer": "^7.0"})
+    offered: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(init, "confirm_composer_install", _queue([True], "install", offered))
+    script(
+        monkeypatch,
+        source=(DEPLOYER_SOURCE,),
+        connection=(),
+        deployer_host=("web-1",),
+    )
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+    assert len(offered) == 1
+    [install] = _composer_installs(runner)
+    assert install[-4:] == ("composer", "install", "--no-scripts", "--no-interaction")
+    assert "deployer:\n      host: web-1\n" in project_file.read_text(encoding="utf-8")
+    assert "composer install --no-scripts" in capsys.readouterr().out
+
+
+def test_a_declined_install_ends_with_the_advice_and_nothing_written(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _vendorless(monkeypatch, project, require_dev={"deployer/deployer": "^7.0"})
+    monkeypatch.setattr(init, "confirm_composer_install", lambda: False)
+    script(monkeypatch, source=(DEPLOYER_SOURCE,), connection=(), stage=())
+    assert invoke(project, tmp_path) == 1
+    error = capsys.readouterr().err
+    assert "nothing was written" in error
+    assert "require-dev" in error
+    assert _composer_installs(runner) == []
+    assert not project_file.exists()
+
+
+def test_no_install_is_offered_when_composer_json_does_not_require_deployer(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An install would not bring `dep`; requiring it is the advice that helps.
+    runner = _vendorless(monkeypatch, project, require_dev={"phpunit/phpunit": "^11"})
+    monkeypatch.setattr(init, "confirm_composer_install", _never_called)
+    script(monkeypatch, source=(DEPLOYER_SOURCE,), connection=(), stage=())
+    assert invoke(project, tmp_path) == 1
+    assert "ddev composer require --dev deployer/deployer" in capsys.readouterr().err
+    assert _composer_installs(runner) == []
+    assert not project_file.exists()
+
+
+def test_no_terminal_at_the_install_question_is_the_no_terminal_error(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _vendorless(monkeypatch, project, require_dev={"deployer/deployer": "^7.0"})
+    monkeypatch.setattr(init, "confirm_composer_install", lambda: None)
+    script(monkeypatch, source=(DEPLOYER_SOURCE,), connection=(), stage=())
+    assert invoke(project, tmp_path) == 1
+    assert "none is attached" in capsys.readouterr().err
+    assert _composer_installs(runner) == []
+    assert not project_file.exists()
+
+
+def test_a_failed_install_stops_init_with_composers_words(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _vendorless(
+        monkeypatch, project, require_dev={"deployer/deployer": "^7.0"}, install_returncode=2
+    )
+    monkeypatch.setattr(init, "confirm_composer_install", lambda: True)
+    script(monkeypatch, source=(DEPLOYER_SOURCE,), connection=(), stage=())
+    assert invoke(project, tmp_path) == 1
+    error = capsys.readouterr().err
+    assert "nothing was written" in error
+    assert "composer said no" in error
     assert not project_file.exists()
 
 

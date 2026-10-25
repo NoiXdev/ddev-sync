@@ -288,6 +288,22 @@ def test_the_detection_question_passes_a_missing_terminal_through(
     assert prompts.confirm_detection("typo3", "ddev project type") is None
 
 
+def test_the_install_question_names_the_command_and_defaults_to_yes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked: list[tuple[str, bool]] = []
+
+    def fake_confirm(question: str, default: bool = True) -> bool:
+        asked.append((question, default))
+        return True
+
+    monkeypatch.setattr(prompts, "_confirm", fake_confirm)
+    assert prompts.confirm_composer_install() is True
+    [(question, default)] = asked
+    assert "composer install --no-scripts" in question
+    assert default is True
+
+
 def test_the_name_question_offers_production_unless_told_otherwise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -45,6 +45,16 @@ class DeployerError(DdevSyncError):
     """The project's Deployer configuration could not be read or understood."""
 
 
+class DeployerNotFound(DeployerError):
+    """Neither the project's `vendor/bin/dep` nor a `dep` on the PATH ran.
+
+    Its own class because it is the one Deployer failure `init` can do
+    something about: when `composer.json` already requires Deployer, the
+    usual cause is a `vendor/` that was never installed, and installing it is
+    a question rather than an edit.
+    """
+
+
 class SyncInterrupted(DdevSyncError):
     """The user interrupted a sync part-way through.
 

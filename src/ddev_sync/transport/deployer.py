@@ -15,7 +15,7 @@ different answer inside one sync.
 
 from ddev_sync.config.deployer import DeployerConnection, list_dep_hosts, parse_dep_config
 from ddev_sync.ddev.project import DdevProject
-from ddev_sync.errors import DeployerError
+from ddev_sync.errors import DeployerError, DeployerNotFound
 from ddev_sync.transport.container import web_command
 from ddev_sync.transport.runner import CommandRunner
 
@@ -95,9 +95,27 @@ def _dep_config(project: DdevProject, runner: CommandRunner) -> str:
     # `vendor/bin/dep` is absent because Deployer was never required - and
     # the alternative, a `dep` on the container's PATH, is already named
     # above as a place that was looked in.
-    raise DeployerError(
+    raise DeployerNotFound(
         f"could not find Deployer in the web container: neither {_CANDIDATES[0]} "
         f"nor a `dep` on its PATH ran ({last_detail}); Deployer belongs in the "
         "project's require-dev, so install it with "
         "'ddev composer require --dev deployer/deployer'"
     )
+
+
+# `--no-scripts` because the project's own hooks are not what was asked for:
+# a `post-install-cmd` that runs `artisan` or clears a cache can fail on a
+# project that is not set up yet, and Deployer needs none of them to be on
+# disk. `--no-interaction` because nobody is there to answer composer.
+COMPOSER_INSTALL = ("composer", "install", "--no-scripts", "--no-interaction")
+
+
+def install_composer_dependencies(project: DdevProject, runner: CommandRunner) -> None:
+    """Run `composer install --no-scripts` in the web container, at the project root."""
+    argv = web_command(project, list(COMPOSER_INSTALL), workdir=project.root)
+    result = runner.run(argv)
+    if not result.ok:
+        raise DeployerError(
+            f"`{' '.join(COMPOSER_INSTALL)}` failed with exit {result.returncode} "
+            f"in the web container: {result.failure_detail()}"
+        )
