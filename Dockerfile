@@ -42,9 +42,9 @@ FROM python:3.13-alpine@sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b
 RUN apk add --no-cache \
       openssh-client-default=10.3_p1-r1 \
       rsync=3.5.0-r0 \
-      mariadb-client=11.8.8-r0 \
+      mariadb-client=11.8.9-r0 \
       rclone=1.74.1-r3 \
-      docker-cli=29.8.2-r1
+      docker-cli=29.9.2-r0
 
 COPY --from=builder /dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
