@@ -347,7 +347,7 @@ def test_a_jump_host_target_shows_the_jump_in_preflight() -> None:
         merged=merge_layers([LayerDoc("profile:generic", {})]),
         steps=steps_for_selection([]),
     )
-    assert "-J tim@bastion.example:22" in plan.steps[0].detail
+    assert "-l tim -p 22 -W '[%h]:%p' bastion.example" in plan.steps[0].detail
 
 
 def test_a_jump_host_target_without_a_user_omits_the_at_sign() -> None:
@@ -370,7 +370,8 @@ def test_a_jump_host_target_without_a_user_omits_the_at_sign() -> None:
         merged=merge_layers([LayerDoc("profile:generic", {})]),
         steps=steps_for_selection([]),
     )
-    assert "-J bastion.example:22" in plan.steps[0].detail
+    assert "-p 22 -W '[%h]:%p' bastion.example" in plan.steps[0].detail
+    assert "-l " not in plan.steps[0].detail
 
 
 def test_an_ssh_alias_target_omits_the_port_flag_from_the_preflight_preview() -> None:
@@ -392,14 +393,15 @@ def test_an_ssh_alias_target_omits_the_port_flag_from_the_preflight_preview() ->
         steps=steps_for_selection([]),
     )
     assert plan.steps[0].detail == (
-        "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 app-prod"
+        "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 app-prod"
     )
 
 
 def test_a_direct_target_includes_the_port_flag_in_the_preflight_preview() -> None:
     plan = plan_for([])
     assert plan.steps[0].detail == (
-        "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 22 deploy@web01.example"
+        "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 "
+        "-p 22 deploy@web01.example"
     )
 
 

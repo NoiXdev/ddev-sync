@@ -32,16 +32,25 @@ CONNECT_TIMEOUT_SECONDS = 10
 # the DDEV add-on `known_hosts` persists, so trust-on-first-use costs exactly
 # one silent acceptance per host. Do not "simplify" this to `no`.
 #
-# One exception, and a real one: `-J` starts a second ssh for the jump host,
-# and OpenSSH does not hand that one these `-o` options (checked on 10.3). The
-# bastion's own key therefore follows the ssh default - ask - so a target
-# behind a jump host, with an empty known_hosts and no terminal, still fails
-# with "Host key verification failed." on the bastion's key. The documentation
-# says so and names the workaround (an ssh_config entry for the bastion). The
-# connect timeout is unaffected: the outer ssh gives up waiting for the banner.
+# `BatchMode=yes` because nobody is there to answer. The engine captures
+# ssh's output, but ssh asks for a password, a key's passphrase or a second
+# factor on `/dev/tty`, not on stdout - so with a terminal attached the
+# question lands somewhere between the step lines and the run looks hung, and
+# without one it fails anyway. With it, every such question becomes a refusal
+# ssh reports at once ("Permission denied (publickey,password)"), which
+# `doctor` can show. Keys come from the agent DDEV runs; one that needs typing
+# is not something a sync can use.
+#
+# A jump host gets all of these too, which `-J` would not do: OpenSSH starts a
+# second ssh for the bastion and does not hand it these `-o` options (checked
+# on 10.3), so the bastion's key fell back to the default - ask - and a target
+# behind one failed on an empty known_hosts. `_jump_flag` therefore spells the
+# hop out as the `ProxyCommand` `-J` would have built, with the options added.
 SSH_CONNECTION_OPTIONS: tuple[str, ...] = (
     "-o",
     "StrictHostKeyChecking=accept-new",
+    "-o",
+    "BatchMode=yes",
     "-o",
     f"ConnectTimeout={CONNECT_TIMEOUT_SECONDS}",
 )
@@ -60,7 +69,7 @@ def quote_remote(argv: Sequence[str]) -> str:
 
 
 def ssh_command(target: ResolvedTarget, remote_command: Sequence[str]) -> list[str]:
-    """Build `ssh [-o ...] [-J jump] [-p port] endpoint '<command>'`."""
+    """Build `ssh [-o ...] [-o ProxyCommand=<jump>] [-p port] endpoint '<command>'`."""
     return [*_ssh_prefix(target), remote_endpoint(target), quote_remote(remote_command)]
 
 
@@ -87,16 +96,27 @@ def _host_key_alias_flag(target: ResolvedTarget) -> list[str]:
 
 
 def _jump_flag(target: ResolvedTarget) -> list[str]:
+    """Reach the target through its jump host, with the same options as the target.
+
+    The hop is the command OpenSSH's own `-J` runs - measured as
+    `ssh -l deploy -p 22023 -W '[remote]:2222' 127.0.0.1` - plus
+    `SSH_CONNECTION_OPTIONS`; see there for why `-J` itself will not do. ssh
+    expands `%h` and `%p` to the target before it runs the command, and runs
+    it through a shell, which is why the hop is quoted like a remote command.
+    No `HostKeyAlias`: that names the target in `known_hosts`, and the bastion
+    is recorded under its own name.
+    """
     if target.jump_host is None:
         return []
-    endpoint = target.jump_host
+    hop = ["ssh", *SSH_CONNECTION_OPTIONS]
     if target.jump_host_user is not None:
-        endpoint = f"{target.jump_host_user}@{endpoint}"
-    return ["-J", f"{endpoint}:{target.jump_host_port}"]
+        hop.extend(["-l", target.jump_host_user])
+    hop.extend(["-p", str(target.jump_host_port), "-W", "[%h]:%p", target.jump_host])
+    return ["-o", f"ProxyCommand={quote_remote(hop)}"]
 
 
 def scp_download_command(target: ResolvedTarget, remote_path: str, local_path: str) -> list[str]:
-    """Build `scp [-o ...] [-J jump] [-P port] endpoint:remote local`."""
+    """Build `scp [-o ...] [-o ProxyCommand=<jump>] [-P port] endpoint:remote local`."""
     command = ["scp", *SSH_CONNECTION_OPTIONS, *_host_key_alias_flag(target)]
     command.extend(_jump_flag(target))
     if target.port is not None:
@@ -124,10 +144,21 @@ def rsync_pull_command(
 
 
 def _rsync_ssh_option(target: ResolvedTarget) -> str:
-    # rsync splits `-e` on spaces and ssh receives the pieces as separate
-    # arguments, so every option above is written without a space inside its
-    # value. Keep it that way: a value with a space would be torn in two.
     parts = ["ssh", *SSH_CONNECTION_OPTIONS, *_host_key_alias_flag(target), *_jump_flag(target)]
     if target.port is not None:
         parts.extend(["-p", str(target.port)])
-    return " ".join(parts)
+    return " ".join(_rsync_word(part) for part in parts)
+
+
+def _rsync_word(part: str) -> str:
+    """`part` as one word of rsync's `-e`, which rsync splits itself.
+
+    rsync splits `-e` on spaces and honours single and double quotes, with a
+    doubled quote inside them standing for itself; it knows no backslashes and
+    no shell runs in between. The jump host's `ProxyCommand` is the one value
+    with spaces in it - and single quotes from `quote_remote` - so it goes in
+    double quotes, and anything without either is left exactly as it was.
+    """
+    if not any(character in part for character in " '\""):
+        return part
+    return '"' + part.replace('"', '""') + '"'

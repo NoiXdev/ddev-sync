@@ -26,7 +26,6 @@ REMOTE_HOST_ENTRY = f"[127.0.0.1]:{REMOTE_PORT}"
 # The stand-in Docker host, which `provider: docker` and the jump-host test
 # both reach through.
 JUMP_PORT = "22023"
-REMOTE_JUMP_ENTRY = f"[127.0.0.1]:{JUMP_PORT}"
 # Matches `name:` at the top of docker-compose.yaml; compose derives the
 # network name from it when the file does not declare one explicitly.
 COMPOSE_NETWORK = "ddev-sync-integration_default"
@@ -223,12 +222,13 @@ def known_hosts_for() -> Iterator[Callable[[str], None]]:
     the test as well as after it, in case an interrupted run never reached its
     own cleanup.
 
-    Scrubbing is all this does. An entry the *outer* ssh verifies needs no
-    registration: the engine sets `StrictHostKeyChecking=accept-new`, so it
-    records the key on first sight - including an endpoint reached under a
-    `HostKeyAlias`, which is what two stacks on one Docker host rely on. A
-    jump host is the one exception, and `jump_host_key` below is where it is
-    handled, once per session rather than once per test.
+    Scrubbing is all this does. No entry needs registering: the engine sets
+    `StrictHostKeyChecking=accept-new`, so ssh records a key on first sight -
+    an endpoint reached under a `HostKeyAlias`, which is what two stacks on
+    one Docker host rely on, and a jump host too, whose own ssh the engine
+    builds as a `ProxyCommand` carrying the same options. Scrubbing the jump
+    is therefore not just hygiene: it is what makes every jumped test prove
+    that an unknown bastion is trusted without a question.
 
     An entry is spelled the way ssh writes it: `[host]:port` for a non-default
     port, a bare name for a default port or an alias. `ssh-keygen -R remote`
@@ -247,41 +247,6 @@ def known_hosts_for() -> Iterator[Callable[[str], None]]:
     finally:
         for entry in borrowed:
             _forget(entry, known_hosts)
-
-
-@pytest.fixture(scope="session")
-def jump_host_key(stack: None) -> Iterator[None]:
-    """Register the jump's host key once for the whole session.
-
-    The jump is the one hop whose key has to be *registered* rather than
-    trusted on sight: ProxyJump execs a child `ssh` - measured as
-    `ssh -l deploy -p 22023 -W '[remote]:2222' 127.0.0.1` - and the engine's
-    own `-o StrictHostKeyChecking=accept-new` is not handed down, so the
-    child uses the default policy and an unknown key is fatal. A developer
-    with a global `StrictHostKeyChecking no` never sees this; CI, with an
-    empty known_hosts and no tty, does.
-
-    Once per session, not once per test, and that is not an optimisation.
-    `ssh-keyscan` disconnects without authenticating, which OpenSSH 9.8 and
-    newer count against the source address (`PerSourcePenalties`, on by
-    default; this jump runs 10.3). Several scans in quick succession push
-    127.0.0.1 over the threshold and the jump then refuses *every* connection
-    from it for a while - including the engine's. Measured here as a suite
-    that scanned per test: the scans themselves started failing with
-    "Connection closed by remote host", and the sync under test failed with
-    "Connection closed by UNKNOWN port 65535".
-    """
-    known_hosts = _known_hosts()
-    _forget(REMOTE_JUMP_ENTRY, known_hosts)
-    scanned = _run(["ssh-keyscan", "-p", JUMP_PORT, "-T", "5", "127.0.0.1"])
-    if scanned.returncode != 0 or not scanned.stdout.strip():
-        pytest.fail(f"could not scan the jump host key:\n{scanned.stderr}")
-    with known_hosts.open("a", encoding="utf-8") as handle:
-        handle.write(scanned.stdout)
-    try:
-        yield
-    finally:
-        _forget(REMOTE_JUMP_ENTRY, known_hosts)
 
 
 @pytest.fixture(scope="session")

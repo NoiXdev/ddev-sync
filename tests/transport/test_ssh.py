@@ -14,8 +14,18 @@ from ddev_sync.transport.ssh import (
 
 # Spelled out as literals on purpose: a test that imported the production
 # constants would keep passing if someone changed `accept-new` to `no`.
-HARDENING = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
-HARDENING_SHELL = "-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
+HARDENING = [
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=10",
+]
+HARDENING_SHELL = "-o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10"
+# What the jump host's own ssh runs: the hop `-J` would build, plus the options.
+JUMP_HOP = f"ssh {HARDENING_SHELL} -l tim -p 2022 -W '[%h]:%p' bastion.example"
+JUMP_HOP_NO_USER = f"ssh {HARDENING_SHELL} -p 2022 -W '[%h]:%p' bastion.example"
 
 
 def direct() -> ResolvedTarget:
@@ -77,12 +87,12 @@ def test_a_direct_target_produces_port_and_endpoint() -> None:
     ]
 
 
-def test_a_jump_host_adds_the_J_flag_with_user_and_port() -> None:
+def test_a_jump_host_is_reached_by_a_proxy_command_with_user_and_port() -> None:
     assert ssh_command(with_jump(), ["true"]) == [
         "ssh",
         *HARDENING,
-        "-J",
-        "tim@bastion.example:2022",
+        "-o",
+        f"ProxyCommand={JUMP_HOP}",
         "-p",
         "22",
         "deploy@web01.example",
@@ -123,12 +133,12 @@ def test_scp_uses_uppercase_P_for_the_port() -> None:
 
 def test_scp_carries_the_jump_host() -> None:
     command = scp_download_command(with_jump(), "/srv/app/dump.sql", "/tmp/dump.sql")
-    assert command[:7] == ["scp", *HARDENING, "-J", "tim@bastion.example:2022"]
+    assert command[:9] == ["scp", *HARDENING, "-o", f"ProxyCommand={JUMP_HOP}"]
 
 
 def test_scp_carries_jump_host_without_user() -> None:
     command = scp_download_command(with_jump_no_user(), "/srv/app/dump.sql", "/tmp/dump.sql")
-    assert command[:7] == ["scp", *HARDENING, "-J", "bastion.example:2022"]
+    assert command[:9] == ["scp", *HARDENING, "-o", f"ProxyCommand={JUMP_HOP_NO_USER}"]
 
 
 def test_scp_for_an_alias_target_has_no_port_flag() -> None:
@@ -157,7 +167,7 @@ def test_rsync_puts_the_jump_host_inside_the_e_option() -> None:
     assert "-e" in command
     assert (
         command[command.index("-e") + 1]
-        == f"ssh {HARDENING_SHELL} -J tim@bastion.example:2022 -p 22"
+        == f'ssh {HARDENING_SHELL} -o "ProxyCommand={JUMP_HOP}" -p 22'
     )
 
 
@@ -203,8 +213,46 @@ def ssh_options_of(site: str, target: ResolvedTarget) -> list[str]:
     if site == "scp":
         return scp_download_command(target, "/srv/a", "/tmp/a")[1:-2]
     command = rsync_pull_command(target, "/srv/a/", "/tmp/a/")
-    # rsync splits `-e` itself; shlex mirrors that for options without spaces.
-    return shlex.split(command[command.index("-e") + 1])[1:]
+    return rsync_split(command[command.index("-e") + 1])[1:]
+
+
+def rsync_split(value: str) -> list[str]:
+    """Split `-e` the way rsync does: on spaces, honouring ' and ", no backslashes.
+
+    A transcription of the loop in rsync's `do_cmd` (main.c), checked against
+    GNU rsync 3.4 with a stand-in ssh that printed its arguments. A doubled
+    quote inside a quoted run stands for itself.
+    """
+    words: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] == " ":
+            index += 1
+            continue
+        word: list[str] = []
+        quote = ""
+        while index < len(value) and (value[index] != " " or quote):
+            character = value[index]
+            if character in "'\"":
+                if not quote:
+                    quote = character
+                    index += 1
+                    continue
+                if character == quote:
+                    index += 1
+                    if index >= len(value) or value[index] != quote:
+                        quote = ""
+                        continue
+            word.append(value[index])
+            index += 1
+        words.append("".join(word))
+    return words
+
+
+def proxy_hop(options: list[str]) -> list[str]:
+    """The jump host's own ssh argv, from a site's ssh arguments."""
+    [proxy] = [option for option in options if option.startswith("ProxyCommand=")]
+    return shlex.split(proxy.removeprefix("ProxyCommand="))
 
 
 SITES = ["ssh", "scp", "rsync"]
@@ -251,19 +299,81 @@ def test_each_option_is_given_exactly_once_per_site(site: str) -> None:
 
 
 def test_rsync_option_values_survive_rsyncs_split_on_spaces() -> None:
-    # rsync splits `-e` on whitespace, so a value containing a space would be
-    # torn into two arguments. Splitting the string naively - the way rsync
-    # does - must give back exactly the tokens ssh is meant to receive.
+    # rsync splits `-e` itself, so the ProxyCommand - the one value with spaces
+    # in it - must come back from rsync's split as a single argument, exactly
+    # as `ssh_command` passes it.
     command = rsync_pull_command(with_jump(), "/srv/a/", "/tmp/a/")
     value = command[command.index("-e") + 1]
-    assert value.split(" ") == [
-        "ssh",
-        *HARDENING,
-        "-J",
-        "tim@bastion.example:2022",
-        "-p",
-        "22",
-    ]
+    assert rsync_split(value) == ssh_command(with_jump(), ["true"])[:-2]
+
+
+def test_an_rsync_word_with_a_double_quote_survives_rsyncs_split() -> None:
+    # No jump host is named like this, but the quoting must not depend on it.
+    target = with_jump()
+    target = ResolvedTarget(
+        name=target.name,
+        host=target.host,
+        user=target.user,
+        port=target.port,
+        path=target.path,
+        stage=target.stage,
+        jump_host='bastion"x.example',
+        jump_host_port=2022,
+    )
+    command = rsync_pull_command(target, "/srv/a/", "/tmp/a/")
+    value = command[command.index("-e") + 1]
+    assert rsync_split(value) == ssh_command(target, ["true"])[:-2]
+
+
+# --- non-interactive, and the jump host included -----------------------------
+#
+# Nobody is there to answer ssh: a password, passphrase or host-key question
+# goes to /dev/tty, past the captured output, and the run looks hung.
+
+
+@pytest.mark.parametrize("site", SITES)
+@pytest.mark.parametrize("make_target", TARGETS)
+def test_every_invocation_site_refuses_to_ask_anything(
+    site: str, make_target: Callable[[], ResolvedTarget]
+) -> None:
+    assert "BatchMode=yes" in ssh_options_of(site, make_target())
+
+
+@pytest.mark.parametrize("site", SITES)
+@pytest.mark.parametrize("make_target", [with_jump, with_jump_no_user])
+def test_the_jump_hosts_own_ssh_carries_the_same_options(
+    site: str, make_target: Callable[[], ResolvedTarget]
+) -> None:
+    # `-J` would start the bastion's ssh without these, and an unknown
+    # bastion key was then a question with no terminal to answer it.
+    hop = proxy_hop(ssh_options_of(site, make_target()))
+    assert hop[: 1 + len(HARDENING)] == ["ssh", *HARDENING]
+    assert hop[-3:] == ["-W", "[%h]:%p", "bastion.example"]
+    assert "-J" not in ssh_options_of(site, make_target())
+
+
+def test_the_jump_hosts_ssh_does_not_take_the_targets_host_key_alias() -> None:
+    # The alias names the target in known_hosts; the bastion keeps its own name.
+    options = ssh_options_of("ssh", docker_target())
+    assert "HostKeyAlias=ddev-sync-endpoint-prod.example-2222" in options
+    assert not any("HostKeyAlias" in part for part in proxy_hop(options))
+
+
+def test_a_hostile_jump_host_cannot_escape_the_proxy_command() -> None:
+    # ssh runs ProxyCommand through a shell, so the bastion's name is quoted.
+    target = ResolvedTarget(
+        name="production",
+        host="web01.example",
+        user="deploy",
+        port=22,
+        path="/srv/app/",
+        stage=Stage.PRODUCTION,
+        jump_host="bastion; touch /tmp/pwned",
+        jump_host_user="tim $(id)",
+    )
+    hop = proxy_hop(ssh_command(target, ["true"]))
+    assert hop[-1] == "bastion; touch /tmp/pwned"
+    assert hop[hop.index("-l") + 1] == "tim $(id)"
 
 
 def docker_target() -> ResolvedTarget:
@@ -292,8 +402,10 @@ def docker_target() -> ResolvedTarget:
 def test_a_docker_target_builds_a_jumped_ssh_command() -> None:
     argv = ssh_command(docker_target(), ["sh", "-c", "true"])
 
-    assert "-J" in argv
-    assert argv[argv.index("-J") + 1] == "deploy@prod.example:22"
+    hop = proxy_hop(argv)
+    assert hop[hop.index("-l") + 1] == "deploy"
+    assert hop[hop.index("-p") + 1] == "22"
+    assert hop[-1] == "prod.example"
     assert "sync@127.0.0.1" in argv
     assert argv[argv.index("-p") + 1] == "2222"
 

@@ -372,9 +372,12 @@ class _Builder:
         # port. `ssh_command` always appends a quoted remote command as its
         # last argument; the preview shows only how the host is reached, not
         # the probe script (an implementation detail of the preflight
-        # operation), so that trailing element is dropped.
+        # operation), so that trailing element is dropped. A jump host's
+        # `ProxyCommand` is one argument with spaces - and single quotes - in
+        # it, so it is shown in double quotes; `shlex.join` would be just as
+        # correct and unreadable.
         preview = ssh_command(self._target, ())[:-1]
-        detail = " ".join(preview)
+        detail = " ".join(f'"{part}"' if " " in part else part for part in preview)
         return [
             _Entry(
                 kind=StepKind.PREFLIGHT,

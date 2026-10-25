@@ -13,11 +13,10 @@ on the jump *is* the endpoint - the same thing a published port means - and
 the endpoint has no address the host could reach directly. Nothing here can
 accidentally bypass the hop.
 
-Two known_hosts entries are involved, and they are not symmetrical. The jump's
-own key has to be registered, because the ProxyJump child does not inherit the
-engine's options (measured in test_jump_host.py). The endpoint's key must only
-be *scrubbed*: the engine trusts it on first sight under its `HostKeyAlias`,
-which is the thing two stacks on one Docker host depend on.
+Two known_hosts entries are involved, and both are only *scrubbed*: the
+engine trusts each on first sight - the jump through the options its
+`ProxyCommand` carries (see test_jump_host.py), the endpoint under its
+`HostKeyAlias`, which is the thing two stacks on one Docker host depend on.
 """
 
 import os
@@ -39,9 +38,9 @@ COMPOSE = ["docker", "compose", "-f", str(HERE / "docker-compose.yaml")]
 COMPOSE_ENV = {**os.environ, "DDEV_SYNC_PROJECT_DIR": str(PROJECT_DIR)}
 
 # The jump, as the engine's `host`/`port` name it: an ordinary SSH login on
-# the machine the stack runs on. Its host key is registered by the
-# `jump_host_key` fixture, once per session and for the reason given there.
+# the machine the stack runs on.
 JUMP_PORT = "22023"
+JUMP_HOST_ENTRY = f"[127.0.0.1]:{JUMP_PORT}"
 # The endpoint, as the stack publishes it on the jump's loopback address.
 SYNC_PORT = "22"
 # What `config/targets.py` builds for this target. Spelled out rather than
@@ -70,18 +69,17 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.fixture
-def project(
-    ssh_key: Path, jump_host_key: None, known_hosts_for: Callable[[str], None]
-) -> Iterator[Path]:
+def project(ssh_key: Path, stack: None, known_hosts_for: Callable[[str], None]) -> Iterator[Path]:
     """The same project as `test_end_to_end.py`, differing only in the target.
 
     Deliberately the same shape - TYPO3, the same remote path, the same stub -
     because the provider is what is under test here, and a project that
     differed in anything else would make a failure ambiguous.
     """
-    # Only scrubbed, never registered: the engine records the endpoint's key
-    # under this alias on first sight, which is the behaviour under test.
+    # Only scrubbed, never registered: the engine records both keys on first
+    # sight - the endpoint's under this alias - which is the behaviour under test.
     known_hosts_for(ENDPOINT_ALIAS)
+    known_hosts_for(JUMP_HOST_ENTRY)
     root = PROJECT_DIR
     for entry in root.iterdir():
         if entry.is_dir() and not entry.is_symlink():

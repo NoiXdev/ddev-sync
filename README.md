@@ -71,10 +71,10 @@ add-on installed will start, and the hook says what to remove.
 `ssh connection` row will fail, and that is expected: it says nothing about the
 installation. An unknown host is trusted the first time it is seen, without
 asking, and remembered after that; a host whose key has *changed* is refused,
-and `doctor` says so on the `ssh connection` row. The exception is a jump host:
-its key is not covered, so a target behind one fails on the bastion's key until
-ssh has been told about it. See [SECURITY.md](SECURITY.md) for why and for the
-workaround.
+and `doctor` says so on the `ssh connection` row. A jump host is treated the
+same way. ssh never asks for anything - not a password, a passphrase or a host
+key - so a key has to come from the ssh agent. See [SECURITY.md](SECURITY.md)
+for why.
 
 The user documentation (`NoiXdev/noix-docs`, in its ddev-sync section) walks
 through installation, the first sync and removal.
@@ -146,12 +146,12 @@ ddev sync --target=production --dry-run
   acme  -  deploy@web01.example:22  /srv/app/
   Nothing will be executed.
 
-   1  preflight     remote  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 22 deploy@web01.example   [built-in]
+   1  preflight     remote  ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -p 22 deploy@web01.example   [built-in]
    2  db.dump       remote  mysqldump --single-transaction $TYPO3_DB_NAME   [profile:typo3]
    3  db.download   -       streamed as part of db.dump into .ddev/.downloads/dump.sql   [built-in]
    4  db.import     local   mysql -h ddev-acme-db db < .ddev/.downloads/dump.sql   [built-in]
-   5  files.sync    rsync   rsync -a --info=progress2 -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 22 deploy@web01.example:/srv/app/public/fileadmin/ /var/www/html/public/fileadmin/   [profile:typo3]
-   6  files.sync    rsync   rsync -a --info=progress2 -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 22 deploy@web01.example:/srv/app/public/uploads/ /var/www/html/public/uploads/   [profile:typo3]
+   5  files.sync    rsync   rsync -a --info=progress2 -e ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -p 22 deploy@web01.example:/srv/app/public/fileadmin/ /var/www/html/public/fileadmin/   [profile:typo3]
+   6  files.sync    rsync   rsync -a --info=progress2 -e ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -p 22 deploy@web01.example:/srv/app/public/uploads/ /var/www/html/public/uploads/   [profile:typo3]
    7  sanitize      sql     10 rules: clear-be-sessions, clear-scheduler-tasks, clear-fe-sessions, clear-sys-log, anonymize-fe-users, reset-fe-passwords, anonymize-be-users, reset-be-passwords, local-admin, flush-cache   [profile:typo3]
    8  setup         web     composer install --no-interaction   [profile:typo3]
    9  setup         web     vendor/bin/typo3 extension:setup   [profile:typo3]

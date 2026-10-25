@@ -2,12 +2,12 @@
   acme  -  deploy@web01.example:22  /srv/app/
   Nothing will be executed.
 
-   1  preflight     remote  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 22 deploy@web01.example   [built-in]
+   1  preflight     remote  ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -p 22 deploy@web01.example   [built-in]
    2  db.dump       remote  mysqldump --single-transaction $TYPO3_DB_NAME   [profile:typo3]
    3  db.download   -       streamed as part of db.dump into .ddev/.downloads/dump.sql   [built-in]
    4  db.import     local   mysql -h ddev-acme-db db < .ddev/.downloads/dump.sql   [built-in]
-   5  files.sync    rsync   rsync -a --info=progress2 -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 22 deploy@web01.example:/srv/app/public/fileadmin/ /var/www/html/public/fileadmin/   [profile:typo3]
-   6  files.sync    rsync   rsync -a --info=progress2 -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 22 deploy@web01.example:/srv/app/public/uploads/ /var/www/html/public/uploads/   [profile:typo3]
+   5  files.sync    rsync   rsync -a --info=progress2 -e ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -p 22 deploy@web01.example:/srv/app/public/fileadmin/ /var/www/html/public/fileadmin/   [profile:typo3]
+   6  files.sync    rsync   rsync -a --info=progress2 -e ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -p 22 deploy@web01.example:/srv/app/public/uploads/ /var/www/html/public/uploads/   [profile:typo3]
    7  sanitize      sql     10 rules: clear-be-sessions, clear-scheduler-tasks, clear-fe-sessions, clear-sys-log, anonymize-fe-users, reset-fe-passwords, anonymize-be-users, reset-be-passwords, local-admin, flush-cache   [profile:typo3]
    8  setup         web     composer install --no-interaction   [profile:typo3]
    9  setup         web     vendor/bin/typo3 extension:setup   [profile:typo3]

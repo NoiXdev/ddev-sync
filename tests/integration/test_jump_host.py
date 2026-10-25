@@ -6,8 +6,9 @@ That matters beyond the field itself, because `provider: docker` resolves into
 exactly this shape — the Docker host becomes the jump and the sync endpoint is
 reached from it.
 
-**What this proves, and what it does not.** It proves the hop: that `ssh -J`
-reaches a second host and that an rsync pull works through it. It does *not*
+**What this proves, and what it does not.** It proves the hop: that the
+`ProxyCommand` `transport/ssh.py` builds reaches a second host, from an empty
+known_hosts for both, and that an rsync pull works through it. It does *not*
 prove the docker translation end to end — the stack's inner host answers as
 `remote:2222` from the jump container, not as `127.0.0.1`, so a literal
 `provider: docker` target would not match this topology. The translation is
@@ -15,8 +16,8 @@ pinned as argv in `tests/transport/test_ssh.py`, and run for real by the
 matrix cell in plan 2.
 
 rsync rather than a bare ssh call on purpose: `_rsync_ssh_option` builds its
-own `-e` string and splits it on spaces, which is the one place the jump flag
-could be mangled without any unit test noticing.
+own `-e` string, which rsync splits by its own quoting rules, and that is the
+one place the `ProxyCommand` could be mangled without any unit test noticing.
 """
 
 from collections.abc import Callable
@@ -40,24 +41,22 @@ INNER_PORT = 2222
 # quiet way to leave residue behind and fail the next run with "REMOTE HOST
 # IDENTIFICATION HAS CHANGED" - this test found exactly that about itself.
 INNER_HOST_ENTRY = f"[{INNER_HOST}]:{INNER_PORT}"
+JUMP_HOST_ENTRY = f"[127.0.0.1]:{JUMP_PORT}"
 
 
 @pytest.fixture
-def both_hops(jump_host_key: None, known_hosts_for: Callable[[str], None]) -> None:
-    """Trust both hops, which are not symmetrical.
+def both_hops(stack: None, known_hosts_for: Callable[[str], None]) -> None:
+    """Forget both hops, so the pull meets each key for the first time.
 
-    The jump's key has to be *registered*, because the ProxyJump child never
-    sees the engine's options: it is exec'd as
-    `ssh -l deploy -p 22023 -W '[remote]:2222' 127.0.0.1`, measured, so the
-    outer `-o StrictHostKeyChecking=accept-new` does not reach it and the
-    default policy applies. `jump_host_key` does that once per session, and
-    says there why it must not be per test.
-
-    The inner hop needs no such help: it is verified by the outer ssh, which
-    does carry the engine's options - so its entry is only scrubbed, which is
-    what keeps a regenerated container from failing the next run.
+    The jump's own ssh used to be the exception: `-J` exec'd it as
+    `ssh -l deploy -p 22023 -W '[remote]:2222' 127.0.0.1`, measured, without
+    the engine's options, so an unknown bastion key was fatal and this test
+    had to register it first. The engine now builds that hop as a
+    `ProxyCommand` with `accept-new` and `BatchMode=yes`, and an empty entry
+    for the jump is what proves it.
     """
     known_hosts_for(INNER_HOST_ENTRY)
+    known_hosts_for(JUMP_HOST_ENTRY)
 
 
 def jumped_target() -> ResolvedTarget:
