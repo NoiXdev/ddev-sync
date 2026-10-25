@@ -2,7 +2,7 @@
   acme  -  deploy@web01.example:22  /srv/app/
   Nothing will be executed.
 
-   1  preflight     remote  ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -p 22 deploy@web01.example   [built-in]
+   1  preflight     remote  ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -o ControlMaster=auto -o ControlPersist=60 -o ControlPath=/tmp/ddev-sync-%i/d1e40ca1ab3cb09f -p 22 deploy@web01.example   [built-in]
    2  db.dump       remote  mysqldump --single-transaction $DATABASE_NAME   [built-in]
    3  db.download   -       streamed as part of db.dump into .ddev/.downloads/dump.sql   [built-in]
    4  db.import     local   mysql -h ddev-acme-db db < .ddev/.downloads/dump.sql   [built-in]

@@ -1,9 +1,14 @@
+import os
 import shlex
+import stat
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
 from ddev_sync.config.models import Provider, ResolvedTarget, Stage
+from ddev_sync.errors import DdevSyncError
+from ddev_sync.transport import ssh
 from ddev_sync.transport.ssh import (
     quote_remote,
     remote_endpoint,
@@ -26,6 +31,21 @@ HARDENING_SHELL = "-o StrictHostKeyChecking=accept-new -o BatchMode=yes -o Conne
 # What the jump host's own ssh runs: the hop `-J` would build, plus the options.
 JUMP_HOP = f"ssh {HARDENING_SHELL} -l tim -p 2022 -W '[%h]:%p' bastion.example"
 JUMP_HOP_NO_USER = f"ssh {HARDENING_SHELL} -p 2022 -W '[%h]:%p' bastion.example"
+
+
+def bare(argv: list[str]) -> list[str]:
+    """`argv` without the connection-sharing options, for tests about its shape.
+
+    Those options are pinned on their own below; leaving them in every
+    expected command line would make each of these tests about them too.
+    """
+    out: list[str] = []
+    for part in argv:
+        if out and out[-1] == "-o" and part.startswith("Control"):
+            out.pop()
+            continue
+        out.append(" ".join(bare(part.split(" "))) if part.startswith("ssh ") else part)
+    return out
 
 
 def direct() -> ResolvedTarget:
@@ -77,7 +97,7 @@ def aliased() -> ResolvedTarget:
 
 
 def test_a_direct_target_produces_port_and_endpoint() -> None:
-    assert ssh_command(direct(), ["echo", "ok"]) == [
+    assert bare(ssh_command(direct(), ["echo", "ok"])) == [
         "ssh",
         *HARDENING,
         "-p",
@@ -88,7 +108,7 @@ def test_a_direct_target_produces_port_and_endpoint() -> None:
 
 
 def test_a_jump_host_is_reached_by_a_proxy_command_with_user_and_port() -> None:
-    assert ssh_command(with_jump(), ["true"]) == [
+    assert bare(ssh_command(with_jump(), ["true"])) == [
         "ssh",
         *HARDENING,
         "-o",
@@ -101,11 +121,11 @@ def test_a_jump_host_is_reached_by_a_proxy_command_with_user_and_port() -> None:
 
 
 def test_an_alias_target_passes_only_the_alias() -> None:
-    assert ssh_command(aliased(), ["true"]) == ["ssh", *HARDENING, "app-prod", "true"]
+    assert bare(ssh_command(aliased(), ["true"])) == ["ssh", *HARDENING, "app-prod", "true"]
 
 
 def test_the_remote_command_is_quoted_as_one_argument() -> None:
-    command = ssh_command(direct(), ["mysqldump", "--password=p a$$", "db"])
+    command = bare(ssh_command(direct(), ["mysqldump", "--password=p a$$", "db"]))
     assert command[-1] == "mysqldump '--password=p a$$' db"
 
 
@@ -121,7 +141,7 @@ def test_quote_remote_escapes_arguments_for_shell() -> None:
 
 
 def test_scp_uses_uppercase_P_for_the_port() -> None:
-    assert scp_download_command(direct(), "/srv/app/dump.sql", "/var/www/html/dump.sql") == [
+    assert bare(scp_download_command(direct(), "/srv/app/dump.sql", "/var/www/html/dump.sql")) == [
         "scp",
         *HARDENING,
         "-P",
@@ -132,17 +152,17 @@ def test_scp_uses_uppercase_P_for_the_port() -> None:
 
 
 def test_scp_carries_the_jump_host() -> None:
-    command = scp_download_command(with_jump(), "/srv/app/dump.sql", "/tmp/dump.sql")
+    command = bare(scp_download_command(with_jump(), "/srv/app/dump.sql", "/tmp/dump.sql"))
     assert command[:9] == ["scp", *HARDENING, "-o", f"ProxyCommand={JUMP_HOP}"]
 
 
 def test_scp_carries_jump_host_without_user() -> None:
-    command = scp_download_command(with_jump_no_user(), "/srv/app/dump.sql", "/tmp/dump.sql")
+    command = bare(scp_download_command(with_jump_no_user(), "/srv/app/dump.sql", "/tmp/dump.sql"))
     assert command[:9] == ["scp", *HARDENING, "-o", f"ProxyCommand={JUMP_HOP_NO_USER}"]
 
 
 def test_scp_for_an_alias_target_has_no_port_flag() -> None:
-    assert scp_download_command(aliased(), "/srv/a", "/tmp/a") == [
+    assert bare(scp_download_command(aliased(), "/srv/a", "/tmp/a")) == [
         "scp",
         *HARDENING,
         "app-prod:/srv/a",
@@ -151,7 +171,7 @@ def test_scp_for_an_alias_target_has_no_port_flag() -> None:
 
 
 def test_rsync_pulls_with_archive_and_progress() -> None:
-    assert rsync_pull_command(direct(), "/srv/app/public/", "/var/www/html/public/") == [
+    assert bare(rsync_pull_command(direct(), "/srv/app/public/", "/var/www/html/public/")) == [
         "rsync",
         "-a",
         "--info=progress2",
@@ -163,7 +183,7 @@ def test_rsync_pulls_with_archive_and_progress() -> None:
 
 
 def test_rsync_puts_the_jump_host_inside_the_e_option() -> None:
-    command = rsync_pull_command(with_jump(), "/srv/a/", "/tmp/a/")
+    command = bare(rsync_pull_command(with_jump(), "/srv/a/", "/tmp/a/"))
     assert "-e" in command
     assert (
         command[command.index("-e") + 1]
@@ -172,7 +192,7 @@ def test_rsync_puts_the_jump_host_inside_the_e_option() -> None:
 
 
 def test_rsync_for_an_alias_target_still_passes_e_ssh() -> None:
-    command = rsync_pull_command(aliased(), "/srv/a/", "/tmp/a/")
+    command = bare(rsync_pull_command(aliased(), "/srv/a/", "/tmp/a/"))
     assert command[command.index("-e") + 1] == f"ssh {HARDENING_SHELL}"
 
 
@@ -424,3 +444,111 @@ def test_a_host_key_alias_is_passed_to_every_transport_shape() -> None:
 
 def test_a_server_target_passes_no_host_key_alias() -> None:
     assert not any("HostKeyAlias" in part for part in ssh_command(direct(), ["true"]))
+
+
+# --- one connection per target ------------------------------------------------
+#
+# Measured on a server that rate-limits SSH: the preflight's third connection
+# was cut off mid-session and port 22 then stayed closed to the source
+# address. Every call to a target therefore shares one master connection.
+
+CONTROL = ["ControlMaster=auto", "ControlPersist=60"]
+
+
+def control_path(options: list[str]) -> str:
+    [path] = [option for option in options if option.startswith("ControlPath=")]
+    return path.removeprefix("ControlPath=")
+
+
+@pytest.mark.parametrize("site", SITES)
+@pytest.mark.parametrize("make_target", [*TARGETS, docker_target])
+def test_every_invocation_site_shares_one_connection_per_target(
+    site: str, make_target: Callable[[], ResolvedTarget]
+) -> None:
+    options = ssh_options_of(site, make_target())
+    for option in CONTROL:
+        assert options.count(option) == 1
+    # The same socket from every site, so ssh, scp and rsync share it.
+    assert control_path(options) == control_path(ssh_options_of("ssh", make_target()))
+    assert control_path(options).startswith("/tmp/ddev-sync-%i/")
+
+
+def test_the_jump_hosts_own_ssh_is_not_a_second_master() -> None:
+    # The master's connection includes the hop; the hop itself runs once.
+    hop = proxy_hop(ssh_options_of("ssh", with_jump()))
+    assert not any(part.startswith("Control") for part in hop)
+
+
+def test_targets_that_land_in_different_places_never_share_a_socket() -> None:
+    # Two Docker stacks are both sync@127.0.0.1:2222; only the jump host tells
+    # them apart, and ssh's own %C does not hash it.
+    elsewhere = docker_target().model_copy(update={"jump_host": "other.example"})
+    paths = {
+        control_path(ssh_options_of("ssh", make()))
+        for make in (
+            direct,
+            with_jump,
+            with_jump_no_user,
+            aliased,
+            docker_target,
+            lambda: elsewhere,
+            lambda: direct().model_copy(update={"port": 2223}),
+            lambda: direct().model_copy(update={"user": "other"}),
+            lambda: docker_target().model_copy(update={"host_key_alias": "another-alias"}),
+        )
+    }
+    assert len(paths) == 9
+
+
+def test_the_socket_name_depends_only_on_where_the_connection_lands() -> None:
+    assert control_path(ssh_options_of("ssh", direct())) == control_path(
+        ssh_options_of(
+            "ssh", direct().model_copy(update={"path": "/elsewhere/", "name": "staging"})
+        )
+    )
+
+
+def test_the_control_directory_is_created_private(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "ddev-sync-501"
+    monkeypatch.setattr(ssh, "control_directory", lambda: directory)
+    ssh.prepare_control_directory()
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+    # And again, as every later run will find it.
+    ssh.prepare_control_directory()
+
+
+def test_the_control_directory_expands_the_uid_like_ssh() -> None:
+    assert ssh.control_directory() == Path(f"/tmp/ddev-sync-{os.getuid()}")
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda path: (path.mkdir(mode=0o755), path.chmod(0o755)),
+        lambda path: path.write_text(""),
+        lambda path: path.symlink_to(path.parent),
+    ],
+    ids=["shared", "a-file", "a-symlink"],
+)
+def test_a_control_directory_others_could_use_is_refused(
+    make: Callable[[Path], object], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "ddev-sync-501"
+    make(directory)
+    monkeypatch.setattr(ssh, "control_directory", lambda: directory)
+    with pytest.raises(DdevSyncError, match="only this user"):
+        ssh.prepare_control_directory()
+
+
+def test_a_control_directory_owned_by_someone_else_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "ddev-sync-501"
+    directory.mkdir(mode=0o700)
+    monkeypatch.setattr(ssh, "control_directory", lambda: directory)
+    someone_else = os.getuid() + 1
+    monkeypatch.setattr(os, "getuid", lambda: someone_else)
+    with pytest.raises(DdevSyncError, match="only this user"):
+        ssh.prepare_control_directory()

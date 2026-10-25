@@ -119,6 +119,53 @@ def test_a_full_pull_moves_the_database_and_the_files(project: Path, tmp_path: P
     assert (project / "public" / "fileadmin" / "brochure.pdf").is_file()
 
 
+def remote_logins() -> int:
+    """How many ssh logins the stand-in production host has accepted so far."""
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(HERE / "docker-compose.yaml"),
+            "exec",
+            "-T",
+            "remote",
+            "cat",
+            "/config/logs/openssh/current",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=COMPOSE_ENV,
+    )
+    return result.stdout.count("Accepted publickey")
+
+
+def test_a_full_pull_logs_in_once(project: Path, tmp_path: Path) -> None:
+    # A server that rate-limits SSH was measured cutting the preflight's third
+    # connection off mid-session. Preflight, credentials, table probe, dump and
+    # every files rsync share one master connection, so the host sees one
+    # login. (`no_shared_connections` closes any master an earlier test left.)
+    before = remote_logins()
+    code = main(
+        [
+            "--project-root",
+            str(project),
+            "--home",
+            str(tmp_path / "home"),
+            "--profile-root",
+            str(PROFILE_ROOT),
+            "--target",
+            "production",
+            "--steps",
+            "db,files,sanitize",
+            "--yes",
+        ]
+    )
+    assert code == 0
+    assert remote_logins() - before == 1
+
+
 def test_sanitizing_removes_the_real_email_addresses(project: Path, tmp_path: Path) -> None:
     # This is also the regression test for `clear-scheduler-tasks`'s
     # `tolerate_missing_table`: `fixtures/seed.sql` deliberately has no

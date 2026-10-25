@@ -4,12 +4,21 @@ Nothing here executes anything. Commands are built as `list[str]` so that the
 only place a string is ever handed to a shell is on the far side of ssh, where
 `quote_remote` has already escaped every argument. The tool this replaces
 interpolated paths and passwords straight into shell strings.
+
+The one thing here that touches the machine is `prepare_control_directory`,
+which creates the directory the shared connection's socket lives in.
 """
 
+import contextlib
+import hashlib
+import os
 import shlex
+import stat
 from collections.abc import Sequence
+from pathlib import Path
 
 from ddev_sync.config.models import ResolvedTarget
+from ddev_sync.errors import DdevSyncError
 
 # How long ssh may take to establish a connection before it gives up. Without
 # one, an unreachable host costs the operating system's TCP timeout - about 75
@@ -56,6 +65,93 @@ SSH_CONNECTION_OPTIONS: tuple[str, ...] = (
 )
 
 
+# One connection per target for the whole run, the way Deployer's own
+# `ssh_multiplexing` does it: the first ssh becomes the master, and every
+# later ssh, scp and rsync to the same target runs as a session inside it.
+# A sync makes a dozen or more calls - the preflight alone makes three - and
+# a server that rate-limits new SSH connections (fail2ban, CrowdSec, `ufw
+# limit`) was measured cutting the third one off mid-session and then
+# blocking port 22 for the source address. It is also simply faster: one key
+# exchange instead of one per call.
+#
+# The master outlives the call that started it by `ControlPersist`, so the
+# gaps between steps do not cost a new connection; an idle one closes by
+# itself. A master that has died is noticed by the next client, which then
+# connects directly and becomes the new master - so this can make a run
+# faster, but never make it fail.
+CONTROL_PERSIST_SECONDS = 60
+
+# The socket's directory, as ssh spells it: ssh expands `%i` to the uid, so
+# the argv stays the same text for every user while the directory does not.
+# `/tmp` and not the home directory, because under the add-on the home is a
+# bind mount from the host, and a unix socket on one is not something every
+# Docker Desktop file-sharing backend supports. The directory must be private
+# - see `prepare_control_directory` for why that is checked, not assumed.
+CONTROL_DIRECTORY = "/tmp/ddev-sync-%i"
+
+
+def control_directory() -> Path:
+    """`CONTROL_DIRECTORY` with `%i` expanded the way ssh will expand it."""
+    return Path(CONTROL_DIRECTORY.replace("%i", str(os.getuid())))
+
+
+def prepare_control_directory() -> None:
+    """Create the socket directory, or refuse one that is not ours alone.
+
+    ssh does not create it: without it every call would warn and connect on
+    its own, which is today's behaviour, not a failure. But `/tmp` is shared,
+    and a master's socket is a door to the production shell behind it, so a
+    directory another user created, or one others can enter, is refused
+    rather than used.
+    """
+    directory = control_directory()
+    with contextlib.suppress(FileExistsError):
+        directory.mkdir(mode=0o700)
+    info = directory.lstat()
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & (stat.S_IRWXG | stat.S_IRWXO)
+    ):
+        raise DdevSyncError(
+            f"{directory} holds this user's shared ssh connections, but it is not a "
+            "directory that only this user can enter. Remove it, and run the command again."
+        )
+
+
+def _control_flags(target: ResolvedTarget) -> list[str]:
+    """Share one connection between every call to `target` in this run.
+
+    The socket is named after everything that decides where a connection
+    lands, not after ssh's own `%C`: that hashes the local host, the target's
+    host, port and user, and leaves out a `ProxyCommand`. Two Docker stacks
+    are both `sync@127.0.0.1:2222`, behind different jump hosts, and under
+    `%C` the second would be handed the first one's connection - a sync from
+    the wrong server.
+    """
+    where = repr(
+        (
+            target.via_ssh_alias,
+            target.user,
+            target.host,
+            target.port,
+            target.jump_host_user,
+            target.jump_host,
+            target.jump_host_port,
+            target.host_key_alias,
+        )
+    )
+    key = hashlib.sha256(where.encode("utf-8")).hexdigest()[:16]
+    return [
+        "-o",
+        "ControlMaster=auto",
+        "-o",
+        f"ControlPersist={CONTROL_PERSIST_SECONDS}",
+        "-o",
+        f"ControlPath={CONTROL_DIRECTORY}/{key}",
+    ]
+
+
 def remote_endpoint(target: ResolvedTarget) -> str:
     """The `user@host` ssh destination, or the bare alias for alias targets."""
     if target.via_ssh_alias or target.user is None:
@@ -74,11 +170,15 @@ def ssh_command(target: ResolvedTarget, remote_command: Sequence[str]) -> list[s
 
 
 def _ssh_prefix(target: ResolvedTarget) -> list[str]:
-    prefix = ["ssh", *SSH_CONNECTION_OPTIONS, *_host_key_alias_flag(target)]
+    prefix = ["ssh", *_connection_flags(target)]
     prefix.extend(_jump_flag(target))
     if target.port is not None:
         prefix.extend(["-p", str(target.port)])
     return prefix
+
+
+def _connection_flags(target: ResolvedTarget) -> list[str]:
+    return [*SSH_CONNECTION_OPTIONS, *_control_flags(target), *_host_key_alias_flag(target)]
 
 
 def _host_key_alias_flag(target: ResolvedTarget) -> list[str]:
@@ -117,7 +217,7 @@ def _jump_flag(target: ResolvedTarget) -> list[str]:
 
 def scp_download_command(target: ResolvedTarget, remote_path: str, local_path: str) -> list[str]:
     """Build `scp [-o ...] [-o ProxyCommand=<jump>] [-P port] endpoint:remote local`."""
-    command = ["scp", *SSH_CONNECTION_OPTIONS, *_host_key_alias_flag(target)]
+    command = ["scp", *_connection_flags(target)]
     command.extend(_jump_flag(target))
     if target.port is not None:
         command.extend(["-P", str(target.port)])
@@ -144,7 +244,7 @@ def rsync_pull_command(
 
 
 def _rsync_ssh_option(target: ResolvedTarget) -> str:
-    parts = ["ssh", *SSH_CONNECTION_OPTIONS, *_host_key_alias_flag(target), *_jump_flag(target)]
+    parts = ["ssh", *_connection_flags(target), *_jump_flag(target)]
     if target.port is not None:
         parts.extend(["-p", str(target.port)])
     return " ".join(_rsync_word(part) for part in parts)

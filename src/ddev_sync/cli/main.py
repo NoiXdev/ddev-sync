@@ -63,6 +63,7 @@ from ddev_sync.errors import AmbiguousTargetError, DdevSyncError, SyncInterrupte
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT
 from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT
 from ddev_sync.transport.runner import CommandRunner, SubprocessRunner
+from ddev_sync.transport.ssh import prepare_control_directory
 
 # `build` means exactly `--steps=setup --features=node-build
 # --only-feature-setup` - nothing more. These three constants are the single
@@ -239,6 +240,10 @@ def cli(
         verbose=verbose,
         runner=SubprocessRunner(),
     )
+    # Here, once, rather than in the transport: the argv builders stay pure,
+    # and a directory that is not safe to share a connection through is
+    # refused before anything has run.
+    prepare_control_directory()
     if ctx.invoked_subcommand is not None:
         return None
     return _run(ctx.obj, steps=steps, dry_run=dry_run, assume_yes=assume_yes)

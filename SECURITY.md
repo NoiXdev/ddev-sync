@@ -130,6 +130,14 @@ of them worse is very welcome.
   the ssh agent; a key that needs a passphrase typed in must be added to the agent
   first.
 
+  Each run opens one connection per target and shares it: the first ssh becomes a
+  master, and every later ssh, scp and rsync to that target runs inside it, the way
+  Deployer's `ssh_multiplexing` does. A server that rate-limits SSH logins would
+  otherwise cut a sync off part-way. The master lives on for 60 seconds after its
+  last use. Its socket is a way into the remote shell for anyone who can open it, so
+  it lives in `/tmp/ddev-sync-<uid>/`, which the engine creates as `0700` and refuses
+  to use when it is not a directory only you can enter.
+
   There is no setting to make this stricter, and none to turn it off. If you need
   the first connection to a host verified, add its key to `known_hosts` yourself
   before the first sync.

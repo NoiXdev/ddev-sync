@@ -12,6 +12,7 @@ import pytest
 # `tmp_path`: the web container mounts it at /var/www/html, and a bind mount
 # has to be known when the stack comes up, not when a test runs.
 # Defined in `paths.py` so the test module and this file cannot disagree.
+from ddev_sync.transport.ssh import control_directory
 from tests.integration.paths import PROJECT_DIR
 
 HERE = Path(__file__).parent
@@ -209,6 +210,31 @@ def dockerized_mysql_clients(tmp_path_factory: pytest.TempPathFactory) -> Iterat
         yield
     finally:
         os.environ["PATH"] = previous_path
+
+
+@pytest.fixture(autouse=True)
+def no_shared_connections() -> Iterator[None]:
+    """Close every shared ssh connection before and after each test.
+
+    The engine keeps one master connection per target alive for
+    `ControlPersist` seconds, and a later test reaching the same target would
+    otherwise run inside it: no new key exchange, so no `known_hosts` entry
+    recorded and no changed key refused - the very things several of these
+    tests are about. In real use a master ends with the container it reaches;
+    here the containers outlive the tests.
+    """
+
+    def close_all() -> None:
+        directory = control_directory()
+        if not directory.is_dir():
+            return
+        for socket in directory.iterdir():
+            _run(["ssh", "-o", f"ControlPath={socket}", "-O", "exit", "unused"])
+            socket.unlink(missing_ok=True)
+
+    close_all()
+    yield
+    close_all()
 
 
 @pytest.fixture
