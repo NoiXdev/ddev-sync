@@ -1,3 +1,12 @@
+## [0.1.0-rc.3](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.2...v0.1.0-rc.3) (2026-10-25)
+
+
+### Bug Fixes
+
+* **init:** offer composer install when Deployer is required but missing ([69c9d8b](https://github.com/NoiXdev/ddev-sync/commit/69c9d8b0a65efc8cc0cf540da61ac45b7f43738d))
+* **ssh:** never prompt, and give the jump host the same options ([b4b3dc5](https://github.com/NoiXdev/ddev-sync/commit/b4b3dc52c0a5a64abafe80cd5dfd8c36691dd9f0))
+* **ssh:** share one connection per target for the whole run ([ba7bf1a](https://github.com/NoiXdev/ddev-sync/commit/ba7bf1a44981945dbddfaec73c4fc5c521bb0965))
+
 ## [0.1.0-rc.2](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.1...v0.1.0-rc.2) (2026-10-17)
 
 
