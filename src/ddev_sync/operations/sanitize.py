@@ -82,7 +82,20 @@ class SanitizeRule:
 
     @property
     def is_personal_data(self) -> bool:
-        return self.operation == "fake" or self.personal_data
+        return entry_is_personal_data(
+            {"operation": self.operation, "personal_data": self.personal_data}
+        )
+
+
+def entry_is_personal_data(entry: Mapping[str, object]) -> bool:
+    """Whether a rule hides personal data: a `fake` operation or a marked `sql` rule.
+
+    On a raw config entry as well as on a parsed rule, so the `--dry-run` plan
+    (which never parses rules) and the run itself cannot disagree about which
+    rules a switch skips. `is True`, not truthiness: a malformed marker is
+    refused by `_parse_rule`, and must not count as set here.
+    """
+    return entry.get("operation") == "fake" or entry.get("personal_data") is True
 
 
 class SanitizeOperationHandler(Protocol):

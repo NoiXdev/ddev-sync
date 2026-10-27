@@ -1304,3 +1304,26 @@ def test_a_malformed_switch_is_left_to_the_sanitize_step(project: Path, tmp_path
     context = _switched_off_context(project, tmp_path, '  disable_sanitize: "yes"\n')
     lines = _run(context, ["sanitize"], dry_run=False)
     assert not _warnings(lines, "sanitize.disable_sanitize")
+
+
+def test_a_dry_run_refuses_a_malformed_switch_like_a_real_run(
+    project: Path, tmp_path: Path
+) -> None:
+    context = _switched_off_context(project, tmp_path, '  disable_sanitize: "yes"\n')
+    with pytest.raises(DdevSyncError, match=r"sanitize\.disable_sanitize must be true or false"):
+        _run(context, ["sanitize"], dry_run=True)
+
+
+def test_a_dry_run_without_sanitize_ignores_a_malformed_switch(
+    project: Path, tmp_path: Path
+) -> None:
+    context = _switched_off_context(project, tmp_path, '  disable_sanitize: "yes"\n')
+    lines = _run(context, ["files"], dry_run=True)
+    assert not [line for line in lines if "disable_sanitize" in line]
+
+
+def test_no_switch_means_no_switch_warning(project: Path, tmp_path: Path) -> None:
+    context = _switched_off_context(project, tmp_path, "")
+    for dry_run in (False, True):
+        lines = _run(context, ["sanitize"], dry_run=dry_run)
+        assert not [line for line in lines if "disable_sanitize" in line]

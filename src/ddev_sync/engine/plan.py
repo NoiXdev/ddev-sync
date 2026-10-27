@@ -16,6 +16,7 @@ from ddev_sync.engine.steps import SELECTION_GROUPS, StepKind, hook_name, steps_
 from ddev_sync.errors import ConfigError
 from ddev_sync.features.resolver import ActivatedFeature, FeatureResolution
 from ddev_sync.operations.base import PathEscapesProject, preview_local_path
+from ddev_sync.operations.sanitize import entry_is_personal_data
 from ddev_sync.profiles.registry import ResolvedProfile
 from ddev_sync.transport.ssh import rsync_pull_command, ssh_command
 
@@ -557,7 +558,7 @@ class _Builder:
         if all_off:
             rules = []
         elif personal_off:
-            rules = [rule for rule in rules if not _is_personal_data(rule)]
+            rules = [rule for rule in rules if not entry_is_personal_data(rule)]
         names = ", ".join(str(rule.get("name", "unnamed")) for rule in rules)
         plural = "rule" if len(rules) == 1 else "rules"
         detail = f"{len(rules)} {plural}: {names}" if rules else "0 rules"
@@ -615,11 +616,6 @@ class _Builder:
 
     def _source(self, path: tuple[str, ...]) -> str:
         return self._scalar_sources.get(path, "built-in")
-
-
-def _is_personal_data(rule: Mapping[str, Any]) -> bool:
-    """Mirror of `SanitizeRule.is_personal_data`, on the raw config entry."""
-    return rule.get("operation") == "fake" or rule.get("personal_data") is True
 
 
 def _node_at(data: Mapping[str, Any], path: tuple[str, ...]) -> Any:
