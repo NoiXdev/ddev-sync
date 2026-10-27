@@ -6,6 +6,7 @@ an entry here is a deliberate act; profiles cannot invent new ones.
 """
 
 from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.fake import DEFAULT_EMAIL_DOMAIN, parse_columns, value_sql
 from ddev_sync.operations.sanitize import (
     SANITIZE_OPERATIONS,
     SanitizeRule,
@@ -52,6 +53,51 @@ def _run_sql(context: ExecutionContext, rule: SanitizeRule, sql: str) -> None:
     if rule.tolerate_missing_table and is_missing_table_error(result.stderr):
         return
     raise OperationError(f"sanitize rule {rule.name!r} failed: {result.stderr.strip()}")
+
+
+DISABLE_SEEDING_KEY = "sanitize.disable_seeding"
+EMAIL_DOMAIN_KEY = "sanitize.email_domain"
+
+
+def seeding_disabled(context: ExecutionContext) -> bool:
+    """Whether `sanitize.disable_seeding` asks for constants instead of seeded names.
+
+    Same shape as `database.remote_tls_options`: a switch that is not a real
+    boolean (`"yes"`, `1`) is refused rather than guessed at, because a
+    misread switch would silently pick the wrong anonymisation mode.
+    """
+    disabled = context.setting(DISABLE_SEEDING_KEY)
+    if disabled is None or disabled is False:
+        return False
+    if disabled is True:
+        return True
+    raise OperationError(f"{DISABLE_SEEDING_KEY} must be true or false, got {disabled!r}")
+
+
+def email_domain_for(context: ExecutionContext, rule: SanitizeRule) -> str:
+    """The domain of a faked email: the rule's, else the project's, else `example.fake`."""
+    domain = rule.params.get("email_domain")
+    if domain is None or domain == "":
+        return context.config(EMAIL_DOMAIN_KEY, default=DEFAULT_EMAIL_DOMAIN)
+    return str(domain)
+
+
+class FakeValues:
+    """Replace personal-data columns with stable fake values in one UPDATE."""
+
+    def run(self, context: ExecutionContext, rule: SanitizeRule) -> None:
+        """Rewrite every listed column of `table`, keyed on the row's `key` column."""
+        table = _required(rule, "table")
+        key = str(rule.params.get("key") or "id")
+        columns = parse_columns(rule.name, rule.params.get("columns"))
+        domain = email_domain_for(context, rule)
+        masked = seeding_disabled(context)
+        assignments = ", ".join(
+            f"`{_identifier(column.column)}` = "
+            f"{value_sql(table, column, key, email_domain=domain, masked=masked)}"
+            for column in columns
+        )
+        _run_sql(context, rule, f"UPDATE `{_identifier(table)}` SET {assignments}")
 
 
 class ClearMailConfig:
@@ -335,3 +381,4 @@ SANITIZE_OPERATIONS["reset_passwords"] = ResetPasswords()
 SANITIZE_OPERATIONS["search_replace"] = SearchReplace()
 SANITIZE_OPERATIONS["create_admin"] = CreateAdmin()
 SANITIZE_OPERATIONS["flush_cache"] = FlushCache()
+SANITIZE_OPERATIONS["fake"] = FakeValues()

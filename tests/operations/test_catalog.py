@@ -8,7 +8,7 @@ from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.catalog import _ADMIN_DRIVERS, LOCAL_ADMIN_PASSWORD
-from ddev_sync.operations.sanitize import SANITIZE_OPERATIONS, SanitizeOperation
+from ddev_sync.operations.sanitize import SANITIZE_OPERATIONS, SanitizeOperation, parse_rules
 from ddev_sync.transport.fake import FakeCommandRunner
 
 
@@ -38,6 +38,7 @@ def test_every_catalog_operation_is_registered() -> None:
     assert sorted(SANITIZE_OPERATIONS) == [
         "clear_mail_config",
         "create_admin",
+        "fake",
         "flush_cache",
         "reset_passwords",
         "search_replace",
@@ -669,3 +670,79 @@ def test_a_sql_rule_still_runs_in_the_sidecar(tmp_path: Path) -> None:
     config = rule_config(name="wipe", sql="TRUNCATE TABLE cache")
     SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     assert runner.calls[0][0] == "mysql"
+
+
+def _fake_sql(tmp_path: Path, rule_extra: dict[str, Any] | None = None, **settings: Any) -> str:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["mysql"], stdout="")
+    rule = {
+        "name": "f",
+        "operation": "fake",
+        "table": "reservations",
+        "columns": {"name": "name", "email": "email"},
+        **(rule_extra or {}),
+    }
+    config = {"sanitize": {"rules": [rule], **settings}}
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
+    assert len(runner.calls) == 1
+    assert runner.calls[0][0] == "mysql"
+    return runner.calls[0][-1]
+
+
+def test_a_fake_rule_runs_one_update_over_its_columns(tmp_path: Path) -> None:
+    sql = _fake_sql(tmp_path)
+    assert sql.startswith("UPDATE `reservations` SET `name` = CASE")
+    assert ", `email` = CASE" in sql
+
+
+def test_the_key_defaults_to_id_and_can_be_named(tmp_path: Path) -> None:
+    assert "HEX(COALESCE(`id`, ''))" in _fake_sql(tmp_path)
+    assert "HEX(COALESCE(`uid`, ''))" in _fake_sql(tmp_path, {"key": "uid"})
+
+
+@pytest.mark.parametrize(
+    ("rule_extra", "settings", "domain"),
+    [
+        ({}, {}, "@example.fake"),
+        ({}, {"email_domain": "example.test"}, "@example.test"),
+        ({"email_domain": "rule.test"}, {"email_domain": "example.test"}, "@rule.test"),
+    ],
+)
+def test_the_email_domain_resolves_rule_then_config_then_default(
+    tmp_path: Path, rule_extra: dict[str, Any], settings: dict[str, Any], domain: str
+) -> None:
+    assert domain in _fake_sql(tmp_path, rule_extra, **settings)
+
+
+def test_disable_seeding_masks_instead(tmp_path: Path) -> None:
+    sql = _fake_sql(tmp_path, disable_seeding=True)
+    assert "'user.'" in sql
+    assert "ELT(" not in sql
+
+
+def test_a_switch_that_is_not_a_boolean_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(OperationError, match="disable_seeding must be true or false"):
+        _fake_sql(tmp_path, disable_seeding="yes")
+
+
+def test_a_bad_fake_rule_is_refused_when_parsed(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    config = rule_config(name="f", operation="fake", table="t", columns={"x": "colour"})
+    with pytest.raises(OperationError):
+        parse_rules(make_context(runner, tmp_path, **config))
+    assert runner.calls == []
+
+
+def test_a_missing_table_is_tolerated_when_asked(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["mysql"], returncode=1, stderr="ERROR 1146 (42S02): Table 'db.reservations' doesn't exist"
+    )
+    config = rule_config(
+        name="f",
+        operation="fake",
+        table="reservations",
+        columns={"name": "name"},
+        tolerate_missing_table=True,
+    )
+    SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})

@@ -18,6 +18,7 @@ from ddev_sync.operations.database import (
     LOCAL_DB_TLS_OPTION,
     LOCAL_DB_USER,
 )
+from ddev_sync.operations.fake import parse_columns
 from ddev_sync.operations.placeholders import expand_value
 
 # MySQL/MariaDB errno 1146 / SQLSTATE 42S02: "table doesn't exist". Narrow on
@@ -111,6 +112,10 @@ def _parse_rule(entry: Mapping[str, Any], context: ExecutionContext) -> Sanitize
             "parameter"
         )
     raw_params = {key: value for key, value in entry.items() if key not in _RESERVED}
+    if operation == "fake":
+        # Validated here, not when the rule runs, so preflight rejects a typo in
+        # a kind or a setting before a production dump is downloaded.
+        parse_columns(str(name), raw_params.get("columns"))
     return SanitizeRule(
         name=str(name),
         # `sql` is expanded exactly like every other parameter below - it
