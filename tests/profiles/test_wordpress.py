@@ -90,12 +90,13 @@ def test_the_url_rewrite_expands_ddev_sitename(tmp_path: Path) -> None:
 def test_anonymize_users_targets_the_resolved_table_prefix(tmp_path: Path) -> None:
     # Pins the Part 1/2 fix: profiles/wordpress.yaml used to hardcode
     # `wp_users`, which is wrong on any site with a non-default
-    # `$table_prefix`. Both the raw sql and the declared `requires_table`
-    # must carry the *resolved* prefix, not the literal placeholder text.
+    # `$table_prefix`. The fake rule's `table` must carry the *resolved*
+    # prefix, not the literal placeholder text.
     parsed = parse_rules(context_for(tmp_path))
     rule = next(entry for entry in parsed if entry.name == "anonymize-users")
-    assert rule.sql == "UPDATE wp_users SET user_email = CONCAT('user', ID, '@example.invalid')"
-    assert rule.requires_table == "wp_users"
+    assert rule.operation == "fake"
+    assert rule.params["table"] == "wp_users"
+    assert rule.params["key"] == "ID"
 
 
 def test_reset_user_passwords_targets_the_resolved_table_prefix(tmp_path: Path) -> None:

@@ -50,8 +50,10 @@ sanitize:
     # first in the list, so a silent failure here used to cost
     # reset-user-passwords and clear-messenger too, not just itself.
     - name: anonymize-users
-      sql: "UPDATE ${SYMFONY_USER_TABLE} SET email = CONCAT('user', id, '@example.invalid')"
-      requires_table: "${SYMFONY_USER_TABLE}"
+      operation: fake
+      table: "${SYMFONY_USER_TABLE}"
+      columns:
+        email: email
     - name: reset-user-passwords
       operation: reset_passwords
       table: "${SYMFONY_USER_TABLE}"

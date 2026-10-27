@@ -48,9 +48,14 @@ sanitize:
     - name: clear-watchdog
       sql: "TRUNCATE TABLE watchdog"
       tolerate_missing_table: true
+    # No `WHERE uid > 0`: the anonymous user (uid 0) has an empty `mail`, and an empty
+    # value stays empty, so it needs no guard.
     - name: anonymize-users
-      sql: "UPDATE users_field_data SET mail = CONCAT('user', uid, '@example.invalid') WHERE uid > 0"
-      requires_table: users_field_data
+      operation: fake
+      table: users_field_data
+      key: uid
+      columns:
+        mail: email
     # Unverified: table/column name assumed from Drupal core's conventional
     # `users_field_data.pass` (same table the anonymize rule above already
     # targets); see profiles/VERIFIED.md. No `uid > 0` guard here - resetting

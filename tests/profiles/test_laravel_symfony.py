@@ -125,13 +125,13 @@ def test_neither_profile_declares_version_variants_yet(name: str) -> None:
 
 def test_symfony_user_table_defaults_to_user(tmp_path: Path) -> None:
     # Part 4: `user` is Symfony's conventional default, not a guarantee - see
-    # profiles/VERIFIED.md. Unset, both the sql rule and the operation rule's
+    # profiles/VERIFIED.md. Unset, both the fake rule's and the password rule's
     # `table` param must still resolve to the historical default.
     parsed = parse_rules(symfony_context(tmp_path))
     anonymize = next(entry for entry in parsed if entry.name == "anonymize-users")
     reset = next(entry for entry in parsed if entry.name == "reset-user-passwords")
-    assert anonymize.sql == "UPDATE user SET email = CONCAT('user', id, '@example.invalid')"
-    assert anonymize.requires_table == "user"
+    assert anonymize.operation == "fake"
+    assert anonymize.params["table"] == "user"
     assert reset.params["table"] == "user"
 
 
@@ -140,8 +140,8 @@ def test_symfony_user_table_is_overridable(tmp_path: Path) -> None:
     parsed = parse_rules(context)
     anonymize = next(entry for entry in parsed if entry.name == "anonymize-users")
     reset = next(entry for entry in parsed if entry.name == "reset-user-passwords")
-    assert anonymize.sql == "UPDATE app_user SET email = CONCAT('user', id, '@example.invalid')"
-    assert anonymize.requires_table == "app_user"
+    assert anonymize.operation == "fake"
+    assert anonymize.params["table"] == "app_user"
     assert reset.params["table"] == "app_user"
 
 

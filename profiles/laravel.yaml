@@ -207,8 +207,11 @@ sanitize:
     # give it the same `${LARAVEL_USER_TABLE}`-shaped treatment as Symfony's -
     # but do not add the placeholder speculatively for a case nobody has hit.
     - name: anonymize-users
-      sql: "UPDATE users SET email = CONCAT('user', id, '@example.invalid')"
-      requires_table: users
+      operation: fake
+      table: users
+      columns:
+        name: name
+        email: email
     - name: reset-user-passwords
       operation: reset_passwords
       table: users

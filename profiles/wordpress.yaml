@@ -39,8 +39,12 @@ sanitize:
     # preflight probe catch a wrong prefix before the dump, rather than
     # mid-sanitize with the database already imported.
     - name: anonymize-users
-      sql: "UPDATE ${WP_TABLE_PREFIX}users SET user_email = CONCAT('user', ID, '@example.invalid')"
-      requires_table: "${WP_TABLE_PREFIX}users"
+      operation: fake
+      table: "${WP_TABLE_PREFIX}users"
+      key: ID
+      columns:
+        user_email: email
+        display_name: name
     - name: reset-user-passwords
       operation: reset_passwords
       table: "${WP_TABLE_PREFIX}users"

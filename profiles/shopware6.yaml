@@ -69,14 +69,14 @@ sanitize:
     # `email`/`first_name`/`last_name`/`password` columns are the documented
     # core schema, but no real Shopware instance has confirmed this profile's
     # commands yet; see profiles/VERIFIED.md. `id` is BINARY(16) in Shopware
-    # 6's schema, hence HEX() rather than concatenating it directly.
+    # 6's schema; the fake rule hashes the key, so the binary value is fine.
     - name: anonymize-customers
-      sql: >-
-        UPDATE customer SET
-        email = CONCAT(LOWER(HEX(id)), '@example.invalid'),
-        first_name = 'Customer',
-        last_name = CONCAT('Local ', LOWER(HEX(id)))
-      requires_table: customer
+      operation: fake
+      table: customer
+      columns:
+        email: email
+        first_name: first_name
+        last_name: last_name
     - name: reset-customer-passwords
       operation: reset_passwords
       table: customer

@@ -108,7 +108,14 @@ sanitize:
       sql: "TRUNCATE TABLE sys_log"
       requires_table: sys_log
     - name: anonymize-fe-users
-      sql: "UPDATE fe_users SET email = CONCAT('fe', uid, '@example.invalid')"
+      operation: fake
+      table: fe_users
+      key: uid
+      columns:
+        email: email
+        first_name: first_name
+        last_name: last_name
+        name: name
       tolerate_missing_table: true
     - name: reset-fe-passwords
       operation: reset_passwords
@@ -121,8 +128,12 @@ sanitize:
     # every real editor's email and password hash on the laptop untouched
     # while reporting "sanitize OK". Same treatment, same table shape.
     - name: anonymize-be-users
-      sql: "UPDATE be_users SET email = CONCAT('be', uid, '@example.invalid')"
-      requires_table: be_users
+      operation: fake
+      table: be_users
+      key: uid
+      columns:
+        email: email
+        realName: name
     - name: reset-be-passwords
       operation: reset_passwords
       table: be_users

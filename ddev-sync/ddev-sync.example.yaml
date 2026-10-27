@@ -93,3 +93,24 @@ version: 1
 # profile needs it and does not have it stops before touching the database.
 # sanitize:
 #   production_url: https://www.example.com
+#   # How the sanitize rules treat personal data (all default to off):
+#   # disable_seeding: true       # mask personal data instead of generating realistic values
+#   # disable_sanitize: true      # skip the personal-data rules only; other rules still run
+#   # disable_sanitize_all: true  # run no sanitize rule at all
+#   # email_domain: example.fake  # domain of faked emails (a rule's own email_domain wins)
+#   rules:
+#     # A `fake` rule replaces personal data with stable, realistic values.
+#     # `columns` maps a column to a kind (name, first_name, last_name, email,
+#     # text, integer, ...); `key` is the column the values derive from (default id).
+#     - name: fake-reservations
+#       operation: fake
+#       table: reservations
+#       columns:
+#         name: name
+#         email: email
+#         comment: text
+#     # An unmarked sql rule counts as protective and keeps running under
+#     # `disable_sanitize`; mark one that only touches personal data.
+#     - name: blank-newsletter
+#       sql: "UPDATE newsletter SET email = ''"
+#       personal_data: true
