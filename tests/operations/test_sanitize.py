@@ -429,7 +429,7 @@ def test_no_switch_runs_every_rule(tmp_path: Path) -> None:
     assert [rule.name for rule in active_rules(context)] == [r["name"] for r in SWITCH_RULES]
 
 
-@pytest.mark.parametrize("key", ["disable_sanitize", "disable_sanitize_all"])
+@pytest.mark.parametrize("key", ["disable_sanitize", "disable_sanitize_all", "disable_seeding"])
 def test_a_non_boolean_switch_is_refused(tmp_path: Path, key: str) -> None:
     context = _switch_context(tmp_path, FakeCommandRunner(), **{key: "yes"})
     with pytest.raises(OperationError) as caught:

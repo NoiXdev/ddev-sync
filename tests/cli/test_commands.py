@@ -1314,6 +1314,19 @@ def test_a_dry_run_refuses_a_malformed_switch_like_a_real_run(
         _run(context, ["sanitize"], dry_run=True)
 
 
+def test_a_dry_run_refuses_a_malformed_disable_seeding(project: Path, tmp_path: Path) -> None:
+    context = _switched_off_context(project, tmp_path, '  disable_seeding: "yes"\n')
+    with pytest.raises(DdevSyncError, match=r"sanitize\.disable_seeding must be true or false"):
+        _run(context, ["sanitize"], dry_run=True)
+
+
+def test_a_valid_disable_seeding_prints_no_warning(project: Path, tmp_path: Path) -> None:
+    context = _switched_off_context(project, tmp_path, "  disable_seeding: true\n")
+    for dry_run in (False, True):
+        lines = _run(context, ["sanitize"], dry_run=dry_run)
+        assert not [line for line in lines if "disable_seeding" in line]
+
+
 def test_a_dry_run_without_sanitize_ignores_a_malformed_switch(
     project: Path, tmp_path: Path
 ) -> None:

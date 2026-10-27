@@ -1484,3 +1484,24 @@ def test_a_tolerated_missing_table_does_not_hide_another_rules_column_check(
     )
     with pytest.raises(OperationError, match="fake-guests"):
         PreflightOperation().execute(context, {"sanitize_selected": True})
+
+
+def test_a_malformed_disable_seeding_stops_the_sync_before_the_dump(tmp_path: Path) -> None:
+    runner = _columns_runner("reservations\tid\nreservations\temail\n")
+    context = make_context(
+        runner,
+        tmp_path,
+        database={
+            "remote_credentials": "explicit",
+            "credentials": {
+                "name": "db",
+                "user": "u",
+                "password": "p",
+                "host": "db.internal",
+                "port": "3306",
+            },
+        },
+        sanitize={"disable_seeding": "yes", "rules": [_fake_rule(columns={"email": "email"})]},
+    )
+    with pytest.raises(OperationError, match=r"sanitize\.disable_seeding must be true or false"):
+        PreflightOperation().execute(context, {"sanitize_selected": True})

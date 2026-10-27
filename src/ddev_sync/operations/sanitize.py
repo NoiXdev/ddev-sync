@@ -124,14 +124,23 @@ def parse_rules(context: ExecutionContext) -> list[SanitizeRule]:
 
 DISABLE_SANITIZE_KEY = "sanitize.disable_sanitize"
 DISABLE_SANITIZE_ALL_KEY = "sanitize.disable_sanitize_all"
+DISABLE_SEEDING_KEY = "sanitize.disable_seeding"
 
 
 @dataclass(frozen=True)
 class SanitizeSwitches:
-    """The two project switches that turn sanitize rules off."""
+    """The project switches that shape the sanitize run.
+
+    `disable_seeding` turns off no rule; it picks constants over seeded names
+    in `fake`. It sits here anyway so it is validated at the same moments as
+    the other two - preflight, the dry run and the sanitize step - and not
+    first inside the `fake` rule after the import, where the rules behind it
+    (the password resets) would never run.
+    """
 
     disable_sanitize: bool
     disable_sanitize_all: bool
+    disable_seeding: bool
 
 
 def _switch(context: ExecutionContext, key: str) -> bool:
@@ -149,10 +158,11 @@ def _switch(context: ExecutionContext, key: str) -> bool:
 
 
 def sanitize_switches(context: ExecutionContext) -> SanitizeSwitches:
-    """Both switches, each validated even when the other one is set."""
+    """All switches, each validated even when another one is set."""
     return SanitizeSwitches(
         disable_sanitize=_switch(context, DISABLE_SANITIZE_KEY),
         disable_sanitize_all=_switch(context, DISABLE_SANITIZE_ALL_KEY),
+        disable_seeding=_switch(context, DISABLE_SEEDING_KEY),
     )
 
 
