@@ -917,3 +917,32 @@ def docker_target() -> ResolvedTarget:
         path="/data/",
         stage=Stage.PRODUCTION,
     )
+
+
+def test_a_failing_doctor_row_carries_its_link() -> None:
+    report = PreflightReport(ssh_ok=False, remote_path_ok=True, free_bytes=50 * 1024**3)
+    lines = render_doctor(report, _target()).splitlines()
+    index = next(i for i, line in enumerate(lines) if "ssh connection" in line)
+    assert lines[index + 1] == (
+        "        More: https://docs.noix.dev/ddev-sync/reference/troubleshooting/"
+        "#cannot-reach-the-host-over-ssh"
+    )
+    assert sum("More:" in line for line in lines) == 1
+
+
+def test_every_doctor_row_has_a_registered_topic() -> None:
+    from ddev_sync.cli.render import _DOCTOR_ROW_TOPICS
+    from ddev_sync.docs import TOPICS
+
+    assert set(_DOCTOR_ROW_TOPICS.values()) <= TOPICS
+    assert set(_DOCTOR_ROW_TOPICS) == {
+        "ssh connection",
+        "sync endpoint",
+        "deploy path",
+        "path readable",
+        "disk space",
+        "credentials",
+        "sanitize tables",
+        "web container",
+        "ssh agent",
+    }

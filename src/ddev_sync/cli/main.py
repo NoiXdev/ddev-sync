@@ -58,6 +58,7 @@ from ddev_sync.cli.context import RunContext, build_context
 from ddev_sync.cli.init import init_command
 from ddev_sync.cli.waiting import Waiting, waiting_enabled
 from ddev_sync.ddev.project import DEFAULT_PROJECT_ROOT
+from ddev_sync.docs import doc_link
 from ddev_sync.engine.plan import available_selection_groups
 from ddev_sync.engine.steps import SELECTION_GROUPS
 from ddev_sync.errors import AmbiguousTargetError, DdevSyncError, SyncInterrupted
@@ -592,6 +593,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 130
     except DdevSyncError as error:
         click.echo(str(error), err=True)
+        # After the message, never inside it: the message is the error's own
+        # words and the link is the CLI's pointer to the long explanation.
+        link = doc_link(error)
+        if link is not None:
+            click.echo(f"  More: {link}", err=True)
         return 1
     except ValueError as error:
         click.echo(str(error), err=True)

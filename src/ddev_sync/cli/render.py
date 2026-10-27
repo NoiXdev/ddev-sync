@@ -10,12 +10,29 @@ from collections.abc import Mapping
 from ddev_sync.cli.colour import Colour, paint_padded
 from ddev_sync.config.models import Provider, ResolvedTarget, TargetSpec
 from ddev_sync.config.targets import CollectedTarget
+from ddev_sync.docs import doc_url
 from ddev_sync.engine.plan import Plan, PlannedStep
 from ddev_sync.operations.preflight import PreflightReport
 
 _KIND_WIDTH = 14
 _WHERE_WIDTH = 7
 _MARKER_WIDTH = 6
+
+# A failing doctor row points at the docs entry for that probe. Keyed by the
+# row label, because the rows are built from labels and nothing else carries
+# which probe a row is. `ssh connection` and `sync endpoint` are the same
+# probe under two names (see `render_doctor`).
+_DOCTOR_ROW_TOPICS = {
+    "ssh connection": "cannot-reach-the-host-over-ssh",
+    "sync endpoint": "docker-endpoint",
+    "deploy path": "deploy-path-does-not-exist",
+    "path readable": "remote-path-is-not-readable",
+    "disk space": "not-enough-free-space",
+    "credentials": "database",
+    "sanitize tables": "required-table-is-missing",
+    "web container": "web-container-not-reachable",
+    "ssh agent": "no-ssh-agent",
+}
 _FEATURES_LABEL = "  Features  "
 _FEATURES_INDENT = " " * len(_FEATURES_LABEL)
 
@@ -231,4 +248,7 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget, *, colour: bo
             else paint_padded("FAIL", _MARKER_WIDTH, Colour.RED, enabled=colour)
         )
         lines.append(f"  {marker}{label:<18}{detail}")
+        if not ok:
+            # Under the label, not the marker: it belongs to the row's text.
+            lines.append(f"  {' ' * _MARKER_WIDTH}More: {doc_url(_DOCTOR_ROW_TOPICS[label])}")
     return "\n".join(lines) + "\n"

@@ -6,7 +6,25 @@ keep travelling like the interrupt it reports (see its own docstring).
 
 
 class DdevSyncError(Exception):
-    """Base class for every error ddev-sync raises on purpose."""
+    """Base class for every error ddev-sync raises on purpose.
+
+    `doc` names the docs entry that explains this particular failure (a slug
+    from `ddev_sync.docs.TOPICS`); without it the link falls back to the area
+    of the module that raised. Keyword-only and validated at construction, so
+    a typo'd slug fails where it is written rather than printing a dead link.
+    `*args` keeps every subclass and raise site that passes more than a
+    message working unchanged.
+    """
+
+    def __init__(self, *args: object, doc: str | None = None) -> None:
+        # Imported here because `docs` must not import this module; by the
+        # time an error is constructed both modules are fully loaded.
+        from ddev_sync.docs import TOPICS
+
+        if doc is not None and doc not in TOPICS:
+            raise ValueError(f"unknown docs topic {doc!r}")
+        super().__init__(*args)
+        self.doc = doc
 
 
 class ConfigError(DdevSyncError):

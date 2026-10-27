@@ -244,3 +244,21 @@ def test_the_all_switch_says_the_protective_rules_did_not_run_either() -> None:
     assert "~/.config/x.yaml" in joined
     assert "protective" in joined
     assert any(line.strip().startswith("!") for line in lines)
+
+
+def test_the_link_follows_a_multi_line_message() -> None:
+    reporter, lines = capture()
+    outcome = StepOutcome(
+        step=step(StepKind.DB_IMPORT),
+        status="failed",
+        error=DdevSyncError("one\ntwo\nthree", doc="dump-is-incomplete"),
+    )
+    reporter.starting(outcome.step)
+    reporter.finished(outcome)
+    under = " " * 8
+    assert lines[-4:] == [
+        f"{under}one",
+        f"{under}two",
+        f"{under}three",
+        f"{under}More: https://docs.noix.dev/ddev-sync/reference/troubleshooting/#dump-is-incomplete",
+    ]

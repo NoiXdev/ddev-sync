@@ -10,6 +10,7 @@ from collections.abc import Callable
 
 from ddev_sync.cli.colour import Colour, paint_padded
 from ddev_sync.cli.scrub import scrub
+from ddev_sync.docs import doc_link
 from ddev_sync.engine.executor import StepOutcome
 from ddev_sync.engine.plan import PlannedStep
 from ddev_sync.engine.steps import STEP_DESCRIPTIONS
@@ -92,6 +93,11 @@ class ConsoleReporter:
         if outcome.error is not None:
             for text in str(outcome.error).splitlines():
                 self._write(f"{_UNDER_NAME}{text}")
+            # One line after the whole message, in the message's own column,
+            # so a multi-line hint stays one block with its link at the end.
+            link = doc_link(outcome.error)
+            if link is not None:
+                self._write(f"{_UNDER_NAME}More: {link}")
 
     def progress(self, text: str) -> None:
         """Say what the running step is waiting for.
