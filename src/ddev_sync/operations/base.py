@@ -59,7 +59,8 @@ def confirm(question: str, *, subject: str) -> bool:
     except EOFError as error:
         raise OperationError(
             f"cannot confirm {subject}: no input is available (stdin is "
-            "closed). Pass --yes to skip the confirmation prompt."
+            "closed). Pass --yes to skip the confirmation prompt.",
+            doc="command-line",
         ) from error
     return answer in {"y", "yes"}
 

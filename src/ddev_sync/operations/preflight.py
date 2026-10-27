@@ -36,6 +36,7 @@ from ddev_sync.operations.base import ExecutionContext, OperationError, redact
 from ddev_sync.operations.database import (
     RemoteCredentials,
     read_remote_credentials,
+    remote_failure,
     remote_tls_options,
 )
 from ddev_sync.operations.fake import parse_columns
@@ -111,6 +112,9 @@ class PreflightReport:
     free_bytes: int
     sanitize_tables_ok: bool | None = None
     sanitize_tables_detail: str = ""
+    # The docs slug of the error behind a failed sanitize row, when it has its
+    # own (a certificate failure); `render_doctor` prefers it to the row's default.
+    sanitize_tables_doc: str | None = None
     web_ok: bool | None = None
     web_detail: str = ""
     agent_ok: bool | None = None
@@ -189,7 +193,7 @@ class PreflightOperation:
             if ok is False:
                 # The slug the credential source's own error carried, so the
                 # link stays the specific entry rather than the preflight area.
-                raise OperationError(detail, doc=doc)
+                raise OperationError(detail, doc=doc or "database")
         if bool(params.get("sanitize_selected", False)):
             context.progress("checking the tables the sanitize rules name")
             self._probe_sanitize_tables(context)
@@ -220,7 +224,7 @@ class PreflightOperation:
         """
         report, stderr = self._probe(context)
         credentials_ok, credentials_detail = self._check_credentials(context, report)
-        sanitize_ok, sanitize_detail = self._check_sanitize_tables(context, report)
+        sanitize_ok, sanitize_detail, sanitize_doc = self._check_sanitize_tables(context, report)
         web_ok, web_detail = self._check_web_container(context)
         agent_ok, agent_detail = self._check_ssh_agent()
         return PreflightReport(
@@ -229,6 +233,7 @@ class PreflightOperation:
             free_bytes=report.free_bytes,
             sanitize_tables_ok=sanitize_ok,
             sanitize_tables_detail=sanitize_detail,
+            sanitize_tables_doc=sanitize_doc,
             web_ok=web_ok,
             web_detail=web_detail,
             agent_ok=agent_ok,
@@ -517,10 +522,10 @@ class PreflightOperation:
     @staticmethod
     def _check_sanitize_tables(
         context: ExecutionContext, report: PreflightReport
-    ) -> tuple[bool | None, str]:
+    ) -> tuple[bool | None, str, str | None]:
         """The non-raising form of `_probe_sanitize_tables`, for `doctor`.
 
-        Returns `(None, "")` when there is nothing meaningful to report:
+        Returns `(None, "", None)` when there is nothing meaningful to report:
         either connectivity already failed - `ssh_ok`/`remote_path_ok` above
         already cover that, and there is no remote database left to query -
         or no sanitize rule requires a table at all. Otherwise runs the same
@@ -537,12 +542,12 @@ class PreflightOperation:
         has no prefix to read at all - fails before any table is listed.
         """
         if not (report.ssh_ok and report.remote_path_ok):
-            return None, ""
+            return None, "", None
         try:
             rules = active_rules(context)
             required = _required_tables(rules)
             if not required and not _fake_rules(rules):
-                return None, ""
+                return None, "", None
             tables = _remote_tables(context)
             problem = _first_missing_table_problem(context, required, tables)
             if problem is None:
@@ -550,11 +555,11 @@ class PreflightOperation:
                 # `columns` mapping must be reported, not raised (see above).
                 problem = _column_problem(context, rules, tables)
         except OperationError as error:
-            return False, str(error)
+            return False, str(error), error.doc
         if problem is not None:
-            return False, problem
+            return False, problem, None
         plural = "table" if len(required) == 1 else "tables"
-        return True, f"{len(required)} required {plural} present"
+        return True, f"{len(required)} required {plural} present", None
 
 
 _MAX_DETAIL = 200
@@ -726,18 +731,21 @@ def verify_credentials(context: ExecutionContext) -> None:
     """
     credentials, result = _show_tables_result(context)
     if not result.ok:
-        raise OperationError(
-            f"the database credentials did not authenticate on {context.target.host}: "
-            f"{redact(result.stderr, credentials.password).strip()}"
+        stderr = redact(result.stderr, credentials.password).strip()
+        raise remote_failure(
+            f"the database credentials did not authenticate on {context.target.host}: {stderr}",
+            stderr,
         )
 
 
 def _remote_tables(context: ExecutionContext) -> set[str]:
     credentials, result = _show_tables_result(context)
     if not result.ok:
-        raise OperationError(
+        stderr = redact(result.stderr, credentials.password).strip()
+        raise remote_failure(
             "could not list tables on the remote database to verify sanitize rules "
-            f"before the dump: {redact(result.stderr, credentials.password).strip()}"
+            f"before the dump: {stderr}",
+            stderr,
         )
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
@@ -776,9 +784,11 @@ def _remote_columns(context: ExecutionContext, tables: list[str]) -> set[tuple[s
     argv = _mysql_argv(credentials, remote_tls_options(context), statement)
     result = context.runner.run(ssh_command(context.target, argv))
     if not result.ok:
-        raise OperationError(
+        stderr = redact(result.stderr, credentials.password).strip()
+        raise remote_failure(
             "could not list columns on the remote database to verify sanitize rules "
-            f"before the dump: {redact(result.stderr, credentials.password).strip()}"
+            f"before the dump: {stderr}",
+            stderr,
         )
     # `--batch` separates the two columns with a tab; neither name can hold one.
     return {

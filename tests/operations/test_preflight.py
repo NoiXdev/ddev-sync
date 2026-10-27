@@ -1548,3 +1548,71 @@ def test_a_malformed_disable_seeding_stops_the_sync_before_the_dump(tmp_path: Pa
     )
     with pytest.raises(OperationError, match=r"sanitize\.disable_seeding must be true or false"):
         PreflightOperation().execute(context, {"sanitize_selected": True})
+
+
+# --- certificate failures carry the hint wherever the remote is queried -----
+
+_CERT_STDERR = "ERROR 2026 (HY000): TLS/SSL error: self-signed certificate in certificate chain"
+
+
+def _assert_tls_hint(error: OperationError) -> None:
+    assert "database.verify_server_cert: false" in str(error)
+    assert (doc_link(error) or "").endswith("#tls-certificate-verification-fails")
+
+
+def test_a_certificate_failure_in_the_table_listing_carries_the_hint(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], returncode=1, stderr=_CERT_STDERR)
+    context = context_with_rules(
+        runner, tmp_path, [{"name": "x", "sql": "TRUNCATE TABLE t", "requires_table": "t"}]
+    )
+    with pytest.raises(OperationError, match="could not list tables") as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    _assert_tls_hint(caught.value)
+
+
+def test_a_certificate_failure_in_the_column_query_carries_the_hint(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="reservations\n")
+    runner.script_prefix(["ssh"], returncode=1, stderr=_CERT_STDERR)
+    context = context_with_rules(runner, tmp_path, [_fake_rule()])
+    with pytest.raises(OperationError, match="could not list columns") as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    _assert_tls_hint(caught.value)
+
+
+def test_a_certificate_failure_in_verify_credentials_carries_the_hint(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=1, stderr=_CERT_STDERR)
+    with pytest.raises(OperationError, match="did not authenticate") as caught:
+        verify_credentials(_explicit_context(runner, tmp_path))
+    _assert_tls_hint(caught.value)
+
+
+def test_a_non_certificate_failure_gets_no_tls_hint(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=1, stderr="Access denied for user 'u'")
+    with pytest.raises(OperationError) as caught:
+        verify_credentials(_explicit_context(runner, tmp_path))
+    assert "verify_server_cert" not in str(caught.value)
+    assert caught.value.doc is None
+
+
+def test_doctor_carries_the_certificate_slug_on_the_sanitize_row(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], returncode=1, stderr=_CERT_STDERR)
+    context = context_with_rules(
+        runner, tmp_path, [{"name": "x", "sql": "TRUNCATE TABLE t", "requires_table": "t"}]
+    )
+    report = PreflightOperation().check(context)
+    assert report.sanitize_tables_doc == "tls-certificate-verification-fails"
+
+
+def test_a_credential_error_without_its_own_slug_links_to_the_database_area(
+    tmp_path: Path,
+) -> None:
+    runner = healthy_runner()
+    context = make_context(runner, tmp_path, database={"remote_credentials": "bogus"})
+    with pytest.raises(OperationError, match="unknown credential source") as caught:
+        PreflightOperation().execute(context, {"db_selected": True})
+    assert caught.value.doc == "database"

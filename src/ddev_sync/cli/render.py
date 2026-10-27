@@ -227,8 +227,13 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget, *, colour: bo
         )
     if report.credentials_ok is not None:
         checks.append(("credentials", report.credentials_ok, report.credentials_detail))
+    # A row's own error slug beats the probe's default topic: a certificate
+    # failure surfacing in the sanitize probe is the TLS entry, not the
+    # required-table one.
+    row_docs: dict[str, str | None] = {}
     if report.sanitize_tables_ok is not None:
         checks.append(("sanitize tables", report.sanitize_tables_ok, report.sanitize_tables_detail))
+        row_docs["sanitize tables"] = report.sanitize_tables_doc
     if report.web_ok is not None:
         checks.append(("web container", report.web_ok, report.web_detail))
     if report.agent_ok is not None:
@@ -248,7 +253,7 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget, *, colour: bo
             else paint_padded("FAIL", _MARKER_WIDTH, Colour.RED, enabled=colour)
         )
         lines.append(f"  {marker}{label:<18}{detail}")
-        topic = _DOCTOR_ROW_TOPICS.get(label)
+        topic = row_docs.get(label) or _DOCTOR_ROW_TOPICS.get(label)
         if not ok and topic is not None:
             # Under the label, not the marker: it belongs to the row's text.
             lines.append(f"  {' ' * _MARKER_WIDTH}More: {doc_url(topic)}")

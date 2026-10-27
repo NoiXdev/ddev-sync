@@ -281,6 +281,38 @@ def _from_wp_cli(context: ExecutionContext) -> RemoteCredentials:
     )
 
 
+TLS_DOC = "tls-certificate-verification-fails"
+
+
+def certificate_hint(stderr: str) -> str | None:
+    """The `verify_server_cert` hint when `stderr` is a certificate failure, else None."""
+    lowered = stderr.lower()
+    # The phrases the clients print for a certificate failure, not a bare
+    # "ssl": a host named `ssl-db` is not a TLS problem.
+    if not any(p in lowered for p in ("certificate", "ssl connection error", "tls/ssl error")):
+        return None
+    # The mysql clients verify the server certificate when the server offers
+    # TLS, and a self-signed one fails with a message that never mentions the
+    # setting that relaxes it.
+    return (
+        f"If the server's certificate is self-signed, set '{VERIFY_SERVER_CERT_KEY}: false' "
+        "in .ddev/ddev-sync.yaml (only appropriate for a server you trust, such as your own)."
+    )
+
+
+def remote_failure(message: str, stderr: str, *, doc: str | None = None) -> OperationError:
+    """The error for a failed remote mysql command, carrying the TLS hint and slug if it fits.
+
+    One place for every remote query (dump, table and column probes,
+    credential check), so a self-signed server gets the same hint whichever
+    of them meets it first.
+    """
+    hint = certificate_hint(stderr)
+    if hint is None:
+        return OperationError(message, doc=doc)
+    return OperationError(f"{message}\n{hint}", doc=TLS_DOC)
+
+
 class DbDumpOperation:
     """Streams `mysqldump` output from the remote straight into a local file."""
 
@@ -296,20 +328,7 @@ class DbDumpOperation:
             destination.unlink(missing_ok=True)
             stderr = redact(result.stderr, credentials.password).strip()
             message = f"the remote dump failed (exit {result.returncode}): {stderr}"
-            lowered = stderr.lower()
-            # The phrases the clients print for a certificate failure, not a
-            # bare "ssl": a host named `ssl-db` is not a TLS problem.
-            if any(p in lowered for p in ("certificate", "ssl connection error", "tls/ssl error")):
-                # mysqldump verifies the server certificate when the server
-                # offers TLS, and a self-signed one fails with a message that
-                # never mentions the setting that relaxes it.
-                raise OperationError(
-                    f"{message}\nIf the server's certificate is self-signed, set "
-                    f"'{VERIFY_SERVER_CERT_KEY}: false' in .ddev/ddev-sync.yaml "
-                    "(only appropriate for a server you trust, such as your own).",
-                    doc="tls-certificate-verification-fails",
-                )
-            raise OperationError(message)
+            raise remote_failure(message, stderr)
         if not dump_is_complete(destination):
             size = destination.stat().st_size
             destination.unlink(missing_ok=True)

@@ -170,6 +170,7 @@ def test_confirm_raises_a_clean_error_naming_the_subject_when_stdin_is_closed(
     message = str(caught.value)
     assert "a thing only this test names" in message
     assert "--yes" in message
+    assert caught.value.doc == "command-line"
 
 
 # --- redact: shared by operations/database.py and operations/preflight.py --

@@ -932,6 +932,20 @@ def test_a_failing_doctor_row_carries_its_link() -> None:
     assert sum("More:" in line for line in lines) == 1
 
 
+def test_a_doctor_row_prefers_the_slug_of_its_own_error() -> None:
+    report = PreflightReport(
+        ssh_ok=True,
+        remote_path_ok=True,
+        free_bytes=50 * 1024**3,
+        sanitize_tables_ok=False,
+        sanitize_tables_detail="could not list tables: certificate",
+        sanitize_tables_doc="tls-certificate-verification-fails",
+    )
+    output = render_doctor(report, _target())
+    assert "#tls-certificate-verification-fails" in output
+    assert "#required-table-is-missing" not in output
+
+
 def test_every_doctor_row_has_a_registered_topic() -> None:
     from ddev_sync.cli.render import _DOCTOR_ROW_TOPICS
     from ddev_sync.docs import TOPICS
