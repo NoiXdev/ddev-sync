@@ -13,6 +13,20 @@ composer require --no-interaction symfony/orm-pack
 export DATABASE_URL='mysql://db:db@ddev-mxfeatsymfony-db:3306/db?serverVersion=mariadb-11.0.0'
 
 mkdir -p migrations
+# doctrine/doctrine-migrations-bundle 3.7's recipe registers `App\Migrations`
+# in `src/Migrations`, where this recipe's `DoctrineMigrations` classes in
+# `migrations/` are not found ("there are no registered migrations"). The
+# files below are what a project that predates that recipe has, so the path
+# is pinned to them rather than the files moved to follow the recipe.
+cat > config/packages/doctrine_migrations.yaml <<'YAML'
+doctrine_migrations:
+    migrations_paths:
+        'DoctrineMigrations': '%kernel.project_dir%/migrations'
+YAML
+# The container the console compiled before this file existed is stale when the
+# file lands within the same second as that cache (mtime granularity), and the
+# migrate below then saw no migrations in some runs (intermittent; cache removed to be safe).
+rm -rf var/cache
 cat > migrations/Version20260101000000.php <<'PHP'
 <?php
 

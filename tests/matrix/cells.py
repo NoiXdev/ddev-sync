@@ -137,6 +137,24 @@ class EnvMarker:
 
 
 @dataclass(frozen=True)
+class FakeCheck:
+    """One user table whose `fake` rule the cell reads back after a sync.
+
+    `where` limits the rows to the ones the seed put there (a local admin the
+    CLI creates keeps its own address and is not the rule's business).
+    `names` pairs each faked name column with its kind (`name`, `first_name`,
+    `last_name`), because the kind decides which seed list the value must come
+    from. A table whose seed has no name to fake (Symfony and Drupal only fake
+    the address) lists none.
+    """
+
+    table: str
+    email: str
+    where: str
+    names: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
 class Cell:
     """One profile variant, installed for real and synced end to end.
 
@@ -237,7 +255,24 @@ class Cell:
     services: tuple[str, ...] = ()
     env_markers: tuple[EnvMarker, ...] = ()
     verified_row: bool = True
+    fakes: tuple[FakeCheck, ...] = ()
 
+
+LARAVEL_FAKES = (FakeCheck("users", "email", "`id` IN (1, 2)", (("name", "name"),)),)
+TYPO3_FAKES = (
+    FakeCheck(
+        "be_users",
+        "email",
+        "`username` IN ('editor.hofer', 'editor.kalb')",
+        (("realName", "name"),),
+    ),
+    FakeCheck(
+        "fe_users",
+        "email",
+        "`username` = 'visitor.hofer'",
+        (("first_name", "first_name"), ("last_name", "last_name"), ("name", "name")),
+    ),
+)
 
 # Every TYPO3 cell keeps the same cache tables, so they all plant the same row.
 TYPO3_FLUSH_MARKER = FlushMarker(
@@ -267,9 +302,10 @@ CELLS: tuple[Cell, ...] = (
         password_column=("users", "password"),
         production_url=None,
         truncated_tables=("sessions", "jobs", "failed_jobs"),
-        # Not `email`: the profile's sanitize rules rewrite it.
-        identity_column="name",
-        seeded_users=("Alice Hofer", "Bruno Kalb"),
+        # Not `name` or `email`: the profile's fake rule rewrites both.
+        identity_column="id",
+        seeded_users=("1", "2"),
+        fakes=LARAVEL_FAKES,
     ),
     Cell(
         name="mxdocker",
@@ -293,8 +329,9 @@ CELLS: tuple[Cell, ...] = (
         password_column=("users", "password"),
         production_url=None,
         truncated_tables=("sessions", "jobs", "failed_jobs"),
-        identity_column="name",
-        seeded_users=("Alice Hofer", "Bruno Kalb"),
+        identity_column="id",
+        seeded_users=("1", "2"),
+        fakes=LARAVEL_FAKES,
         services=("jump", "endpoint"),
         # This cell verifies a transport, not a profile's commands, and
         # `mxlaravel` already holds the `laravel` row with evidence about
@@ -329,8 +366,9 @@ CELLS: tuple[Cell, ...] = (
         password_column=("users", "password"),
         production_url=None,
         truncated_tables=("sessions", "jobs", "failed_jobs"),
-        identity_column="name",
-        seeded_users=("Alice Hofer", "Bruno Kalb"),
+        identity_column="id",
+        seeded_users=("1", "2"),
+        fakes=LARAVEL_FAKES,
         features=(
             FeatureCheck(
                 feature="node-build",
@@ -474,8 +512,9 @@ CELLS: tuple[Cell, ...] = (
         password_column=("users", "password"),
         production_url=None,
         truncated_tables=("sessions", "jobs", "failed_jobs"),
-        identity_column="name",
-        seeded_users=("Alice Hofer", "Bruno Kalb"),
+        identity_column="id",
+        seeded_users=("1", "2"),
+        fakes=LARAVEL_FAKES,
         features=(
             FeatureCheck(
                 feature="horizon",
@@ -534,6 +573,7 @@ CELLS: tuple[Cell, ...] = (
         production_url=None,
         identity_column="id",
         seeded_users=("1", "2"),
+        fakes=(FakeCheck("app_user", "email", "`id` IN (1, 2)"),),
         features=(
             FeatureCheck(
                 feature="symfony-search",
@@ -572,6 +612,7 @@ CELLS: tuple[Cell, ...] = (
         truncated_tables=("be_sessions", "sys_log", "fe_sessions"),
         identity_column="username",
         seeded_users=("editor.hofer", "editor.kalb"),
+        fakes=TYPO3_FAKES,
         flush_marker=TYPO3_FLUSH_MARKER,
     ),
     Cell(
@@ -592,6 +633,7 @@ CELLS: tuple[Cell, ...] = (
         truncated_tables=("be_sessions", "sys_log", "fe_sessions"),
         identity_column="username",
         seeded_users=("editor.hofer", "editor.kalb"),
+        fakes=TYPO3_FAKES,
         flush_marker=TYPO3_FLUSH_MARKER,
         features=(
             FeatureCheck(
@@ -644,6 +686,7 @@ CELLS: tuple[Cell, ...] = (
         truncated_tables=("be_sessions", "sys_log", "fe_sessions"),
         identity_column="username",
         seeded_users=("editor.hofer", "editor.kalb"),
+        fakes=TYPO3_FAKES,
         flush_marker=TYPO3_FLUSH_MARKER,
     ),
     Cell(
@@ -670,6 +713,7 @@ CELLS: tuple[Cell, ...] = (
         # login column to use instead.
         identity_column="id",
         seeded_users=("1", "2"),
+        fakes=(FakeCheck("app_user", "email", "`id` IN (1, 2)"),),
     ),
     Cell(
         name="mxwordpress",
@@ -692,6 +736,14 @@ CELLS: tuple[Cell, ...] = (
         # Not `user_email`: the profile's sanitize rules rewrite it.
         identity_column="user_login",
         seeded_users=("alice", "bruno"),
+        fakes=(
+            FakeCheck(
+                "mxwp_users",
+                "user_email",
+                "`user_login` IN ('alice', 'bruno')",
+                (("display_name", "name"),),
+            ),
+        ),
         # `wp config get` runs on production itself, so that host needs PHP; the
         # init script in `remote-init/` adds wp-cli on top of it.
         remote_packages="mariadb-client|rsync|php83|php83-phar|php83-mbstring|php83-openssl|php83-iconv|php83-ctype",
@@ -716,6 +768,7 @@ CELLS: tuple[Cell, ...] = (
         # Not `mail`: the profile's sanitize rules rewrite it.
         identity_column="name",
         seeded_users=("alice", "bruno"),
+        fakes=(FakeCheck("users_field_data", "mail", "`uid` IN (11, 12)"),),
         flush_marker=FlushMarker(
             table="cache_default",
             # `expire` -1 is Drupal's CACHE_PERMANENT, so only a flush removes it.

@@ -6,11 +6,15 @@ cells; the bodies are identical for every variant, which is what makes adding
 a cell three recipe files rather than a new test.
 """
 
+import contextlib
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 
 from ddev_sync.operations.catalog import LOCAL_ADMIN_PASSWORD
+from ddev_sync.operations.fake_seeds import FIRST_NAMES, LAST_NAMES
 from tests.matrix.cells import CELLS, Cell
 from tests.matrix.conftest import DEFAULT_MATRIX_IMAGE, image_under_test
 from tests.matrix.paths import cell_dir, remote_dir, work_dir
@@ -24,7 +28,12 @@ pytestmark = pytest.mark.matrix
 PRODUCTION_ADDRESS = re.compile(r"@acme-production\.example")
 # The local parts of the seeded addresses. A rule that rewrote only the domain
 # (`alice.hofer@example.invalid`) still leaks who the customer is.
-PRODUCTION_NAMES = re.compile(r"alice\.hofer|bruno\.kalb")
+PRODUCTION_NAMES = re.compile(r"alice\.hofer|bruno\.kalb|Alice Hofer|Bruno Kalb|Carla|Hofer|Kalb")
+# `first.last.<12 hex>@example.fake`: the realistic fake address
+# (`operations/fake.py`), whose suffix keeps a unique email column unique.
+FAKE_EMAIL = re.compile(r"^[a-z]+\.[a-z]+\.[0-9a-f]{12}@example\.fake$")
+# `user.<12 hex>@example.fake`: the same address with `disable_seeding` on.
+MASKED_EMAIL = re.compile(r"^user\.[0-9a-f]{12}@example\.fake$")
 # The first line of a printed plan, `  Plan for target 'production'        typo3@12`
 # (`cli/render.py::render_header`): the label of the profile variant the engine
 # resolved, which is what `Cell.profile` is the VERIFIED.md row key for.
@@ -165,6 +174,135 @@ def test_no_production_address_survives(stack: Stack, cell: Cell) -> None:
     )
 
 
+def _fake_rows(stack: Stack, cell: Cell) -> dict[str, list[list[str]]]:
+    """Every faked table's seeded rows as [email, *name columns], by table."""
+    rows: dict[str, list[list[str]]] = {}
+    for check in cell.fakes:
+        columns = ", ".join(
+            f"`{column}`" for column in (check.email, *(c for c, _k in check.names))
+        )
+        out = stack.sql(f"SELECT {columns} FROM `{check.table}` WHERE {check.where} ORDER BY 1")
+        rows[check.table] = [line.split("\t") for line in out.splitlines()]
+    return rows
+
+
+def test_the_faked_users_look_real_and_carry_no_production_data(stack: Stack, cell: Cell) -> None:
+    if not cell.fakes:
+        pytest.skip(f"{cell.profile} declares no user table to fake")
+    # Reads the state the whole sync left: re-importing here would drop what the
+    # setup step created and break the tests that read it after this one.
+    names_checked = 0
+    for check in cell.fakes:
+        rows = _fake_rows(stack, cell)[check.table]
+        assert rows, f"{check.table} holds none of the seeded rows ({check.where})"
+        for row in rows:
+            email = row[0]
+            assert email == "" or FAKE_EMAIL.match(email), (
+                f"{check.table}.{check.email} is not a fake address: {email!r}"
+            )
+            assert email != "", f"{check.table}.{check.email} was seeded and is now empty"
+            assert not PRODUCTION_ADDRESS.search(email) and not PRODUCTION_NAMES.search(email)
+            for (column, kind), value in zip(check.names, row[1:], strict=True):
+                assert not PRODUCTION_NAMES.search(value), (
+                    f"{check.table}.{column} still holds production data: {value!r}"
+                )
+                words = value.split(" ")
+                # The kind decides the seed list(s) the value is drawn from.
+                if kind == "first_name":
+                    assert value in FIRST_NAMES, f"{column}: {value!r} is not a seed first name"
+                elif kind == "last_name":
+                    assert value in LAST_NAMES, f"{column}: {value!r} is not a seed last name"
+                else:
+                    assert len(words) == 2, f"{column}: {value!r} is not 'First Last'"
+                    assert words[0] in FIRST_NAMES and words[1] in LAST_NAMES, (
+                        f"{column}: {value!r} is not drawn from the seed lists"
+                    )
+                names_checked += 1
+    # The email shape is asserted everywhere; a cell that names name columns
+    # must have had at least one of them read, or the seed lists went unproved.
+    if any(check.names for check in cell.fakes):
+        assert names_checked > 0
+
+
+def test_a_second_sync_gives_the_same_fake_values(stack: Stack, cell: Cell) -> None:
+    if cell.name != "mxlaravel":
+        pytest.skip("one cell proves determinism; the value is a function of table, column, key")
+    steps = ("--target", "production", "--steps", "db,sanitize", "--yes")
+    first = stack.engine(*steps)
+    assert first.returncode == 0, f"stdout:\n{first.stdout}\n\nstderr:\n{first.stderr}"
+    before = stack.sql("SELECT id, name, email FROM users ORDER BY id")
+    assert before.count("@example.fake") == 2, before
+    # The second run re-imports production's rows and fakes them again: equal
+    # values mean they depend on the row, not on the run.
+    second = stack.engine(*steps)
+    assert second.returncode == 0, f"stdout:\n{second.stdout}\n\nstderr:\n{second.stderr}"
+    assert stack.sql("SELECT id, name, email FROM users ORDER BY id") == before
+    _restore_whole_sync(stack)
+
+
+def _restore_whole_sync(stack: Stack) -> None:
+    """Put the shared stack back where `test_a_whole_sync_succeeds` left it.
+
+    A `db` re-import replaces the database with production's, which drops what
+    the setup step created (the migrated marker table); later tests read it.
+    """
+    result = stack.engine("--target", "production", "--steps", "db,files,sanitize,setup", "--yes")
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+
+
+@contextmanager
+def _local_layer(cell: Cell, text: str) -> Iterator[None]:
+    """A `.ddev/ddev-sync/local.yaml` for the duration of the block."""
+    layer = work_dir(cell.name) / ".ddev" / "ddev-sync" / "local.yaml"
+    layer.parent.mkdir(parents=True, exist_ok=True)
+    layer.write_text(f"version: 1\n{text}", encoding="utf-8")
+    try:
+        yield
+    finally:
+        layer.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            layer.parent.rmdir()
+
+
+def test_the_switches_skip_what_they_say(stack: Stack, cell: Cell) -> None:
+    if cell.name != "mxlaravel":
+        pytest.skip("the switches are generic engine behaviour; one real install shows them")
+    steps = ("--target", "production", "--steps", "db,sanitize", "--yes")
+
+    def run(setting: str) -> str:
+        with _local_layer(cell, f"sanitize:\n  {setting}: true\n"):
+            result = stack.engine(*steps)
+        assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+        return result.stdout + result.stderr
+
+    try:
+        output = run("disable_seeding")
+        emails = stack.sql("SELECT email FROM users ORDER BY id").splitlines()
+        assert len(emails) == 2 and all(MASKED_EMAIL.match(e) for e in emails), emails
+        assert "sanitize.disable_" not in output, output
+        names = stack.sql("SELECT name FROM users ORDER BY id").splitlines()
+        assert all(re.fullmatch(r"Name [0-9a-f]{8}", n) for n in names), names
+
+        output = run("disable_sanitize")
+        assert "sanitize.disable_sanitize is set in .ddev/ddev-sync/local.yaml" in output, output
+        assert "protective rules still did" in output, output
+        assert PRODUCTION_ADDRESS.search(stack.sql("SELECT email FROM users"))
+        hashes = stack.sql("SELECT password FROM users").splitlines()
+        assert len(hashes) == 2 and all("disabled" in h for h in hashes), hashes
+
+        output = run("disable_sanitize_all")
+        assert "sanitize.disable_sanitize_all is set in .ddev/ddev-sync/local.yaml" in output, (
+            output
+        )
+        assert "protective ones" in output, output
+        assert PRODUCTION_ADDRESS.search(stack.sql("SELECT email FROM users"))
+        hashes = stack.sql("SELECT password FROM users").splitlines()
+        assert len(hashes) == 2 and all(h.startswith("$2y$10$") for h in hashes), hashes
+    finally:
+        # Leave the shared stack as the whole sync left it, for the next test.
+        _restore_whole_sync(stack)
+
+
 def test_every_seeded_password_was_reset_to_the_profiles_value(stack: Stack, cell: Cell) -> None:
     if cell.password_column is None:
         pytest.skip(f"{cell.profile} declares no reset_passwords rule")
@@ -301,7 +439,7 @@ def test_a_placeholder_table_resolved_to_the_real_one(stack: Stack, cell: Cell) 
     # The effect, not just the exit status: `anonymize-users` rewrote the rows
     # of the resolved table.
     emails = stack.sql("SELECT email FROM app_user ORDER BY id").splitlines()
-    assert emails == ["user1@example.invalid", "user2@example.invalid"], emails
+    assert len(emails) == 2 and all(FAKE_EMAIL.match(email) for email in emails), emails
 
 
 def test_doctrine_migrate_applied_the_pending_migration(stack: Stack, cell: Cell) -> None:
@@ -377,13 +515,10 @@ def test_the_wordpress_prefix_read_from_production_reached_the_rules(
     logins = ", ".join(f"'{user}'" for user in cell.seeded_users)
     where = f"`{cell.identity_column}` IN ({logins})"
     # The effect of `anonymize-users` on the resolved table: every seeded row
-    # carries the rewritten address, and the rows are really there to be
-    # counted.
-    rewritten = stack.sql(
-        f"SELECT COUNT(*) FROM `{table}` "
-        f"WHERE {where} AND user_email = CONCAT('user', ID, '@example.invalid')"
-    )
-    assert rewritten == str(len(cell.seeded_users)), rewritten
+    # carries a fake address, and the rows are really there to be counted.
+    emails = stack.sql(f"SELECT user_email FROM `{table}` WHERE {where}").splitlines()
+    assert len(emails) == len(cell.seeded_users), emails
+    assert all(FAKE_EMAIL.match(email) for email in emails), emails
 
 
 def test_the_wordpress_admin_is_an_administrator_with_the_documented_password(
@@ -480,16 +615,17 @@ def test_drupal_rules_rewrote_users_field_data_not_users(stack: Stack, cell: Cel
     seeded = stack.remote_sql("SELECT uid, mail FROM users_field_data WHERE uid IN (11, 12)")
     assert seeded.returncode == 0, seeded.stderr
     assert "alice.hofer@acme-production.example" in seeded.stdout, seeded.stdout
-    # The effect of `anonymize-users`: `CONCAT('user', uid, '@example.invalid')`
-    # on the rows the cell seeded, and of `reset-user-passwords` on the column
-    # that table holds.
-    rewritten = stack.sql(
-        "SELECT uid, mail, pass FROM users_field_data WHERE uid IN (11, 12) ORDER BY uid"
-    ).splitlines()
-    assert rewritten == [
-        "11\tuser11@example.invalid\t$argon2i$disabled",
-        "12\tuser12@example.invalid\t$argon2i$disabled",
-    ], rewritten
+    # The effect of `anonymize-users`: a fake address on the rows the cell
+    # seeded, and of `reset-user-passwords` on the column that table holds.
+    rewritten = [
+        line.split("\t")
+        for line in stack.sql(
+            "SELECT uid, mail, pass FROM users_field_data WHERE uid IN (11, 12) ORDER BY uid"
+        ).splitlines()
+    ]
+    assert [row[0] for row in rewritten] == ["11", "12"], rewritten
+    assert all(FAKE_EMAIL.match(row[1]) for row in rewritten), rewritten
+    assert all(row[2] == "$argon2i$disabled" for row in rewritten), rewritten
     # `users` is where the import left it: the rules never touched it.
     uuids = stack.sql("SELECT uid, uuid, langcode FROM users WHERE uid IN (11, 12) ORDER BY uid")
     assert uuids.splitlines() == [
