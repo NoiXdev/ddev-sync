@@ -30,6 +30,21 @@ TABLES = ("fv7_shapes", "fv7_unique", "fv7_strict", "fv7_binary", "fv7_uuid", "f
 EMAIL = r"^[a-z]+\.[a-z]+\.[0-9a-f]{12}@example\.fake$"
 
 
+def seq(count: int) -> str:
+    """A derived table of the numbers 1..count in a column `seq`, on any server.
+
+    MariaDB's `seq_1_to_N` does not exist on MySQL, and a recursive CTE stops at
+    1000 levels by default; four cross-joined digit tables reach 10000 rows on
+    both.
+    """
+    digits = " UNION ALL ".join(f"SELECT {n} AS d" for n in range(10))
+    return (
+        f"(SELECT a.d + 10 * b.d + 100 * c.d + 1000 * e.d + 1 AS seq "
+        f"FROM ({digits}) a, ({digits}) b, ({digits}) c, ({digits}) e) numbers "
+        f"WHERE seq <= {count}"
+    )
+
+
 class SessionModeRunner:
     """Runs everything as `SubprocessRunner` does, with a session `sql_mode` set first.
 
@@ -133,9 +148,7 @@ def create_shapes(db: Db) -> None:
     db.execute(f"CREATE TABLE fv7_shapes (id INT PRIMARY KEY, {columns}, num INT NULL)")
     names = ", ".join(TEXT_COLUMNS)
     filled = ", ".join(f"'seed {column}'" for column in TEXT_COLUMNS)
-    db.execute(
-        f"INSERT INTO fv7_shapes (id, {names}, num) SELECT seq, {filled}, 7 FROM seq_1_to_200"
-    )
+    db.execute(f"INSERT INTO fv7_shapes (id, {names}, num) SELECT seq, {filled}, 7 FROM {seq(200)}")
     # Row 1000: every column NULL. Row 1001: every text column ''.
     db.execute("INSERT INTO fv7_shapes (id) VALUES (1000)")
     blanks = ", ".join("''" for _ in TEXT_COLUMNS)
@@ -213,7 +226,7 @@ def test_an_integer_column_holding_zero_is_faked_not_blanked(db: Db, tmp_path: P
 def test_five_thousand_rows_with_a_unique_email_column(db: Db, tmp_path: Path) -> None:
     db.execute("CREATE TABLE fv7_unique (id INT PRIMARY KEY, email VARCHAR(255) NOT NULL UNIQUE)")
     db.execute(
-        "INSERT INTO fv7_unique SELECT seq, CONCAT('real', seq, '@corp.example') FROM seq_1_to_5000"
+        f"INSERT INTO fv7_unique SELECT seq, CONCAT('real', seq, '@corp.example') FROM {seq(5000)}"
     )
     fake(tmp_path, "fv7_unique", {"email": "email"})
     assert db.rows("SELECT COUNT(*), COUNT(DISTINCT email) FROM fv7_unique") == [["5000", "5000"]]
@@ -223,7 +236,7 @@ def test_a_text_column_of_its_declared_length_updates_in_strict_mode(
     db: Db, tmp_path: Path
 ) -> None:
     db.execute("CREATE TABLE fv7_strict (id INT PRIMARY KEY, bio VARCHAR(40) NOT NULL)")
-    db.execute("INSERT INTO fv7_strict SELECT seq, 'real biography' FROM seq_1_to_300")
+    db.execute(f"INSERT INTO fv7_strict SELECT seq, 'real biography' FROM {seq(300)}")
     fake(
         tmp_path,
         "fv7_strict",
@@ -253,8 +266,8 @@ def test_strict_mode_really_refuses_a_value_that_is_too_long(db: Db, tmp_path: P
 def test_a_binary_key_works_and_is_stable(db: Db, tmp_path: Path) -> None:
     db.execute("CREATE TABLE fv7_binary (id BINARY(16) PRIMARY KEY, email VARCHAR(255) NOT NULL)")
     db.execute(
-        "INSERT INTO fv7_binary SELECT UNHEX(LPAD(HEX(seq), 32, '0')), 'real@corp.example' "
-        "FROM seq_1_to_300"
+        f"INSERT INTO fv7_binary SELECT UNHEX(LPAD(HEX(seq), 32, '0')), 'real@corp.example' "
+        f"FROM {seq(300)}"
     )
     fake(tmp_path, "fv7_binary", {"email": "email"})
     first = db.rows("SELECT HEX(id), email FROM fv7_binary ORDER BY id")
@@ -267,7 +280,7 @@ def test_a_binary_key_works_and_is_stable(db: Db, tmp_path: Path) -> None:
 
 def test_a_uuid_key_works_and_is_stable(db: Db, tmp_path: Path) -> None:
     db.execute("CREATE TABLE fv7_uuid (uuid CHAR(36) PRIMARY KEY, email VARCHAR(255) NOT NULL)")
-    db.execute("INSERT INTO fv7_uuid SELECT UUID(), 'real@corp.example' FROM seq_1_to_300")
+    db.execute(f"INSERT INTO fv7_uuid SELECT UUID(), 'real@corp.example' FROM {seq(300)}")
     fake(tmp_path, "fv7_uuid", {"email": "email"}, key="uuid")
     first = db.rows("SELECT uuid, email FROM fv7_uuid ORDER BY uuid")
     assert len({row[1] for row in first}) == 300
