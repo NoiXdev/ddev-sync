@@ -35,7 +35,7 @@ sanitize:
     # table prefix is configurable ($table_prefix in wp-config.php, default
     # `wp_`), so hardcoding `wp_users` here silently skipped every anonymise/
     # reset rule on any site that chose a different one - see
-    # profiles/VERIFIED.md's wordpress row. `requires_table` lets the Part 3
+    # profiles/VERIFIED.md's wordpress row. the fake rule's `table` lets the Part 3
     # preflight probe catch a wrong prefix before the dump, rather than
     # mid-sanitize with the database already imported.
     - name: anonymize-users

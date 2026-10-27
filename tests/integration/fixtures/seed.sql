@@ -1,12 +1,15 @@
 CREATE TABLE fe_users (
     uid   INT PRIMARY KEY,
     email VARCHAR(255) NOT NULL,
+    first_name VARCHAR(255) NOT NULL DEFAULT '',
+    last_name VARCHAR(255) NOT NULL DEFAULT '',
+    name VARCHAR(255) NOT NULL DEFAULT '',
     password VARCHAR(255) NOT NULL
 );
 
-INSERT INTO fe_users (uid, email, password) VALUES
-    (1, 'real.person@customer.example', '$argon2i$realhash'),
-    (2, 'another.person@customer.example', '$argon2i$realhash');
+INSERT INTO fe_users (uid, email, first_name, last_name, name, password) VALUES
+    (1, 'real.person@customer.example', 'Renate', 'Realperson', 'Renate Realperson', '$argon2i$realhash'),
+    (2, 'another.person@customer.example', 'Anton', 'Otherperson', 'Anton Otherperson', '$argon2i$realhash');
 
 -- profiles/typo3.yaml's `anonymize-be-users`/`reset-be-passwords` rules
 -- target this table; it has to exist with real-looking data for the rules
@@ -14,11 +17,12 @@ INSERT INTO fe_users (uid, email, password) VALUES
 CREATE TABLE be_users (
     uid   INT PRIMARY KEY,
     email VARCHAR(255) NOT NULL,
+    realName VARCHAR(255) NOT NULL DEFAULT '',
     password VARCHAR(255) NOT NULL
 );
 
-INSERT INTO be_users (uid, email, password) VALUES
-    (1, 'real.editor@customer.example', '$argon2i$realadminhash');
+INSERT INTO be_users (uid, email, realName, password) VALUES
+    (1, 'real.editor@customer.example', 'Edith Realeditor', '$argon2i$realadminhash');
 
 CREATE TABLE be_sessions (ses_id VARCHAR(32) PRIMARY KEY);
 INSERT INTO be_sessions (ses_id) VALUES ('abc123');

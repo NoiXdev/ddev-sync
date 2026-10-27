@@ -45,7 +45,7 @@ sanitize:
     # projects towards `users` or `app_user` because `user` is a reserved
     # word in PostgreSQL. A project whose entity table differs sets
     # `database.symfony_user_table` in .ddev/ddev-sync.yaml; see
-    # profiles/VERIFIED.md. `requires_table` on the sql rule lets the Part 3
+    # profiles/VERIFIED.md. the fake rule's `table` lets the Part 3
     # preflight probe catch a wrong name before the dump - this rule is
     # first in the list, so a silent failure here used to cost
     # reset-user-passwords and clear-messenger too, not just itself.

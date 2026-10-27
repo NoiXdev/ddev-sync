@@ -292,3 +292,59 @@ def test_every_profile_declares_an_anonymise_or_reset_rule_unless_opted_out(
         "If this profile genuinely has no user table, add it to _NO_USER_DATA here with "
         "a comment saying why."
     )
+
+
+# What each shipped profile fakes, written out so a renamed or dropped column
+# fails here rather than silently leaving a real value (or a wrong column)
+# behind. Login names are deliberately absent: faking them would lock people
+# out of the local site and they are not worth the trouble.
+_TYPO3_FAKES = {
+    "anonymize-fe-users": (
+        "fe_users",
+        "uid",
+        {"email": "email", "first_name": "first_name", "last_name": "last_name", "name": "name"},
+    ),
+    "anonymize-be-users": ("be_users", "uid", {"email": "email", "realName": "name"}),
+}
+_EXPECTED_FAKE_RULES: dict[str, dict[str, tuple[str, str, dict[str, str]]]] = {
+    "laravel": {"anonymize-users": ("users", "id", {"name": "name", "email": "email"})},
+    "symfony": {"anonymize-users": ("${SYMFONY_USER_TABLE}", "id", {"email": "email"})},
+    "wordpress": {
+        "anonymize-users": (
+            "${WP_TABLE_PREFIX}users",
+            "ID",
+            {"user_email": "email", "display_name": "name"},
+        )
+    },
+    "drupal": {"anonymize-users": ("users_field_data", "uid", {"mail": "email"})},
+    "typo3": _TYPO3_FAKES,
+    "shopware6": {
+        "anonymize-customers": (
+            "customer",
+            "id",
+            {"email": "email", "first_name": "first_name", "last_name": "last_name"},
+        )
+    },
+}
+_LOGIN_COLUMNS = {"user_login", "user_nicename", "username"}
+
+
+def _fake_rules(name: str, major: str | None) -> dict[str, tuple[str, str, dict[str, str]]]:
+    rules = REGISTRY.resolve(name, major).data.get("sanitize", {}).get("rules", [])
+    return {
+        rule["name"]: (rule["table"], rule.get("key", "id"), dict(rule["columns"]))
+        for rule in rules
+        if rule.get("operation") == "fake"
+    }
+
+
+@pytest.mark.parametrize(("name", "major"), variants())
+def test_the_fake_rules_name_exactly_the_expected_columns(name: str, major: str | None) -> None:
+    assert _fake_rules(name, major) == _EXPECTED_FAKE_RULES.get(name, {})
+
+
+@pytest.mark.parametrize(("name", "major"), variants())
+def test_no_fake_rule_lists_a_login_name_column(name: str, major: str | None) -> None:
+    for table, _key, columns in _fake_rules(name, major).values():
+        assert not _LOGIN_COLUMNS & set(columns)
+        assert not (table == "users_field_data" and "name" in columns)
