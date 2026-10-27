@@ -27,8 +27,9 @@ say() {
     printf 'ddev-sync-endpoint: %s\n' "$1"
 }
 
-# One positive integer. A name, an empty value or a float is a configuration
-# error, not something to round to a default.
+# One positive integer. Empty or unset means the default (33), applied before
+# this runs; a set value that is a name, a float or 0 is a configuration error,
+# not something to round to a default.
 is_id() {
     case "$1" in
         "" | *[!0-9]*) return 1 ;;

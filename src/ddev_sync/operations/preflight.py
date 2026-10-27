@@ -407,13 +407,20 @@ class PreflightOperation:
         if "closed by remote host" in stderr or "Connection reset" in stderr:
             # Not a refusal ssh can explain: a server that accepts the TCP
             # connection and then drops it is, far more often than a broken
-            # key, a ban for too many recent logins. Naming it saves a trip
+            # key, a server-side limit on recent logins. Naming it saves a trip
             # through key and port checks that cannot help.
+            docker_note = (
+                " Under provider: docker a reset can also mean the endpoint container "
+                "is not running; check 'docker logs' on the Docker host."
+                if context.target.provider is Provider.DOCKER
+                else ""
+            )
             return (
-                f"{context.target.host} closed the connection. The server's protection "
-                "against repeated logins (for example fail2ban) may have banned this "
-                "address for a while; waiting usually helps. ddev-sync already reuses "
-                f"one connection per run, so a single sync does not trigger it.\n{stderr.strip()}",
+                f"{context.target.host} closed the connection. Typical causes are the "
+                "server's limits on logins: sshd's MaxStartups or PerSourcePenalties, or "
+                "fail2ban banning this address; waiting usually helps. ddev-sync already "
+                f"reuses one connection per run, so a single sync does not trigger it.{docker_note}"
+                f"\n{stderr.strip()}",
                 "connection-closed-by-the-remote-host",
             )
         return (

@@ -26,7 +26,7 @@ ddev sync init
 ## Usage
 
 ```bash
-ddev sync             # run the whole sync for the default target
+ddev sync             # pick the target (if several) and the steps; db, files and sanitize are pre-ticked
 ddev sync --dry-run   # print the plan without executing anything
 ddev sync doctor      # check that a sync will work before it moves a byte
 ```

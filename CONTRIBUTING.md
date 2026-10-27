@@ -159,9 +159,16 @@ files — install, seed and the project configuration.
 ## Docs links
 
 Error messages end with a link to their entry on the troubleshooting page of the
-user docs. The link is built from the `ENTRIES` slugs. Adding a slug to `ENTRIES`
-means adding the same heading to the docs troubleshooting page and the slug to the
-docs repo's `src/data/ddev-sync-doc-slugs.json`, in the same release.
+user docs. The link is built from the `AREAS` and `ENTRIES` slugs. Adding a slug to
+either means adding the same heading or page to the docs and the slug to the docs
+repo's `src/data/ddev-sync-doc-slugs.json`, in the same release.
+
+Deploy the docs before the engine release that emits a new slug, so no error links
+to a heading that is not live yet.
+
+At each release, bump the hand-pinned versions in the docs (`installation.md`,
+`updating.md`, `docker-endpoint.md`, `docker-images.mdx`) and on the website
+project entry. `tools/set_version.py` does not reach those repos.
 
 ## A note on destructive operations
 

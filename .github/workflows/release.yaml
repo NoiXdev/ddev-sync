@@ -65,7 +65,7 @@ jobs:
       platforms: linux/amd64,linux/arm64
       # The only JSON file in this repository that holds a version, and the
       # one `compute-version` can read. tools/set_version.py writes the other
-      # four places from it, including pyproject.toml and uv.lock in their
+      # six places from it, including pyproject.toml and uv.lock in their
       # PEP 440 form.
       version_file: version.json
       version_script: tools/set_version.py

@@ -1308,10 +1308,28 @@ def test_a_closed_connection_names_rate_limits(tmp_path: Path, stderr: str) -> N
 
     message = str(refusal.value)
     assert "fail2ban" in message
+    assert "MaxStartups" in message
+    assert "PerSourcePenalties" in message
+    assert "docker logs" not in message
     assert "waiting" in message
     assert "one connection per run" in message
     assert stderr.strip() in message
     assert (doc_link(refusal.value) or "").endswith("#connection-closed-by-the-remote-host")
+
+
+def test_a_closed_connection_under_docker_points_at_the_endpoint_container(
+    tmp_path: Path,
+) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=255, stderr="Connection closed by remote host\n")
+    context = make_context(runner, tmp_path)
+    context = dataclasses.replace(
+        context, target=context.target.model_copy(update={"provider": Provider.DOCKER})
+    )
+    with pytest.raises(OperationError) as refusal:
+        PreflightOperation().execute(context, {})
+    assert "docker logs" in str(refusal.value)
+    assert "container is not running" in str(refusal.value)
 
 
 def test_the_table_probe_verifies_the_server_certificate_by_default(tmp_path: Path) -> None:
