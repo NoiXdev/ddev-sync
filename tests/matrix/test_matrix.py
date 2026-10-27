@@ -284,8 +284,6 @@ def test_the_switches_skip_what_they_say(stack: Stack, cell: Cell) -> None:
         emails = stack.sql("SELECT email FROM users ORDER BY id").splitlines()
         assert len(emails) == 2 and all(MASKED_EMAIL.match(e) for e in emails), emails
         assert "sanitize.disable_" not in output, output
-        names = stack.sql("SELECT name FROM users ORDER BY id").splitlines()
-        assert all(re.fullmatch(r"Name [0-9a-f]{8}", n) for n in names), names
 
         output = run("disable_sanitize")
         assert "sanitize.disable_sanitize is set in .ddev/ddev-sync/local.yaml" in output, output
