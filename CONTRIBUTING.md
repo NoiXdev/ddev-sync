@@ -15,6 +15,24 @@ uv run ddev-sync --help
 Docker is needed only for the three container-backed suites described below, and
 the add-on suite needs DDEV as well.
 
+### Installing the add-on from a checkout
+
+To work on the add-on itself, install from a checkout and point it at a local
+image. The two `.ddev/.env.local` lines go in the git-ignored file for
+machine-specific keys:
+
+```bash
+docker build -t ddev-sync:dev /path/to/ddev-sync
+cd /your/project
+ddev add-on get /path/to/ddev-sync
+printf 'DDEV_SYNC_IMAGE=ddev-sync\nDDEV_SYNC_VERSION=dev\n' >> .ddev/.env.local
+```
+
+The order matters. A pre-start hook runs on every project start and reads the
+image, so the image has to be built and `.ddev/.env.local` has to name it
+*before* the first `ddev restart`. Get it wrong and the whole project refuses to
+start, not just the sidecar. A published install has nothing to build or name.
+
 ### What a checkout cannot do
 
 `uv run ddev-sync` runs the engine as a process on your machine. Commands that
@@ -137,6 +155,13 @@ files — install, seed and the project configuration.
   else builds an argument vector and hands it to a `CommandRunner`, which is what
   lets the whole engine be tested without a network. A test parses every module and
   fails otherwise.
+
+## Docs links
+
+Error messages end with a link to their entry on the troubleshooting page of the
+user docs. The link is built from the `ENTRIES` slugs. Adding a slug to `ENTRIES`
+means adding the same heading to the docs troubleshooting page and the slug to the
+docs repo's `src/data/ddev-sync-doc-slugs.json`, in the same release.
 
 ## A note on destructive operations
 
