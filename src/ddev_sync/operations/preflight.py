@@ -777,10 +777,14 @@ def _first_missing_column_problem(
 ) -> str | None:
     """The message for the first fake column (or key column) the remote lacks, or `None`.
 
-    Names and the key are compared exactly as information_schema returned them.
-    A table with no pair in `columns` was not queried (missing or tolerated)
-    and is skipped.
+    Column names are compared case-insensitively: MySQL and MariaDB resolve a
+    column without regard to case on every platform, so `Email` in the schema
+    is the column a rule's backticked `email` updates. Table names stay exact
+    (their folding depends on the server's `lower_case_table_names`). A table
+    with no pair in `columns` was not queried (missing or tolerated) and is
+    skipped.
     """
+    present = {(table, column.lower()) for table, column in columns}
     queried = {table for table, _ in columns}
     for rule in _fake_rules(rules):
         table = str(_rule_table(rule))
@@ -789,7 +793,7 @@ def _first_missing_column_problem(
         key = str(rule.params.get("key") or "id")
         wanted = [key, *(c.column for c in parse_columns(rule.name, rule.params.get("columns")))]
         for column in wanted:
-            if (table, column) not in columns:
+            if (table, column.lower()) not in present:
                 role = "key column" if column == key else "column"
                 return (
                     f"sanitize rule {rule.name!r} names {role} {column!r} on table "

@@ -1391,6 +1391,14 @@ def test_present_columns_pass(tmp_path: Path) -> None:
     assert "--skip-column-names" in remote
 
 
+def test_column_names_are_compared_case_insensitively(tmp_path: Path) -> None:
+    # MySQL and MariaDB never distinguish column names by case, so `Email` in
+    # the schema satisfies a rule that says `email` (and the key the same way).
+    runner = _columns_runner("reservations\tID\nreservations\tEmail\n")
+    context = context_with_rules(runner, tmp_path, [_fake_rule(columns={"email": "email"})])
+    PreflightOperation().execute(context, {"sanitize_selected": True})
+
+
 def test_the_missing_column_message_says_how_to_replace_a_profile_rule(tmp_path: Path) -> None:
     runner = _columns_runner("reservations\tid\n")
     context = context_with_rules(runner, tmp_path, [_fake_rule(columns={"email": "email"})])
