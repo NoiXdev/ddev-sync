@@ -95,13 +95,27 @@ version: 1
 #   production_url: https://www.example.com
 #   # How the sanitize rules treat personal data (all default to off):
 #   # disable_seeding: true       # mask personal data instead of generating realistic values
-#   # disable_sanitize: true      # skip the personal-data rules only; other rules still run
-#   # disable_sanitize_all: true  # run no sanitize rule at all
+#   # disable_sanitize: true      # skip the personal-data rules only; other rules still run.
+#   #                             # Production personal data then stays on this machine.
+#   # disable_sanitize_all: true  # run no sanitize rule at all. Production personal data
+#   #                             # AND the password hashes stay on this machine.
 #   # email_domain: example.fake  # domain of faked emails (a rule's own email_domain wins)
 #   rules:
 #     # A `fake` rule replaces personal data with stable, realistic values.
-#     # `columns` maps a column to a kind (name, first_name, last_name, email,
-#     # text, integer, ...); `key` is the column the values derive from (default id).
+#     # `columns` maps a column to a kind; `key` is the column the values
+#     # derive from (default id). The kinds:
+#     #   name        "First Last"          first_name   "First"
+#     #   last_name   "Last"                email        first.last.<hex>@example.fake
+#     #   text        a sentence            integer      a number between min and max
+#     #   zip         a five-digit code     city         a city name
+#     #   phone       a +1 555 01xx number  ip           an address from a documentation range
+#     # A kind that takes settings is written in full instead of as one word:
+#     #   comment: { type: text, length: 80 }
+#     #   age:     { type: integer, min: 18, max: 90 }   # min and max are required
+#     #   address: { type: ip, version: 6 }              # 4 (the default) or 6
+#     # Settings: `length` (text; at most this many characters, default 255),
+#     # `min` / `max` (integer; whole numbers, min not above max), `version`
+#     # (ip). No other kind takes a setting.
 #     - name: fake-reservations
 #       operation: fake
 #       table: reservations
