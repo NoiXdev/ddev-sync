@@ -263,7 +263,10 @@ def resolve_target_name(explicit: str | None, project_root: Path, home: Path) ->
     described = describe_targets(project_root, home)
     names = sorted(described)
     if not names:
-        raise TargetError("no sync targets are defined; run 'ddev sync init' to create one")
+        raise TargetError(
+            "no sync targets are defined; run 'ddev sync init' to create one",
+            doc="no-targets-defined",
+        )
     chosen = choose_target(names, described)
     if chosen is None:
         raise DdevSyncError(

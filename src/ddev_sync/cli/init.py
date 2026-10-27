@@ -883,5 +883,6 @@ def _no_terminal() -> DdevSyncError:
         "'ddev sync init' asks its questions in a terminal, and none is attached, so "
         "there is nothing to ask and nothing was written. Run it from an interactive "
         f"shell, or add the target to {PROJECT_LABEL} by hand: the file the add-on "
-        "installed has a commented example."
+        "installed has a commented example.",
+        doc="no-terminal-for-init",
     )

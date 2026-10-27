@@ -291,7 +291,8 @@ def _pick_target_name(explicit: str | None, user_layers: list[LayerDoc]) -> str:
     names = list_target_names(collect_targets(user_layers))
     if not names:
         raise AmbiguousTargetError(
-            "no sync targets are defined; run 'ddev sync init' to create one"
+            "no sync targets are defined; run 'ddev sync init' to create one",
+            doc="no-targets-defined",
         )
     if len(names) == 1:
         return names[0]

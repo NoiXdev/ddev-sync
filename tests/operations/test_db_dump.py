@@ -7,6 +7,7 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import Layout, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
+from ddev_sync.docs import doc_link
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import (
     DUMP_FILENAME,
@@ -137,6 +138,7 @@ def test_a_missing_key_names_the_variable_and_the_file(tmp_path: Path) -> None:
     message = str(caught.value)
     assert "TYPO3_DB_USER" in message
     assert "/srv/app/.env" in message
+    assert (doc_link(caught.value) or "").endswith("#variable-missing-in-the-remote-env-file")
 
 
 def test_a_key_present_but_empty_names_the_variable_and_the_file(tmp_path: Path) -> None:
@@ -192,6 +194,7 @@ def test_explicit_credentials_missing_a_key_are_reported(tmp_path: Path) -> None
     assert ".ddev/ddev-sync/local.yaml" in message
     assert ".ddev/ddev-sync.local.yaml" not in message
     assert "ignores" in message or "ignored" in message
+    assert (doc_link(caught.value) or "").endswith("#database-credentials-missing")
 
 
 def test_an_unknown_credentials_source_lists_the_valid_ones(tmp_path: Path) -> None:
@@ -235,6 +238,7 @@ def test_no_environment_file_is_found_on_the_remote(tmp_path: Path) -> None:
     assert "no environment file found" in message
     assert "/srv/app/.env.local" in message
     assert "/srv/app/.env" in message
+    assert (doc_link(caught.value) or "").endswith("#no-environment-file-on-the-remote")
 
 
 def test_a_single_configured_env_file_is_treated_as_one_candidate(tmp_path: Path) -> None:
@@ -427,6 +431,30 @@ def test_a_failing_dump_reports_the_remote_error(tmp_path: Path) -> None:
     with pytest.raises(OperationError) as caught:
         DbDumpOperation().execute(make_context(runner, tmp_path), {})
     assert "Access denied" in str(caught.value)
+    # Not a certificate problem, so no TLS hint and no specific entry: the
+    # error falls back to the area of the module that raised it.
+    assert "verify_server_cert" not in str(caught.value)
+    assert (doc_link(caught.value) or "").endswith("#database")
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "ERROR 2026: TLS/SSL error: self-signed certificate in certificate chain",
+        "mysqldump: Got error: 2026: SSL connection error",
+    ],
+)
+def test_a_certificate_failure_names_verify_server_cert(tmp_path: Path, stderr: str) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout=f"/srv/app/.env.local\n{REMOTE_ENV}")
+    runner.script_prefix(["ssh"], returncode=2, stderr=stderr)
+    with pytest.raises(OperationError) as caught:
+        DbDumpOperation().execute(make_context(runner, tmp_path), {})
+    message = str(caught.value)
+    assert stderr in message
+    assert "database.verify_server_cert: false" in message
+    assert "self-signed" in message
+    assert (doc_link(caught.value) or "").endswith("#tls-certificate-verification-fails")
 
 
 def test_a_failing_dump_does_not_leave_a_partial_file_behind(tmp_path: Path) -> None:
@@ -490,6 +518,7 @@ def test_a_truncated_dump_is_refused_before_anything_is_imported(tmp_path: Path)
     message = str(caught.value)
     assert "incomplete" in message
     assert "Nothing was imported" in message
+    assert (doc_link(caught.value) or "").endswith("#dump-is-incomplete")
     assert not (context.downloads_dir / DUMP_FILENAME).exists()
 
 

@@ -115,7 +115,8 @@ def prepare_control_directory() -> None:
     ):
         raise DdevSyncError(
             f"{directory} holds this user's shared ssh connections, but it is not a "
-            "directory that only this user can enter. Remove it, and run the command again."
+            "directory that only this user can enter. Remove it, and run the command again.",
+            doc="shared-connection-directory",
         )
 
 

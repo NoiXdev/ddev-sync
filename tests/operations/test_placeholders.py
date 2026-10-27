@@ -6,6 +6,7 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
+from ddev_sync.docs import doc_link
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.placeholders import (
     expand_placeholders,
@@ -354,6 +355,7 @@ def test_production_url_without_the_key_names_it(tmp_path: Path) -> None:
         expand_value("${PRODUCTION_URL}", context)
     assert "sanitize.production_url" in str(error.value)
     assert "ddev sync init" in str(error.value)
+    assert (doc_link(error.value) or "").endswith("#production-url-not-set")
 
 
 def test_production_url_rejects_a_configured_value_that_is_unusable(tmp_path: Path) -> None:

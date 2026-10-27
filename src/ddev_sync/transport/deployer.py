@@ -122,7 +122,8 @@ def _dep_config(project: DdevProject, runner: CommandRunner) -> str:
         f"could not find Deployer in the web container: neither {_CANDIDATES[0]} "
         f"nor a `dep` on its PATH ran ({last_detail}); Deployer belongs in the "
         "project's require-dev, so install it with "
-        "'ddev composer require --dev deployer/deployer'"
+        "'ddev composer require --dev deployer/deployer'",
+        doc="deployer-not-found",
     )
 
 

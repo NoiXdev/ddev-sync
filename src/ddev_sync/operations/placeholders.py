@@ -195,7 +195,8 @@ def _resolve_production_url(context: ExecutionContext) -> str:
             f"could not resolve {PRODUCTION_URL_PLACEHOLDER}: {PRODUCTION_URL_CONFIG_KEY!r} is "
             "not set. It is the URL this site serves in production - the one a sanitize rule "
             "rewrites to the local DDEV address after the import. Set it in "
-            ".ddev/ddev-sync.yaml, or run 'ddev sync init', which asks for it."
+            ".ddev/ddev-sync.yaml, or run 'ddev sync init', which asks for it.",
+            doc="production-url-not-set",
         )
     problem = validate_production_url(configured)
     if problem is None:
@@ -204,7 +205,8 @@ def _resolve_production_url(context: ExecutionContext) -> str:
         f"could not resolve {PRODUCTION_URL_PLACEHOLDER}: {problem}. It is the URL this "
         "site serves in production - the one a sanitize rule rewrites to the local "
         f"DDEV address after the import. Set {PRODUCTION_URL_CONFIG_KEY!r} in "
-        ".ddev/ddev-sync.yaml, or run 'ddev sync init', which asks for it."
+        ".ddev/ddev-sync.yaml, or run 'ddev sync init', which asks for it.",
+        doc="production-url-not-set",
     )
 
 

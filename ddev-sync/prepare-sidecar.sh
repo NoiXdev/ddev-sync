@@ -59,8 +59,9 @@ announce_pull() {
   docker image inspect "$1" >/dev/null 2>&1 || echo "ddev-sync: $2" >&2
 }
 
-# fail MESSAGE [FILE [HINT]]: the message, FILE's content indented under it,
-# and a hint saying what to do about it. The message is printed before DDEV
+# fail MESSAGE [FILE [HINT [URL]]]: the message, FILE's content indented under it,
+# a hint saying what to do about it, and the docs entry that explains it as the
+# last line. The message is printed before DDEV
 # carries on: a failed pre-start hook does not abort the start (that is
 # `fail_on_hook_fail`, which is the user's to set), so DDEV's own error for the
 # same problem may follow it as the last line.
@@ -68,6 +69,7 @@ fail() {
   echo "ddev-sync: $1" >&2
   if [ -n "${2:-}" ] && [ -s "$2" ]; then sed 's/^/ddev-sync:   /' "$2" >&2; fi
   if [ -n "${3:-}" ]; then echo "ddev-sync: $3" >&2; fi
+  if [ -n "${4:-}" ]; then echo "ddev-sync: More: $4" >&2; fi
   exit 1
 }
 
@@ -188,7 +190,8 @@ if ! compose_out="$(cd "${approot}" && ddev debug compose-config 2>&1)"; then
   case "${compose_out}" in
     *ddev-ssh-agent_socket_dir*)
       fail "DDEV's ssh agent is switched off, and ddev-sync needs it: the sidecar authenticates to remote hosts through the agent DDEV forwards, and without it there is nothing to authenticate with." "" \
-        "Remove ddev-ssh-agent from omit_containers wherever it is listed: the global config (~/.ddev/global_config.yaml), .ddev/config.yaml, or a .ddev/config.*.yaml file. Edit the list rather than clearing it: 'ddev config global --omit-containers=' would also switch back on anything else omitted globally, such as ddev-router. Then start again."
+        "Remove ddev-ssh-agent from omit_containers wherever it is listed: the global config (~/.ddev/global_config.yaml), .ddev/config.yaml, or a .ddev/config.*.yaml file. Edit the list rather than clearing it: 'ddev config global --omit-containers=' would also switch back on anything else omitted globally, such as ddev-router. Then start again." \
+        "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#ssh-agent-switched-off"
       ;;
   esac
 fi
@@ -253,7 +256,8 @@ announce_pull "${image}" \
   "pulling ${image} to read its user database; this happens once per image..."
 docker run --rm --entrypoint cat "${image}" /etc/passwd > "${passwd_tmp}" 2>"${err_file}" \
   || fail "could not read /etc/passwd from the image ${image}. Docker said:" "${err_file}" \
-    "The project cannot start without it. Check that the image name and version are right (DDEV_SYNC_IMAGE and DDEV_SYNC_VERSION in .ddev/.env.local or .ddev/.env override the add-on's own defaults) and that Docker can reach the registry. To run against a local build instead: docker build -t ddev-sync:dev . from the ddev-sync checkout, and put DDEV_SYNC_IMAGE=ddev-sync and DDEV_SYNC_VERSION=dev in .ddev/.env.local or .ddev/.env."
+    "The project cannot start without it. Check that the image name and version are right (DDEV_SYNC_IMAGE and DDEV_SYNC_VERSION in .ddev/.env.local or .ddev/.env override the add-on's own defaults) and that Docker can reach the registry. To run against a local build instead: docker build -t ddev-sync:dev . from the ddev-sync checkout, and put DDEV_SYNC_IMAGE=ddev-sync and DDEV_SYNC_VERSION=dev in .ddev/.env.local or .ddev/.env." \
+    "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#sidecar-image-not-found"
 if [ "${uid}" != 0 ]; then
   # A line for this uid already in the image (1000 is common on Linux) would
   # win over the new one, because the first match is returned.

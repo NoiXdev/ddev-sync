@@ -70,21 +70,37 @@ def _validate_settings(rule_name: str, column: str, kind: str, settings: Mapping
     where = f"sanitize rule {rule_name!r}: column {column!r}"
     unknown = sorted(set(settings) - _ALLOWED_SETTINGS[kind])
     if unknown:
-        raise OperationError(f"{where}: unknown setting {unknown[0]!r} for kind {kind!r}")
+        raise OperationError(
+            f"{where}: unknown setting {unknown[0]!r} for kind {kind!r}",
+            doc="unknown-fake-kind-or-setting",
+        )
     if kind == "integer":
         if "min" not in settings or "max" not in settings:
-            raise OperationError(f"{where}: kind 'integer' needs both 'min' and 'max'")
+            raise OperationError(
+                f"{where}: kind 'integer' needs both 'min' and 'max'",
+                doc="unknown-fake-kind-or-setting",
+            )
         low, high = settings["min"], settings["max"]
         if not _is_int(low) or not _is_int(high):
-            raise OperationError(f"{where}: 'min' and 'max' must be integers")
+            raise OperationError(
+                f"{where}: 'min' and 'max' must be integers", doc="unknown-fake-kind-or-setting"
+            )
         if low > high:
-            raise OperationError(f"{where}: 'min' ({low}) is greater than 'max' ({high})")
+            raise OperationError(
+                f"{where}: 'min' ({low}) is greater than 'max' ({high})",
+                doc="unknown-fake-kind-or-setting",
+            )
     elif kind == "ip" and "version" in settings and settings["version"] not in (4, 6):
-        raise OperationError(f"{where}: 'version' must be 4 or 6")
+        raise OperationError(
+            f"{where}: 'version' must be 4 or 6", doc="unknown-fake-kind-or-setting"
+        )
     elif kind == "text" and "length" in settings:
         length = settings["length"]
         if not _is_int(length) or length < 1:
-            raise OperationError(f"{where}: 'length' must be an integer of at least 1")
+            raise OperationError(
+                f"{where}: 'length' must be an integer of at least 1",
+                doc="unknown-fake-kind-or-setting",
+            )
 
 
 def parse_columns(rule_name: str, raw: Any) -> list[FakeColumn]:
@@ -95,7 +111,10 @@ def parse_columns(rule_name: str, raw: Any) -> list[FakeColumn]:
     before a production dump is downloaded.
     """
     if not isinstance(raw, Mapping) or not raw:
-        raise OperationError(f"sanitize rule {rule_name!r}: 'columns' must be a non-empty mapping")
+        raise OperationError(
+            f"sanitize rule {rule_name!r}: 'columns' must be a non-empty mapping",
+            doc="unknown-fake-kind-or-setting",
+        )
     columns: list[FakeColumn] = []
     for name, spec in raw.items():
         column = str(name)
@@ -107,7 +126,8 @@ def parse_columns(rule_name: str, raw: Any) -> list[FakeColumn]:
         if not isinstance(kind, str) or kind not in KINDS:
             raise OperationError(
                 f"sanitize rule {rule_name!r}: column {column!r} has unknown kind {kind!r} "
-                f"(known: {', '.join(sorted(KINDS))})"
+                f"(known: {', '.join(sorted(KINDS))})",
+                doc="unknown-fake-kind-or-setting",
             )
         _validate_settings(rule_name, column, kind, settings)
         columns.append(FakeColumn(column=column, kind=kind, settings=settings))

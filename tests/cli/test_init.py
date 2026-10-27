@@ -1022,7 +1022,9 @@ def test_no_terminal_at_the_install_question_is_the_no_terminal_error(
     monkeypatch.setattr(init, "confirm_composer_install", lambda: None)
     script(monkeypatch, source=(DEPLOYER_SOURCE,), connection=(), stage=())
     assert invoke(project, tmp_path) == 1
-    assert "none is attached" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "none is attached" in err
+    assert "#no-terminal-for-init" in err
     assert _composer_installs(runner) == []
     assert not project_file.exists()
 

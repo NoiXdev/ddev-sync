@@ -6,6 +6,7 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
+from ddev_sync.docs import doc_link
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.catalog import _ADMIN_DRIVERS, LOCAL_ADMIN_PASSWORD
 from ddev_sync.operations.sanitize import SANITIZE_OPERATIONS, SanitizeOperation, parse_rules
@@ -150,6 +151,7 @@ def test_tolerate_missing_table_still_raises_on_a_different_error(tmp_path: Path
     with pytest.raises(OperationError) as caught:
         SanitizeOperation().execute(make_context(runner, tmp_path, **config), {})
     assert "Access denied" in str(caught.value)
+    assert (doc_link(caught.value) or "").endswith("#sanitize-rule-failed")
 
 
 def test_reset_passwords_sets_the_configured_value(tmp_path: Path) -> None:

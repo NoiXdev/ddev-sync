@@ -157,23 +157,27 @@ class PreflightOperation:
         context.progress(f"reaching {remote_endpoint(context.target)}")
         report, stderr = self._probe(context)
         if not report.ssh_ok:
-            raise OperationError(self._ssh_help(context, stderr))
+            message, slug = self._ssh_help(context, stderr)
+            raise OperationError(message, doc=slug)
         if report.path_readable is False:
             raise OperationError(
                 f"the path {context.target.path!r} exists on the far side but cannot be read. "
                 "Under provider: docker this is usually a uid mismatch - set the endpoint's "
                 "DDEV_SYNC_UID and DDEV_SYNC_GID to the ids that own the mounted volumes. "
-                "Left to the sync it would surface in the middle of the file transfer instead."
+                "Left to the sync it would surface in the middle of the file transfer instead.",
+                doc="remote-path-is-not-readable",
             )
         if not report.remote_path_ok:
             raise OperationError(
                 f"the deploy path {context.target.path!r} does not exist on "
-                f"{context.target.host}; check the target's 'path' setting"
+                f"{context.target.host}; check the target's 'path' setting",
+                doc="deploy-path-does-not-exist",
             )
         if report.free_bytes < MIN_FREE_BYTES:
             raise OperationError(
                 f"only {report.free_bytes // 1024**2} MB free on the project volume; "
-                f"a sync wants at least {MIN_FREE_BYTES // 1024**3} GB"
+                f"a sync wants at least {MIN_FREE_BYTES // 1024**3} GB",
+                doc="not-enough-free-space",
             )
         if bool(params.get("db_selected", False)):
             # Reported rather than raised by `check()`; here it must stop the
@@ -363,7 +367,8 @@ class PreflightOperation:
         return _clip(f"{host}: {_one_line_reason(stderr)}")
 
     @staticmethod
-    def _ssh_help(context: ExecutionContext, stderr: str) -> str:
+    def _ssh_help(context: ExecutionContext, stderr: str) -> tuple[str, str]:
+        """The message for a failed ssh probe, and the docs entry that explains it."""
         if (
             "REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr
             and context.target.provider is Provider.DOCKER
@@ -378,7 +383,8 @@ class PreflightOperation:
                 "Under provider: docker a redeploy that dropped the endpoint's "
                 "host-key volume looks exactly like this; check that the volume "
                 "mounted at /etc/ssh/keys survived, then remove the stale "
-                f"known_hosts entry.\n{stderr.strip()}"
+                f"known_hosts entry.\n{stderr.strip()}",
+                "host-key-changed",
             )
         if "administratively prohibited" in stderr:
             # ProxyJump opens its hop with stdio forwarding, which a hardened
@@ -388,12 +394,31 @@ class PreflightOperation:
             return (
                 "the host in between refused to forward the connection. "
                 "A jump host needs 'AllowTcpForwarding yes' in its sshd_config; "
-                f"many hardened images ship 'no'.\n{stderr.strip()}"
+                f"many hardened images ship 'no'.\n{stderr.strip()}",
+                "jump-host-refuses-to-forward",
+            )
+        if "closed by remote host" in stderr or "Connection reset" in stderr:
+            # Not a refusal ssh can explain: a server that accepts the TCP
+            # connection and then drops it is, far more often than a broken
+            # key, a ban for too many recent logins. Naming it saves a trip
+            # through key and port checks that cannot help.
+            return (
+                f"{context.target.host} closed the connection. The server's protection "
+                "against repeated logins (for example fail2ban) may have banned this "
+                "address for a while; waiting usually helps. ddev-sync already reuses "
+                f"one connection per run, so a single sync does not trigger it.\n{stderr.strip()}",
+                "connection-closed-by-the-remote-host",
             )
         return (
             f"cannot reach {context.target.host} over ssh. "
             "Run 'ddev auth ssh' and try again, or check the target's host, "
-            f"user and port.\n{stderr.strip()}"
+            f"user and port.\n{stderr.strip()}",
+            # The other changed-key variant: ssh's own warning is the message
+            # (the text below it is unchanged), but the entry that explains it
+            # is the host-key one, not the generic "cannot reach".
+            "host-key-changed"
+            if "REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr
+            else "cannot-reach-the-host-over-ssh",
         )
 
     @staticmethod
@@ -419,10 +444,11 @@ class PreflightOperation:
             return
         tables = _remote_tables(context)
         problem = _first_missing_table_problem(context, required, tables)
-        if problem is None:
-            problem = _column_problem(context, rules, tables)
         if problem is not None:
-            raise OperationError(problem)
+            raise OperationError(problem, doc="required-table-is-missing")
+        problem = _column_problem(context, rules, tables)
+        if problem is not None:
+            raise OperationError(problem, doc="column-named-by-a-fake-rule-is-missing")
 
     @staticmethod
     def _check_credentials(

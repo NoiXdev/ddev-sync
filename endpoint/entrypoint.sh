@@ -15,8 +15,11 @@ HOST_KEY=/etc/ssh/keys/ssh_host_ed25519_key
 MOUNTED_KEYS=/etc/ddev-sync/authorized_keys
 COMPOSED_KEYS=/run/ddev-sync/authorized_keys
 
+# refuse MESSAGE [URL]: the message, then the docs entry that explains it as
+# the last line, so it is the one a log reader ends on.
 refuse() {
     printf 'ddev-sync-endpoint: %s\n' "$1" >&2
+    if [ -n "${2:-}" ]; then printf 'ddev-sync-endpoint: More: %s\n' "$2" >&2; fi
     exit 1
 }
 
@@ -35,8 +38,8 @@ is_id() {
 
 uid="${DDEV_SYNC_UID:-33}"
 gid="${DDEV_SYNC_GID:-33}"
-is_id "$uid" || refuse "DDEV_SYNC_UID=${uid}: the endpoint runs its sessions as this uid and will not run them as root or under a name. Set it to the numeric uid that owns the application files this stack mounts here."
-is_id "$gid" || refuse "DDEV_SYNC_GID=${gid}: the endpoint runs its sessions with this gid and will not run them as the root group or under a name. Set it to the numeric gid that owns the application files this stack mounts here."
+is_id "$uid" || refuse "DDEV_SYNC_UID=${uid}: the endpoint runs its sessions as this uid and will not run them as root or under a name. Set it to the numeric uid that owns the application files this stack mounts here." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-uid-or-gid"
+is_id "$gid" || refuse "DDEV_SYNC_GID=${gid}: the endpoint runs its sessions with this gid and will not run them as the root group or under a name. Set it to the numeric gid that owns the application files this stack mounts here." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-uid-or-gid"
 
 # Rewritten in place rather than recreated with `adduser`: the uid or gid a
 # stack asks for may already belong to one of the image's own system accounts
@@ -49,7 +52,7 @@ is_id "$gid" || refuse "DDEV_SYNC_GID=${gid}: the endpoint runs its sessions wit
 sed -i "s|^${ACCOUNT}:x:[0-9]*:[0-9]*:|${ACCOUNT}:x:${uid}:${gid}:|" /etc/passwd
 sed -i "s|^${ACCOUNT}:x:[0-9]*:|${ACCOUNT}:x:${gid}:|" /etc/group
 [ "$(id -u "$ACCOUNT")" = "$uid" ] && [ "$(id -g "$ACCOUNT")" = "$gid" ] ||
-    refuse "could not give ${ACCOUNT} uid ${uid} and gid ${gid}"
+    refuse "could not give ${ACCOUNT} uid ${uid} and gid ${gid}" "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-uid-or-gid"
 chown "${uid}:${gid}" "$HOME_DIR"
 
 # A union of both sources, not a choice between them: they are two places to
@@ -74,14 +77,14 @@ fi
 # question: an endpoint with a comment-only key file would listen, be
 # reachable, and be impossible to enter.
 grep -qE '^[[:space:]]*[^#[:space:]]' "$COMPOSED_KEYS" ||
-    refuse "no authorized keys. Set DDEV_SYNC_AUTHORIZED_KEYS, or mount a key file at ${MOUNTED_KEYS}, or both - the endpoint does not start without one."
+    refuse "no authorized keys. Set DDEV_SYNC_AUTHORIZED_KEYS, or mount a key file at ${MOUNTED_KEYS}, or both - the endpoint does not start without one." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#no-authorized-keys"
 # And they have to *be* keys. A key pasted with CRLF line endings, or
 # truncated by a mangled multi-line secret, passes the check above and
 # produces the one state worth refusing outright: an endpoint that listens, is
 # reachable, and cannot be entered. `ssh-keygen -l` is already in this image
 # for the host key, so this costs nothing it does not already carry.
 ssh-keygen -l -f "$COMPOSED_KEYS" > /dev/null 2>&1 ||
-    refuse "the authorized keys are not readable as public keys. Check for truncated lines or CRLF line endings in DDEV_SYNC_AUTHORIZED_KEYS and ${MOUNTED_KEYS}."
+    refuse "the authorized keys are not readable as public keys. Check for truncated lines or CRLF line endings in DDEV_SYNC_AUTHORIZED_KEYS and ${MOUNTED_KEYS}." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#no-authorized-keys"
 
 # Said out loud either way: a developer whose connection was just refused as a
 # changed host key needs to know whether this container generated a new one.

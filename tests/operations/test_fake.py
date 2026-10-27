@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 
+from ddev_sync.docs import doc_link
 from ddev_sync.operations.base import OperationError
 from ddev_sync.operations.fake import (
     DEFAULT_EMAIL_DOMAIN,
@@ -65,8 +66,9 @@ def test_valid_settings_parse() -> None:
     ],
 )
 def test_bad_columns_are_refused(raw: Any) -> None:
-    with pytest.raises(OperationError, match="'myrule'"):
+    with pytest.raises(OperationError, match="'myrule'") as caught:
         parse_columns("myrule", raw)
+    assert (doc_link(caught.value) or "").endswith("#unknown-fake-kind-or-setting")
 
 
 def test_null_and_empty_stay_as_they_are() -> None:

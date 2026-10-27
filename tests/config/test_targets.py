@@ -14,6 +14,7 @@ from ddev_sync.config.targets import (
     list_target_names,
     resolve_target,
 )
+from ddev_sync.docs import doc_link
 from ddev_sync.errors import ConfigError, TargetError
 
 
@@ -365,6 +366,7 @@ def test_an_unknown_target_lists_the_ones_that_exist() -> None:
     message = str(caught.value)
     assert "prod" in message
     assert "production, staging" in message
+    assert (doc_link(caught.value) or "").endswith("#unknown-target")
 
 
 def test_extending_a_target_that_does_not_exist_names_both() -> None:
@@ -857,10 +859,11 @@ def test_a_docker_target_without_a_sync_port_is_refused() -> None:
     """Without it the port would fall back to 22 and the sync would meet the
     *host's* sshd as the endpoint user: a plausible connection to the wrong
     machine, which is worse than no connection."""
-    with pytest.raises(TargetError, match="sync_port"):
+    with pytest.raises(TargetError, match="sync_port") as caught:
         resolve_one(
             {"provider": "docker", "host": "prod.example", "path": "/data/", "stage": "production"}
         )
+    assert (doc_link(caught.value) or "").endswith("#sync-port-missing")
 
 
 def test_a_docker_target_with_an_explicit_jump_host_is_refused() -> None:

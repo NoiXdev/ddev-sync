@@ -107,7 +107,8 @@ def _from_config(context: ExecutionContext) -> RemoteCredentials:
             f"database.credentials is missing {', '.join(missing)}; they are "
             "secrets, so set them in .ddev/ddev-sync/local.yaml rather than the "
             "project file - the add-on's shipped .gitignore already ignores "
-            "that path"
+            "that path",
+            doc="database-credentials-missing",
         )
     return RemoteCredentials(**values)
 
@@ -123,7 +124,10 @@ def _from_remote_env(context: ExecutionContext) -> RemoteCredentials:
     values: dict[str, str] = {}
     for field_name, variable in mapping.items():
         if not parsed.get(variable):
-            raise OperationError(f"{variable} is not set in {path} on {context.target.host}")
+            raise OperationError(
+                f"{variable} is not set in {path} on {context.target.host}",
+                doc="variable-missing-in-the-remote-env-file",
+            )
         values[field_name] = parsed[variable]
     return RemoteCredentials(**values)
 
@@ -188,7 +192,8 @@ def _fetch_first_env_file(context: ExecutionContext, candidates: list[str]) -> t
     if not result.ok:
         looked = ", ".join(paths)
         raise OperationError(
-            f"no environment file found on {context.target.host}; looked at: {looked}"
+            f"no environment file found on {context.target.host}; looked at: {looked}",
+            doc="no-environment-file-on-the-remote",
         )
     first_line, _, body = result.stdout.partition("\n")
     return first_line.strip(), body
@@ -254,7 +259,8 @@ def _from_wp_cli(context: ExecutionContext) -> RemoteCredentials:
             "literal for wp-cli to read back. Set 'database.wp_table_prefix' in "
             ".ddev/ddev-sync.yaml to supply the table prefix directly, and "
             "'database.remote_credentials: explicit' with 'database.credentials' "
-            "for the database connection itself."
+            "for the database connection itself.",
+            doc="wp-cli-cannot-read-wp-config",
         )
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     expected = (*_WP_CREDENTIAL_KEYS, "table_prefix")
@@ -288,16 +294,26 @@ class DbDumpOperation:
         result = context.runner.run(argv, stdout_path=destination)
         if not result.ok:
             destination.unlink(missing_ok=True)
-            raise OperationError(
-                f"the remote dump failed (exit {result.returncode}): "
-                f"{redact(result.stderr, credentials.password).strip()}"
-            )
+            stderr = redact(result.stderr, credentials.password).strip()
+            message = f"the remote dump failed (exit {result.returncode}): {stderr}"
+            if "certificate" in stderr.lower() or "ssl" in stderr.lower():
+                # mysqldump verifies the server certificate when the server
+                # offers TLS, and a self-signed one fails with a message that
+                # never mentions the setting that relaxes it.
+                raise OperationError(
+                    f"{message}\nIf the server's certificate is self-signed, set "
+                    f"'{VERIFY_SERVER_CERT_KEY}: false' in .ddev/ddev-sync.yaml "
+                    "(only appropriate for a server you trust, such as your own).",
+                    doc="tls-certificate-verification-fails",
+                )
+            raise OperationError(message)
         if not dump_is_complete(destination):
             size = destination.stat().st_size
             destination.unlink(missing_ok=True)
             raise OperationError(
                 f"the dump is incomplete ({size} bytes, no completion marker) - "
-                "the connection probably dropped. Nothing was imported; run the sync again."
+                "the connection probably dropped. Nothing was imported; run the sync again.",
+                doc="dump-is-incomplete",
             )
 
 
@@ -411,7 +427,10 @@ class DbImportOperation:
                 "the db.dump step has to run before db.import"
             )
         if not dump_is_complete(dump):
-            raise OperationError(f"{dump} is incomplete; delete it and run the sync again")
+            raise OperationError(
+                f"{dump} is incomplete; delete it and run the sync again",
+                doc="dump-is-incomplete",
+            )
 
         database = context.config("database.target_database", default="db")
         # `_recreate` first, because it is where the "this will drop the local

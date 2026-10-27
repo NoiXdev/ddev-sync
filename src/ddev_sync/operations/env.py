@@ -270,7 +270,10 @@ class EnvRewriteOperation:
             if str(name) in existing:
                 return context.local(str(name))
         looked = ", ".join(str(context.local(str(name))) for name in candidates)
-        raise OperationError(f"no environment file found in the project; looked at: {looked}")
+        raise OperationError(
+            f"no environment file found in the project; looked at: {looked}",
+            doc="no-environment-file-in-the-project",
+        )
 
     @staticmethod
     def _declared_across_candidates(

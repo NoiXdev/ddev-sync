@@ -6,6 +6,7 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
+from ddev_sync.docs import doc_link
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import LOCAL_DB_TLS_OPTION
 from ddev_sync.operations.sanitize import (
@@ -205,6 +206,7 @@ def test_tolerate_missing_table_still_raises_on_a_different_sql_error(tmp_path: 
     message = str(caught.value)
     assert "clear-scheduler-tasks" in message
     assert "Access denied" in message
+    assert (doc_link(caught.value) or "").endswith("#sanitize-rule-failed")
 
 
 def test_tolerate_missing_table_is_accepted_on_an_operation_rule(tmp_path: Path) -> None:
@@ -435,6 +437,7 @@ def test_a_non_boolean_switch_is_refused(tmp_path: Path, key: str) -> None:
     with pytest.raises(OperationError) as caught:
         active_rules(context)
     assert f"sanitize.{key} must be true or false" in str(caught.value)
+    assert (doc_link(caught.value) or "").endswith("#malformed-sanitize-switch")
 
 
 def test_the_sanitize_step_runs_only_active_rules(tmp_path: Path) -> None:

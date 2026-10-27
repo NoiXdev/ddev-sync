@@ -9,7 +9,8 @@ from ddev_sync.cli.context import RunContext, build_context
 from ddev_sync.cli.main import main
 from ddev_sync.cli.reporter import ConsoleReporter
 from ddev_sync.config.merge import MergeResult
-from ddev_sync.errors import DdevSyncError
+from ddev_sync.docs import doc_link
+from ddev_sync.errors import DdevSyncError, TargetError
 from ddev_sync.operations.base import discard_progress
 from ddev_sync.transport.fake import FakeCommandRunner
 from ddev_sync.transport.runner import CommandResult, SubprocessRunner
@@ -978,6 +979,16 @@ def test_dep_config_runs_once_even_when_the_target_fails_to_resolve(
     assert code == 1
     assert "is missing stage" in capsys.readouterr().err
     assert len(dep_runs) == 1
+
+
+def test_picking_a_target_when_none_is_defined_points_at_init(
+    project: Path, tmp_path: Path
+) -> None:
+    (project / ".ddev" / "ddev-sync.yaml").write_text("version: 1\n", encoding="utf-8")
+    with pytest.raises(TargetError) as caught:
+        commands.resolve_target_name(None, project, tmp_path / "home")
+    assert "ddev sync init" in str(caught.value)
+    assert (doc_link(caught.value) or "").endswith("#no-targets-defined")
 
 
 def test_describe_targets_shows_a_deployer_block_as_a_declaration(

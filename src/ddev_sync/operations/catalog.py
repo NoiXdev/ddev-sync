@@ -53,7 +53,10 @@ def _run_sql(context: ExecutionContext, rule: SanitizeRule, sql: str) -> None:
         return
     if rule.tolerate_missing_table and is_missing_table_error(result.stderr):
         return
-    raise OperationError(f"sanitize rule {rule.name!r} failed: {result.stderr.strip()}")
+    raise OperationError(
+        f"sanitize rule {rule.name!r} failed: {result.stderr.strip()}",
+        doc="sanitize-rule-failed",
+    )
 
 
 EMAIL_DOMAIN_KEY = "sanitize.email_domain"

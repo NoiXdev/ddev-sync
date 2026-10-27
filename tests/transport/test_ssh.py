@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from ddev_sync.config.models import Provider, ResolvedTarget, Stage
+from ddev_sync.docs import doc_link
 from ddev_sync.errors import DdevSyncError
 from ddev_sync.transport import ssh
 from ddev_sync.transport.ssh import (
@@ -538,8 +539,9 @@ def test_a_control_directory_others_could_use_is_refused(
     directory = tmp_path / "ddev-sync-501"
     make(directory)
     monkeypatch.setattr(ssh, "control_directory", lambda: directory)
-    with pytest.raises(DdevSyncError, match="only this user"):
+    with pytest.raises(DdevSyncError, match="only this user") as caught:
         ssh.prepare_control_directory()
+    assert (doc_link(caught.value) or "").endswith("#shared-connection-directory")
 
 
 def test_a_control_directory_owned_by_someone_else_is_refused(
@@ -550,5 +552,6 @@ def test_a_control_directory_owned_by_someone_else_is_refused(
     monkeypatch.setattr(ssh, "control_directory", lambda: directory)
     someone_else = os.getuid() + 1
     monkeypatch.setattr(os, "getuid", lambda: someone_else)
-    with pytest.raises(DdevSyncError, match="only this user"):
+    with pytest.raises(DdevSyncError, match="only this user") as caught:
         ssh.prepare_control_directory()
+    assert (doc_link(caught.value) or "").endswith("#shared-connection-directory")

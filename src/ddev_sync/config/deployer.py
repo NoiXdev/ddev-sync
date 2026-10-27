@@ -98,7 +98,8 @@ def _select(hosts: dict[str, Any], alias: str | None) -> tuple[str, dict[str, An
         if len(hosts) > 1:
             raise DeployerError(
                 f"Deployer declares several hosts ({found}); "
-                "name the one to use with `deployer: {host: <alias>}`"
+                "name the one to use with `deployer: {host: <alias>}`",
+                doc="several-deployer-hosts",
             )
         name = next(iter(hosts))
     elif alias not in hosts:

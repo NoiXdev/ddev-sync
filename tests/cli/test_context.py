@@ -6,6 +6,7 @@ import pytest
 from ddev_sync.cli.context import build_context, resolve_project
 from ddev_sync.config.loader import PROJECT_LABEL
 from ddev_sync.ddev.project import read_ddev_project
+from ddev_sync.docs import doc_link
 from ddev_sync.errors import ConfigError, TargetError
 from ddev_sync.transport.deployer import make_deployer_resolver
 from ddev_sync.transport.fake import FakeCommandRunner
@@ -96,6 +97,7 @@ def test_no_targets_at_all_points_at_the_wizard(project: Path, tmp_path: Path) -
             profile_root=PROFILE_ROOT,
         )
     assert "ddev sync init" in str(caught.value)
+    assert (doc_link(caught.value) or "").endswith("#no-targets-defined")
 
 
 def test_the_type_flag_overrides_the_ddev_type(project: Path, tmp_path: Path) -> None:

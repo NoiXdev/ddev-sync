@@ -6,6 +6,7 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
+from ddev_sync.docs import doc_link
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.env import (
     BLOCK_END,
@@ -590,8 +591,9 @@ def test_a_default_does_not_invent_an_env_file(tmp_path: Path) -> None:
         tmp_path,
         env={"file": [".env"], "strategy": "patch_keys", "default": {"CACHE_STORE": "file"}},
     )
-    with pytest.raises(OperationError, match="no environment file found"):
+    with pytest.raises(OperationError, match="no environment file found") as caught:
         EnvRewriteOperation().execute(context, {})
+    assert (doc_link(caught.value) or "").endswith("#no-environment-file-in-the-project")
     assert list(tmp_path.iterdir()) == []
 
 

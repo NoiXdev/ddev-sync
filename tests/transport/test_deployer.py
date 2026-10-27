@@ -6,6 +6,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from ddev_sync.docs import doc_link
 from ddev_sync.errors import DeployerError, DeployerNotFound
 from ddev_sync.transport.deployer import WAITING_FOR_DEP_CONFIG, make_deployer_resolver
 from ddev_sync.transport.fake import FakeCommandRunner
@@ -190,6 +191,7 @@ def test_neither_candidate_found_carries_the_last_attempts_words() -> None:
     assert isinstance(error.value, DeployerNotFound)
     assert "could not find Deployer" in message
     assert "no such file or directory" in message
+    assert (doc_link(error.value) or "").endswith("#deployer-not-found")
 
 
 def test_listing_the_hosts_fails_like_resolving_when_dep_fails() -> None:

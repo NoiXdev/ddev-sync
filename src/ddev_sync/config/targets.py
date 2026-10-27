@@ -209,7 +209,9 @@ def resolve_target(
 def _extends_chain(name: str, collected: Mapping[str, CollectedTarget]) -> list[TargetSpec]:
     if name not in collected:
         known = ", ".join(sorted(collected)) or "none"
-        raise TargetError(f"unknown target {name!r}; defined targets: {known}")
+        raise TargetError(
+            f"unknown target {name!r}; defined targets: {known}", doc="unknown-target"
+        )
 
     chain: list[TargetSpec] = []
     seen: list[str] = []
@@ -345,7 +347,8 @@ def _build(
                 f"target {name!r} (from {source}) uses provider: docker but sets no sync_port; "
                 "without it the connection would fall back to port 22 and meet the Docker "
                 "host's own sshd as the endpoint user - set sync_port to the port the stack "
-                "publishes the endpoint on"
+                "publishes the endpoint on",
+                doc="sync-port-missing",
             )
         if "jump_host" in flattened:
             raise TargetError(

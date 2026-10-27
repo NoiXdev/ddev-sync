@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from ddev_sync.config.deployer import _QUOTED_OUTPUT_LIMIT, list_dep_hosts, parse_dep_config
+from ddev_sync.docs import doc_link
 from ddev_sync.errors import DeployerError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dep-config-t3-13-ssg.json"
@@ -33,6 +34,14 @@ def _failure(payload: str, alias: str | None = None) -> str:
     with pytest.raises(DeployerError) as error:
         parse_dep_config(payload, alias)
     return str(error.value)
+
+
+def test_several_hosts_without_a_named_alias_link_to_their_entry() -> None:
+    data = json.loads(_fixture())
+    host, cfg = next(iter(data.items()))
+    with pytest.raises(DeployerError) as error:
+        parse_dep_config(json.dumps({host: cfg, "staging.example": cfg}), None)
+    assert (doc_link(error.value) or "").endswith("#several-deployer-hosts")
 
 
 def test_it_reads_the_four_connection_values_from_real_output() -> None:

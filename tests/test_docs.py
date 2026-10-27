@@ -1,7 +1,9 @@
 import re
+from pathlib import Path
 
 import pytest
 
+from ddev_sync.cli import render
 from ddev_sync.docs import AREAS, ENTRIES, TOPICS, doc_link, doc_url
 from ddev_sync.errors import DdevSyncError, SyncInterrupted, TargetError
 from ddev_sync.operations.base import OperationError
@@ -108,3 +110,41 @@ def test_every_slug_obeys_the_slug_rule() -> None:
     assert len(set(AREAS)) == len(AREAS)
     assert len(set(ENTRIES)) == len(ENTRIES)
     assert not set(AREAS) & set(ENTRIES)
+
+
+_SHELL_FILES = (
+    Path(__file__).parent.parent / "endpoint" / "entrypoint.sh",
+    Path(__file__).parent.parent / "ddev-sync" / "prepare-sidecar.sh",
+)
+
+
+def test_every_entry_is_used() -> None:
+    """An entry nothing points at is a docs section nobody can reach."""
+    # The registry itself is excluded (it lists every slug), and a slug is
+    # accepted quoted rather than only as `doc="..."`: `_ssh_help` returns its
+    # slug next to the message and the caller passes it on.
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (Path(__file__).parent.parent / "src" / "ddev_sync").rglob("*.py")
+        if path.name != "docs.py"
+    )
+    shell = "\n".join(path.read_text(encoding="utf-8") for path in _SHELL_FILES)
+    doctor = set(render._DOCTOR_ROW_TOPICS.values())
+    unused = [
+        slug
+        for slug in ENTRIES
+        if f'"{slug}"' not in source and slug not in doctor and f"#{slug}" not in shell
+    ]
+    assert unused == []
+
+
+def test_the_shell_links_use_the_registry_base_url() -> None:
+    shell = "\n".join(path.read_text(encoding="utf-8") for path in _SHELL_FILES)
+    slugs = re.findall(r"troubleshooting/#([a-z0-9-]+)", shell)
+    assert sorted(set(slugs)) == [
+        "endpoint-uid-or-gid",
+        "no-authorized-keys",
+        "sidecar-image-not-found",
+        "ssh-agent-switched-off",
+    ]
+    assert all(slug in ENTRIES for slug in slugs)

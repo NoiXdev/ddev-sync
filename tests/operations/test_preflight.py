@@ -10,6 +10,7 @@ import pytest
 from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import Provider, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
+from ddev_sync.docs import doc_link
 from ddev_sync.operations import preflight
 from ddev_sync.operations.base import ExecutionContext, OperationError, discard_progress
 from ddev_sync.operations.preflight import (
@@ -115,6 +116,7 @@ def test_a_refused_ssh_connection_explains_ddev_auth_ssh(tmp_path: Path) -> None
     message = str(caught.value)
     assert "ddev auth ssh" in message
     assert "Permission denied" in message
+    assert (doc_link(caught.value) or "").endswith("#cannot-reach-the-host-over-ssh")
 
 
 def test_a_missing_remote_path_names_it(tmp_path: Path) -> None:
@@ -124,6 +126,7 @@ def test_a_missing_remote_path_names_it(tmp_path: Path) -> None:
         PreflightOperation().execute(make_context(runner, tmp_path), {})
     assert "/srv/app/" in str(caught.value)
     assert "does not exist" in str(caught.value)
+    assert (doc_link(caught.value) or "").endswith("#deploy-path-does-not-exist")
 
 
 def test_unexpected_probe_output_is_reported_verbatim(tmp_path: Path) -> None:
@@ -152,6 +155,7 @@ def test_low_disk_space_is_refused_with_the_numbers(
         PreflightOperation().execute(make_context(healthy_runner(), tmp_path), {})
     message = str(caught.value)
     assert "0 MB free" in message
+    assert (doc_link(caught.value) or "").endswith("#not-enough-free-space")
     assert "2 GB" in message
 
 
@@ -393,6 +397,7 @@ def test_sanitize_selected_aborts_before_the_dump_when_a_required_table_is_missi
     # prefix cannot be what is wrong here - naming it would send the reader
     # the wrong way.
     assert "database.wp_table_prefix" not in message
+    assert (doc_link(caught.value) or "").endswith("#required-table-is-missing")
 
 
 def test_a_missing_table_names_the_prefix_override_for_a_wp_cli_source(tmp_path: Path) -> None:
@@ -1197,8 +1202,9 @@ def test_a_sync_refuses_to_start_when_the_path_cannot_be_read(tmp_path: Path) ->
     runner = FakeCommandRunner()
     runner.script_prefix(["ssh"], stdout=f"{preflight._UNREADABLE}\n")
 
-    with pytest.raises(OperationError, match="cannot be read"):
+    with pytest.raises(OperationError, match="cannot be read") as refused:
         PreflightOperation().execute(make_context(runner, tmp_path), {})
+    assert (doc_link(refused.value) or "").endswith("#remote-path-is-not-readable")
 
 
 def test_the_unreadable_path_message_names_the_setting_that_fixes_it(tmp_path: Path) -> None:
@@ -1245,6 +1251,7 @@ def test_a_changed_host_key_on_a_docker_target_points_at_the_volume(tmp_path: Pa
         PreflightOperation().execute(context, {})
 
     assert "redeploy" in str(refusal.value)
+    assert (doc_link(refusal.value) or "").endswith("#host-key-changed")
 
 
 def test_a_changed_host_key_on_a_server_target_says_nothing_about_volumes(
@@ -1264,6 +1271,7 @@ def test_a_changed_host_key_on_a_server_target_says_nothing_about_volumes(
         PreflightOperation().execute(make_context(runner, tmp_path), {})
 
     assert "volume" not in str(refusal.value)
+    assert (doc_link(refusal.value) or "").endswith("#host-key-changed")
 
 
 def test_an_ssh_failure_about_forwarding_says_what_to_turn_on(tmp_path: Path) -> None:
@@ -1276,8 +1284,33 @@ def test_an_ssh_failure_about_forwarding_says_what_to_turn_on(tmp_path: Path) ->
         stderr="channel 0: open failed: administratively prohibited: open failed\n",
     )
 
-    with pytest.raises(OperationError, match="AllowTcpForwarding"):
+    with pytest.raises(OperationError, match="AllowTcpForwarding") as refusal:
         PreflightOperation().execute(make_context(runner, tmp_path), {})
+    assert (doc_link(refusal.value) or "").endswith("#jump-host-refuses-to-forward")
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Connection closed by remote host\n",
+        "kex_exchange_identification: read: Connection reset by peer\n",
+    ],
+)
+def test_a_closed_connection_names_rate_limits(tmp_path: Path, stderr: str) -> None:
+    """A server that accepts and then drops the connection is usually a ban for
+    too many recent logins, which no amount of key checking would reveal."""
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=255, stderr=stderr)
+
+    with pytest.raises(OperationError) as refusal:
+        PreflightOperation().execute(make_context(runner, tmp_path), {})
+
+    message = str(refusal.value)
+    assert "fail2ban" in message
+    assert "waiting" in message
+    assert "one connection per run" in message
+    assert stderr.strip() in message
+    assert (doc_link(refusal.value) or "").endswith("#connection-closed-by-the-remote-host")
 
 
 def test_the_table_probe_verifies_the_server_certificate_by_default(tmp_path: Path) -> None:
@@ -1365,6 +1398,7 @@ def test_a_missing_fake_column_stops_the_sync_before_the_dump(tmp_path: Path) ->
     assert "emial" in message
     assert "Nothing was downloaded or imported." in message
     assert len(runner.calls) == 3  # probe, SHOW TABLES, one column query
+    assert (doc_link(caught.value) or "").endswith("#column-named-by-a-fake-rule-is-missing")
 
 
 def test_a_missing_key_column_stops_the_sync(tmp_path: Path) -> None:

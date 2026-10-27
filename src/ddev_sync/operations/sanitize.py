@@ -154,7 +154,9 @@ def _switch(context: ExecutionContext, key: str) -> bool:
         return False
     if value is True:
         return True
-    raise OperationError(f"{key} must be true or false, got {value!r}")
+    raise OperationError(
+        f"{key} must be true or false, got {value!r}", doc="malformed-sanitize-switch"
+    )
 
 
 def sanitize_switches(context: ExecutionContext) -> SanitizeSwitches:
@@ -284,7 +286,10 @@ class SanitizeOperation:
             return
         if rule.tolerate_missing_table and is_missing_table_error(result.stderr):
             return
-        raise OperationError(f"sanitize rule {rule.name!r} failed: {result.stderr.strip()}")
+        raise OperationError(
+            f"sanitize rule {rule.name!r} failed: {result.stderr.strip()}",
+            doc="sanitize-rule-failed",
+        )
 
     @staticmethod
     def _run_operation(context: ExecutionContext, rule: SanitizeRule) -> None:
