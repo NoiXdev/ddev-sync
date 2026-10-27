@@ -109,6 +109,57 @@ def parse_rules(context: ExecutionContext) -> list[SanitizeRule]:
     return [_parse_rule(entry, context) for entry in context.config_list("sanitize.rules")]
 
 
+DISABLE_SANITIZE_KEY = "sanitize.disable_sanitize"
+DISABLE_SANITIZE_ALL_KEY = "sanitize.disable_sanitize_all"
+
+
+@dataclass(frozen=True)
+class SanitizeSwitches:
+    """The two project switches that turn sanitize rules off."""
+
+    disable_sanitize: bool
+    disable_sanitize_all: bool
+
+
+def _switch(context: ExecutionContext, key: str) -> bool:
+    """Read one boolean switch; anything but true/false/unset is refused.
+
+    Same shape as `database.remote_tls_options`: a misread switch would
+    silently keep or drop protection, so `"yes"` or `1` is an error.
+    """
+    value = context.setting(key)
+    if value is None or value is False:
+        return False
+    if value is True:
+        return True
+    raise OperationError(f"{key} must be true or false, got {value!r}")
+
+
+def sanitize_switches(context: ExecutionContext) -> SanitizeSwitches:
+    """Both switches, each validated even when the other one is set."""
+    return SanitizeSwitches(
+        disable_sanitize=_switch(context, DISABLE_SANITIZE_KEY),
+        disable_sanitize_all=_switch(context, DISABLE_SANITIZE_ALL_KEY),
+    )
+
+
+def active_rules(context: ExecutionContext) -> list[SanitizeRule]:
+    """The rules that actually run, after applying the switches.
+
+    The single place both the sanitize step and preflight read, so a rule that
+    is switched off is neither run nor required to have its table. `all` wins
+    over the personal-data switch; the latter keeps every protective rule
+    (password resets, mail-config clearing, unmarked SQL).
+    """
+    switches = sanitize_switches(context)
+    rules = parse_rules(context)
+    if switches.disable_sanitize_all:
+        return []
+    if switches.disable_sanitize:
+        return [rule for rule in rules if not rule.is_personal_data]
+    return rules
+
+
 def _parse_rule(entry: Mapping[str, Any], context: ExecutionContext) -> SanitizeRule:
     name = entry.get("name")
     if not name:
@@ -197,7 +248,7 @@ class SanitizeOperation:
     def execute(self, context: ExecutionContext, params: Mapping[str, Any]) -> None:
         """Apply all sanitize rules to the freshly imported database."""
         database = context.config("database.target_database", default="db")
-        for rule in parse_rules(context):
+        for rule in active_rules(context):
             if rule.sql is not None:
                 self._run_sql(context, database, rule)
             else:

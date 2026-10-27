@@ -1302,3 +1302,34 @@ def test_the_table_probe_follows_the_projects_certificate_setting(tmp_path: Path
     remote = shlex.split(runner.calls[-1][-1])
     assert "--loose-skip-ssl-verify-server-cert" in remote
     assert remote.index("--loose-skip-ssl-verify-server-cert") < remote.index("--execute")
+
+
+def test_a_skipped_rules_table_is_not_required(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="other_table\n")
+    context = make_context(
+        runner,
+        tmp_path,
+        database={
+            "remote_credentials": "explicit",
+            "credentials": {
+                "name": "db",
+                "user": "u",
+                "password": "p",
+                "host": "db.internal",
+                "port": "3306",
+            },
+        },
+        sanitize={
+            "disable_sanitize": True,
+            "rules": [
+                {
+                    "name": "fake-users",
+                    "operation": "fake",
+                    "table": "fe_users",
+                    "columns": {"email": "email"},
+                }
+            ],
+        },
+    )
+    PreflightOperation().execute(context, {"sanitize_selected": True})

@@ -12,6 +12,7 @@ from ddev_sync.operations.sanitize import (
     SANITIZE_OPERATIONS,
     SanitizeOperation,
     SanitizeRule,
+    active_rules,
     local_mysql_argv,
     parse_rules,
 )
@@ -390,3 +391,55 @@ def test_personal_data_only_on_sql_rules(tmp_path: Path) -> None:
         _one_rule(tmp_path, operation="reset_passwords", table="users", personal_data=True)
     assert "'r'" in str(caught.value)
     assert "personal_data" in str(caught.value)
+
+
+SWITCH_RULES: list[dict[str, Any]] = [
+    {"name": "fake-users", "operation": "fake", "table": "fe_users", "columns": {"email": "email"}},
+    {"name": "marked", "sql": "UPDATE t SET a = ''", "personal_data": True},
+    {"name": "mail", "operation": "clear_mail_config", "table": "cfg", "key_column": "k"},
+    {
+        "name": "passwords",
+        "operation": "reset_passwords",
+        "table": "users",
+        "column": "pw",
+        "value": "x",
+    },
+    {"name": "unmarked", "sql": "TRUNCATE sys_log"},
+]
+
+
+def _switch_context(tmp_path: Path, runner: FakeCommandRunner, **sanitize: Any) -> ExecutionContext:
+    return make_context(runner, tmp_path, sanitize={"rules": SWITCH_RULES, **sanitize})
+
+
+def test_disable_sanitize_skips_only_personal_data_rules(tmp_path: Path) -> None:
+    context = _switch_context(tmp_path, FakeCommandRunner(), disable_sanitize=True)
+    assert [rule.name for rule in active_rules(context)] == ["mail", "passwords", "unmarked"]
+
+
+def test_disable_sanitize_all_skips_everything(tmp_path: Path) -> None:
+    context = _switch_context(
+        tmp_path, FakeCommandRunner(), disable_sanitize=False, disable_sanitize_all=True
+    )
+    assert active_rules(context) == []
+
+
+def test_no_switch_runs_every_rule(tmp_path: Path) -> None:
+    context = _switch_context(tmp_path, FakeCommandRunner())
+    assert [rule.name for rule in active_rules(context)] == [r["name"] for r in SWITCH_RULES]
+
+
+@pytest.mark.parametrize("key", ["disable_sanitize", "disable_sanitize_all"])
+def test_a_non_boolean_switch_is_refused(tmp_path: Path, key: str) -> None:
+    context = _switch_context(tmp_path, FakeCommandRunner(), **{key: "yes"})
+    with pytest.raises(OperationError) as caught:
+        active_rules(context)
+    assert f"sanitize.{key} must be true or false" in str(caught.value)
+
+
+def test_the_sanitize_step_runs_only_active_rules(tmp_path: Path) -> None:
+    runner = sql_runner(3)
+    context = _switch_context(tmp_path, runner, disable_sanitize=True)
+    SanitizeOperation().execute(context, {})
+    assert runner.calls
+    assert not any("fe_users" in " ".join(call) for call in runner.calls)

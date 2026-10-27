@@ -39,7 +39,7 @@ from ddev_sync.operations.database import (
     remote_tls_options,
 )
 from ddev_sync.operations.files import validate_path_pairs
-from ddev_sync.operations.sanitize import SanitizeRule, parse_rules
+from ddev_sync.operations.sanitize import SanitizeRule, active_rules
 from ddev_sync.transport.container import web_command
 from ddev_sync.transport.runner import CommandResult
 from ddev_sync.transport.ssh import remote_endpoint, ssh_command
@@ -403,7 +403,7 @@ class PreflightOperation:
     def _probe_sanitize_tables(context: ExecutionContext) -> None:
         """Abort before the dump if a required sanitize table is missing.
 
-        `parse_rules` is the same parser `SanitizeOperation` itself uses, so
+        `active_rules` is the same selection `SanitizeOperation` itself uses, so
         a `requires_table` containing a placeholder (e.g.
         `${WP_TABLE_PREFIX}users`) arrives here already resolved to the real
         name - checked against the real name, not the literal placeholder
@@ -412,7 +412,7 @@ class PreflightOperation:
         form (`_check_sanitize_tables`) below, so the two can never quietly
         disagree about what counts as missing.
         """
-        required = _required_tables(parse_rules(context))
+        required = _required_tables(active_rules(context))
         if not required:
             return
         tables = _remote_tables(context)
@@ -491,7 +491,7 @@ class PreflightOperation:
         `check()` returns, so a raise here would cost the user the ssh,
         deploy-path and disk-space rows as well.
 
-        `parse_rules` is inside the guarded block, not just `_remote_tables`:
+        `active_rules` is inside the guarded block, not just `_remote_tables`:
         it validates every rule (a rule missing 'name' is rejected there) and
         expands `${...}` at parse time, so an unresolvable `${WP_TABLE_PREFIX}`
         - a `wp_cli` prefix lookup that fails, or a credentials source that
@@ -500,7 +500,7 @@ class PreflightOperation:
         if not (report.ssh_ok and report.remote_path_ok):
             return None, ""
         try:
-            required = _required_tables(parse_rules(context))
+            required = _required_tables(active_rules(context))
             if not required:
                 return None, ""
             tables = _remote_tables(context)
