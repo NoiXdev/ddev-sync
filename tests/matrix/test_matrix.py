@@ -161,7 +161,7 @@ def test_no_production_address_survives(stack: Stack, cell: Cell) -> None:
     if cell.password_column is None:
         pytest.skip(f"{cell.profile} declares no user table to anonymise")
     table, _column = cell.password_column
-    rows = stack.sql(f"SELECT * FROM `{table}`")
+    rows = stack.sql(f"SELECT {cell.scan_columns} FROM `{table}`")
     # An empty table satisfies the check below trivially - which is what the
     # local table is before the import, so a sync that imported nothing would
     # otherwise pass.
@@ -230,13 +230,13 @@ def test_a_second_sync_gives_the_same_fake_values(stack: Stack, cell: Cell) -> N
     steps = ("--target", "production", "--steps", "db,sanitize", "--yes")
     first = stack.engine(*steps)
     assert first.returncode == 0, f"stdout:\n{first.stdout}\n\nstderr:\n{first.stderr}"
-    before = stack.sql("SELECT id, name, email FROM users ORDER BY id")
+    before = stack.sql("SELECT id, email FROM users ORDER BY id")
     assert before.count("@example.fake") == 2, before
     # The second run re-imports production's rows and fakes them again: equal
     # values mean they depend on the row, not on the run.
     second = stack.engine(*steps)
     assert second.returncode == 0, f"stdout:\n{second.stdout}\n\nstderr:\n{second.stderr}"
-    assert stack.sql("SELECT id, name, email FROM users ORDER BY id") == before
+    assert stack.sql("SELECT id, email FROM users ORDER BY id") == before
     _restore_whole_sync(stack)
 
 

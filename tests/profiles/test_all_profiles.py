@@ -307,7 +307,7 @@ _TYPO3_FAKES = {
     "anonymize-be-users": ("be_users", "uid", {"email": "email", "realName": "name"}),
 }
 _EXPECTED_FAKE_RULES: dict[str, dict[str, tuple[str, str, dict[str, str]]]] = {
-    "laravel": {"anonymize-users": ("users", "id", {"name": "name", "email": "email"})},
+    "laravel": {"anonymize-users": ("users", "id", {"email": "email"})},
     "symfony": {"anonymize-users": ("${SYMFONY_USER_TABLE}", "id", {"email": "email"})},
     "wordpress": {
         "anonymize-users": (

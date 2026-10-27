@@ -206,11 +206,21 @@ sanitize:
     # discourages is not. If this ever needs to be overridable in practice,
     # give it the same `${LARAVEL_USER_TABLE}`-shaped treatment as Symfony's -
     # but do not add the placeholder speculatively for a case nobody has hit.
+    # Only `email`: Laravel's default `users` table has a `name` column, but a
+    # project is free to drop or split it (first_name, last_name), and a fake
+    # rule naming a column the table lacks stops the sync at preflight. The
+    # profile fakes what it knows for certain. A project that does have `name`
+    # adds a rule of its own, under a new name, through an `extend` list:
+    #   sanitize:
+    #     rules:
+    #       mode: extend
+    #       values:
+    #         - { name: anonymize-user-names, operation: fake, table: users,
+    #             columns: { name: name } }
     - name: anonymize-users
       operation: fake
       table: users
       columns:
-        name: name
         email: email
     - name: reset-user-passwords
       operation: reset_passwords

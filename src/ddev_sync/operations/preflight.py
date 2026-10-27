@@ -777,10 +777,9 @@ def _first_missing_column_problem(
 ) -> str | None:
     """The message for the first fake column (or key column) the remote lacks, or `None`.
 
-    Names and the key are compared exactly as information_schema returned them,
-    case-sensitively - the UPDATE quotes them in backticks, and a column name
-    never folds case on any server. A table with no pair in `columns` was not
-    queried (missing or tolerated) and is skipped.
+    Names and the key are compared exactly as information_schema returned them.
+    A table with no pair in `columns` was not queried (missing or tolerated)
+    and is skipped.
     """
     queried = {table for table, _ in columns}
     for rule in _fake_rules(rules):
@@ -795,9 +794,11 @@ def _first_missing_column_problem(
                 return (
                     f"sanitize rule {rule.name!r} names {role} {column!r} on table "
                     f"{table!r}, which does not exist on the remote database. Nothing "
-                    "was downloaded or imported. Fix the column name in the rule - a "
-                    "typo here would make the sanitize step fail after the import, "
-                    "with production data already on this machine."
+                    "was downloaded or imported. Fix the column name in the project's "
+                    "rule, or, if the rule comes from a profile, replace it through "
+                    "the project's sanitize.rules (mode: replace). Left alone it would "
+                    "fail the sanitize step after the import, with production data "
+                    "already on this machine."
                 )
     return None
 

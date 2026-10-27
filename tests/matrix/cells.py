@@ -256,9 +256,16 @@ class Cell:
     env_markers: tuple[EnvMarker, ...] = ()
     verified_row: bool = True
     fakes: tuple[FakeCheck, ...] = ()
+    # What `test_no_production_address_survives` reads from the user table: all
+    # of it, unless the profile deliberately leaves a column alone.
+    scan_columns: str = "*"
 
 
-LARAVEL_FAKES = (FakeCheck("users", "email", "`id` IN (1, 2)", (("name", "name"),)),)
+# Email only: the profile cannot know the project's name column, so it leaves
+# `users.name` alone (see profiles/laravel.yaml). The seeded names therefore
+# stay, and the personal-data scan reads the columns the profile does rewrite.
+LARAVEL_FAKES = (FakeCheck("users", "email", "`id` IN (1, 2)"),)
+LARAVEL_SCAN_COLUMNS = "`id`, `email`, `password`"
 TYPO3_FAKES = (
     FakeCheck(
         "be_users",
@@ -302,10 +309,11 @@ CELLS: tuple[Cell, ...] = (
         password_column=("users", "password"),
         production_url=None,
         truncated_tables=("sessions", "jobs", "failed_jobs"),
-        # Not `name` or `email`: the profile's fake rule rewrites both.
+        # Not `email`: the profile's fake rule rewrites it.
         identity_column="id",
         seeded_users=("1", "2"),
         fakes=LARAVEL_FAKES,
+        scan_columns=LARAVEL_SCAN_COLUMNS,
     ),
     Cell(
         name="mxdocker",
@@ -332,6 +340,7 @@ CELLS: tuple[Cell, ...] = (
         identity_column="id",
         seeded_users=("1", "2"),
         fakes=LARAVEL_FAKES,
+        scan_columns=LARAVEL_SCAN_COLUMNS,
         services=("jump", "endpoint"),
         # This cell verifies a transport, not a profile's commands, and
         # `mxlaravel` already holds the `laravel` row with evidence about
@@ -369,6 +378,7 @@ CELLS: tuple[Cell, ...] = (
         identity_column="id",
         seeded_users=("1", "2"),
         fakes=LARAVEL_FAKES,
+        scan_columns=LARAVEL_SCAN_COLUMNS,
         features=(
             FeatureCheck(
                 feature="node-build",
@@ -515,6 +525,7 @@ CELLS: tuple[Cell, ...] = (
         identity_column="id",
         seeded_users=("1", "2"),
         fakes=LARAVEL_FAKES,
+        scan_columns=LARAVEL_SCAN_COLUMNS,
         features=(
             FeatureCheck(
                 feature="horizon",

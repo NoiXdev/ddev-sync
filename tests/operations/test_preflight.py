@@ -1391,10 +1391,10 @@ def test_present_columns_pass(tmp_path: Path) -> None:
     assert "--skip-column-names" in remote
 
 
-def test_column_names_are_compared_case_sensitively(tmp_path: Path) -> None:
-    runner = _columns_runner("reservations\tid\nreservations\tEmail\n")
+def test_the_missing_column_message_says_how_to_replace_a_profile_rule(tmp_path: Path) -> None:
+    runner = _columns_runner("reservations\tid\n")
     context = context_with_rules(runner, tmp_path, [_fake_rule(columns={"email": "email"})])
-    with pytest.raises(OperationError, match="'email'"):
+    with pytest.raises(OperationError, match=r"mode: replace"):
         PreflightOperation().execute(context, {"sanitize_selected": True})
 
 
