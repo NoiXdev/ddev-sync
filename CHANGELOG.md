@@ -1,3 +1,26 @@
+## [0.1.0-rc.4](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.3...v0.1.0-rc.4) (2026-10-27)
+
+
+### Features
+
+* **cli:** show what a run is waiting on before the first question ([10492ce](https://github.com/NoiXdev/ddev-sync/commit/10492ced569511822db62ed4d5d426008cac913f))
+* **cli:** warn when sanitize rules are switched off ([b8e0191](https://github.com/NoiXdev/ddev-sync/commit/b8e0191996348037fab8b6c492cd101cd72a6746))
+* **database:** let a project skip the remote TLS certificate check ([405cc1c](https://github.com/NoiXdev/ddev-sync/commit/405cc1c73b88a5a3bf5a555127fd0fa0315416b0))
+* **preflight:** check the columns a fake rule names ([853af65](https://github.com/NoiXdev/ddev-sync/commit/853af65813d861a4034f530dd20d8ef7b88aed63))
+* **profiles:** fake the users instead of blanking them ([655871e](https://github.com/NoiXdev/ddev-sync/commit/655871e55e4ee019843dae04f83bc553fc943ef1))
+* **sanitize:** add the fake operation ([ec15200](https://github.com/NoiXdev/ddev-sync/commit/ec15200e573e3f4245dc5bfa153f9b561c536b7a))
+* **sanitize:** generate stable fake values as SQL expressions ([c6b0eca](https://github.com/NoiXdev/ddev-sync/commit/c6b0eca201aa4ec7460d1dc7a3d62108eda3e711))
+* **sanitize:** let a project switch off personal-data rules or all of them ([b408924](https://github.com/NoiXdev/ddev-sync/commit/b40892466fe8a2bf3d42d04ee3a9ba885328135b))
+* **sanitize:** mark the rules that hide personal data ([cf9b10c](https://github.com/NoiXdev/ddev-sync/commit/cf9b10c3846bb98d04a15d27064f4538b9af71cb))
+
+
+### Bug Fixes
+
+* **cli:** refuse a malformed sanitize switch on dry-run too ([2c8bd0f](https://github.com/NoiXdev/ddev-sync/commit/2c8bd0f929c99339b3752a8edb9a73903b07b474))
+* **preflight:** match column names case-insensitively ([c1321b4](https://github.com/NoiXdev/ddev-sync/commit/c1321b444fdd4f8f5fd93421d200c48514a88c5b))
+* **profiles:** fake only the email in the laravel profile ([a5435a9](https://github.com/NoiXdev/ddev-sync/commit/a5435a955c4782dc468ddea66671012f2ef10942))
+* **sanitize:** refuse a malformed disable_seeding before the dump ([5afee7e](https://github.com/NoiXdev/ddev-sync/commit/5afee7e58fbbfcee88ac1a1b87e61d7338317add))
+
 ## [0.1.0-rc.3](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.2...v0.1.0-rc.3) (2026-10-25)
 
 
