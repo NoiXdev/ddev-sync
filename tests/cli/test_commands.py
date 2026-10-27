@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from ddev_sync.cli import commands
-from ddev_sync.cli.context import build_context
+from ddev_sync.cli.context import RunContext, build_context
 from ddev_sync.cli.main import main
 from ddev_sync.cli.reporter import ConsoleReporter
 from ddev_sync.config.merge import MergeResult
@@ -1216,3 +1216,91 @@ def test_doctor_exits_nonzero_when_the_path_cannot_be_read(
 
     assert invoke(project, tmp_path, "--target", "production", "doctor") == 1
     assert "path readable" in capsys.readouterr().out
+
+
+def _switched_off_context(project: Path, tmp_path: Path, settings: str) -> RunContext:
+    config = project / ".ddev" / "ddev-sync.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + f"sanitize:\n{settings}  rules:\n    - name: wipe\n      sql: TRUNCATE TABLE t\n",
+        encoding="utf-8",
+    )
+    return build_context(
+        project_root=project,
+        home=tmp_path / "home",
+        target_name="production",
+        type_flag="generic",
+        framework_version_flag=None,
+        profile_root=PROFILE_ROOT,
+        feature_root=FEATURE_ROOT,
+        features_flag=None,
+        no_features=False,
+    )
+
+
+def _run(context: RunContext, selection: list[str], *, dry_run: bool) -> list[str]:
+    lines: list[str] = []
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout="ddev-sync-ok\n")
+    commands.run_command(
+        context,
+        selection,
+        runner=runner,
+        dry_run=dry_run,
+        assume_yes=True,
+        echo=lines.append,
+    )
+    return lines
+
+
+def _warnings(lines: list[str], setting: str) -> list[str]:
+    return [line for line in lines if setting in line and line.strip().startswith("!")]
+
+
+def test_a_run_warns_once_when_personal_data_rules_are_switched_off(
+    project: Path, tmp_path: Path
+) -> None:
+    context = _switched_off_context(project, tmp_path, "  disable_sanitize: true\n")
+    lines = _run(context, ["sanitize"], dry_run=False)
+    warnings = _warnings(lines, "sanitize.disable_sanitize")
+    assert len(warnings) == 1
+    assert ".ddev/ddev-sync.yaml" in warnings[0]
+
+
+def test_both_switches_warn_only_for_the_all_switch(project: Path, tmp_path: Path) -> None:
+    context = _switched_off_context(
+        project, tmp_path, "  disable_sanitize: true\n  disable_sanitize_all: true\n"
+    )
+    lines = _run(context, ["sanitize"], dry_run=False)
+    assert len(_warnings(lines, "sanitize.disable_sanitize_all")) == 1
+    assert len(_warnings(lines, "sanitize.disable_sanitize")) == 1
+
+
+def test_the_switch_warning_is_absent_when_sanitize_is_not_selected(
+    project: Path, tmp_path: Path
+) -> None:
+    context = _switched_off_context(project, tmp_path, "  disable_sanitize_all: true\n")
+    lines = _run(context, ["files"], dry_run=False)
+    assert not [line for line in lines if "disable_sanitize" in line]
+
+
+def test_a_dry_run_warns_before_the_plan(project: Path, tmp_path: Path) -> None:
+    context = _switched_off_context(project, tmp_path, "  disable_sanitize_all: true\n")
+    lines = _run(context, ["sanitize"], dry_run=True)
+    joined = "\n".join(lines)
+    assert joined.index("sanitize.disable_sanitize_all") < joined.index("all rules skipped")
+
+
+def test_a_switch_with_no_recorded_source_falls_back_to_config(
+    project: Path, tmp_path: Path
+) -> None:
+    context = _switched_off_context(project, tmp_path, "  disable_sanitize: true\n")
+    context.merged.scalar_sources.pop(("sanitize", "disable_sanitize"))
+    lines = _run(context, ["sanitize"], dry_run=False)
+    assert "config" in _warnings(lines, "sanitize.disable_sanitize")[0]
+
+
+def test_a_malformed_switch_is_left_to_the_sanitize_step(project: Path, tmp_path: Path) -> None:
+    context = _switched_off_context(project, tmp_path, '  disable_sanitize: "yes"\n')
+    lines = _run(context, ["sanitize"], dry_run=False)
+    assert not _warnings(lines, "sanitize.disable_sanitize")

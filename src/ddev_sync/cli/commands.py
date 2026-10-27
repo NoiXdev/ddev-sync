@@ -21,8 +21,9 @@ from ddev_sync.engine.executor import Executor
 from ddev_sync.engine.plan import build_plan
 from ddev_sync.engine.steps import steps_for_selection
 from ddev_sync.errors import DdevSyncError, TargetError
-from ddev_sync.operations.base import ExecutionContext, discard_progress
+from ddev_sync.operations.base import ExecutionContext, OperationError, discard_progress
 from ddev_sync.operations.preflight import PreflightOperation
+from ddev_sync.operations.sanitize import sanitize_switches
 from ddev_sync.transport.runner import CommandRunner
 
 DOWNLOADS = Path(".ddev") / ".downloads"
@@ -122,6 +123,14 @@ def run_command(
         only_feature_setup=only_feature_setup,
     )
     if dry_run:
+        # Before the plan, so the line is read ahead of the "skipped" detail
+        # it explains. No secrets exist yet, and none can be in this line.
+        _warn_sanitize_switches(
+            context,
+            selection,
+            ConsoleReporter(write=echo, colour=colour, verbose=verbose),
+            runner=runner,
+        )
         echo(render_plan(plan))
         return 0
 
@@ -141,9 +150,51 @@ def run_command(
         progress=_progress_listener(reporter, stdout_is_terminal=stdout_is_terminal),
     )
     report = Executor(reporter=reporter).run(plan, execution)
+    _warn_sanitize_switches(context, selection, reporter, runner=runner)
     if "sanitize" not in selection:
         reporter.warn_unsanitized(context.target.stage.value)
     return 1 if report.failed else 0
+
+
+def _warn_sanitize_switches(
+    context: RunContext,
+    selection: list[str],
+    reporter: ConsoleReporter,
+    *,
+    runner: CommandRunner,
+) -> None:
+    """Say, once per run, that a `sanitize.disable_*` switch is on.
+
+    Only when the sanitize step is selected: a run that never sanitizes has
+    its own "not sanitized" warning, and a switch that changes nothing this
+    run is not news. `disable_sanitize_all` wins when both are set, since it
+    is the one that took every rule away. A malformed switch is left to the
+    sanitize step, which refuses it with the proper message.
+    """
+    if "sanitize" not in selection:
+        return
+    execution = _execution_context(
+        context,
+        runner=runner,
+        assume_yes=True,
+        secrets=set(),
+        stdout_is_terminal=False,
+        progress=discard_progress,
+    )
+    try:
+        switches = sanitize_switches(execution)
+    except OperationError:
+        return
+    if switches.disable_sanitize_all:
+        setting = "disable_sanitize_all"
+    elif switches.disable_sanitize:
+        setting = "disable_sanitize"
+    else:
+        return
+    # A setting with no recorded source (a layer that did not label it) still
+    # gets a line; "config" is vague but true.
+    source = context.merged.scalar_sources.get(("sanitize", setting), "config")
+    reporter.warn_sanitize_disabled(setting, source, all_rules=switches.disable_sanitize_all)
 
 
 def resolve_selection(

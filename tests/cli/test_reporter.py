@@ -224,3 +224,23 @@ def test_a_progress_line_is_scrubbed_like_every_other_line() -> None:
     reporter.progress("reaching deploy:hunter2@web01.example")
 
     assert "hunter2" not in lines[0]
+
+
+def test_the_personal_data_switch_is_named_with_the_file_it_came_from() -> None:
+    reporter, lines = capture()
+    reporter.warn_sanitize_disabled("disable_sanitize", ".ddev/ddev-sync.yaml", all_rules=False)
+    joined = "\n".join(lines)
+    assert "sanitize.disable_sanitize" in joined
+    assert ".ddev/ddev-sync.yaml" in joined
+    assert "personal-data" in joined
+    assert "disable_sanitize_all" not in joined
+
+
+def test_the_all_switch_says_the_protective_rules_did_not_run_either() -> None:
+    reporter, lines = capture()
+    reporter.warn_sanitize_disabled("disable_sanitize_all", "~/.config/x.yaml", all_rules=True)
+    joined = "\n".join(lines)
+    assert "sanitize.disable_sanitize_all" in joined
+    assert "~/.config/x.yaml" in joined
+    assert "protective" in joined
+    assert any(line.strip().startswith("!") for line in lines)

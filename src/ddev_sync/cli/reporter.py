@@ -112,6 +112,28 @@ class ConsoleReporter:
         self._write("")
         self._write(f"  {self._bang()}data from {stage} is on your machine and was not sanitized")
 
+    def warn_sanitize_disabled(self, setting: str, source: str, *, all_rules: bool) -> None:
+        """Warn that a `sanitize.disable_*` switch is on, and where it was set.
+
+        A switch is a standing config line that is easy to forget about months
+        later, so every run names it and the file it came from. The
+        `disable_sanitize_all` wording says outright that the protective rules
+        (password resets, mail-config clearing) were skipped too, because
+        that is the part a reader would not assume from the name.
+        """
+        self._write("")
+        if all_rules:
+            what = (
+                f"sanitize.{setting} is set in {source}: no sanitize rule ran, "
+                "protective ones (password resets, mail-config clearing) included"
+            )
+        else:
+            what = (
+                f"sanitize.{setting} is set in {source}: personal-data rules did not run, "
+                "protective rules still did"
+            )
+        self._write(f"  {self._bang()}{what}")
+
     def _mark(self, status: str) -> str:
         text = _MARKS.get(status, "?")
         colour = _MARK_COLOURS.get(status)

@@ -1209,3 +1209,41 @@ def test_a_docker_target_plans_normally_with_env_credentials() -> None:
     )
 
     assert next(entry.kind for entry in plan.steps) is StepKind.PREFLIGHT
+
+
+def _sanitize_detail(settings: dict[str, Any], rules: list[dict[str, Any]]) -> str:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {"sanitize": {**settings, "rules": {"mode": "replace", "values": rules}}},
+    )
+    plan = plan_for(["sanitize"], user_layers=[extra])
+    return next(entry for entry in plan.steps if entry.kind is StepKind.SANITIZE).detail
+
+
+_MIXED_RULES: list[dict[str, Any]] = [
+    {"name": "wipe-sessions", "sql": "TRUNCATE TABLE sessions"},
+    {"name": "mask-mail", "sql": "UPDATE u SET e = 'x'", "personal_data": True},
+    {"name": "fake-names", "operation": "fake", "table": "u", "columns": {"n": "name"}},
+]
+
+
+def test_disable_sanitize_lists_only_the_protective_rules_and_says_so() -> None:
+    detail = _sanitize_detail({"disable_sanitize": True}, _MIXED_RULES)
+    assert detail == "1 rule: wipe-sessions (personal-data rules skipped: disable_sanitize)"
+
+
+def test_disable_sanitize_all_lists_no_rules_and_says_so() -> None:
+    detail = _sanitize_detail({"disable_sanitize_all": True}, _MIXED_RULES)
+    assert detail == "0 rules (all rules skipped: disable_sanitize_all)"
+
+
+def test_both_switches_report_only_the_all_switch() -> None:
+    detail = _sanitize_detail(
+        {"disable_sanitize": True, "disable_sanitize_all": True}, _MIXED_RULES
+    )
+    assert detail == "0 rules (all rules skipped: disable_sanitize_all)"
+
+
+def test_without_a_switch_the_detail_is_unchanged() -> None:
+    detail = _sanitize_detail({}, _MIXED_RULES)
+    assert detail == "3 rules: wipe-sessions, mask-mail, fake-names"

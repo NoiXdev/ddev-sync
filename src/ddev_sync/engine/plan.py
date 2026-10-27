@@ -548,14 +548,29 @@ class _Builder:
         rules = self._list_at(("sanitize", "rules"))
         if not rules:
             return []
+        # The switches are read as `is True` here: the plan must not raise on a
+        # malformed value (the sanitize operation itself refuses it, with the
+        # proper message), and `all` wins over the personal-data switch just
+        # as in `operations.sanitize.active_rules`.
+        all_off = _node_at(self._data, ("sanitize", "disable_sanitize_all")) is True
+        personal_off = _node_at(self._data, ("sanitize", "disable_sanitize")) is True
+        if all_off:
+            rules = []
+        elif personal_off:
+            rules = [rule for rule in rules if not _is_personal_data(rule)]
         names = ", ".join(str(rule.get("name", "unnamed")) for rule in rules)
         plural = "rule" if len(rules) == 1 else "rules"
+        detail = f"{len(rules)} {plural}: {names}" if rules else "0 rules"
+        if all_off:
+            detail += " (all rules skipped: disable_sanitize_all)"
+        elif personal_off:
+            detail += " (personal-data rules skipped: disable_sanitize)"
         sources = self._list_sources.get(("sanitize", "rules"), ())
         return [
             _Entry(
                 kind=StepKind.SANITIZE,
                 where="sql",
-                detail=f"{len(rules)} {plural}: {names}",
+                detail=detail,
                 source=_source_at(sources, 0),
                 params={},
             )
@@ -600,6 +615,11 @@ class _Builder:
 
     def _source(self, path: tuple[str, ...]) -> str:
         return self._scalar_sources.get(path, "built-in")
+
+
+def _is_personal_data(rule: Mapping[str, Any]) -> bool:
+    """Mirror of `SanitizeRule.is_personal_data`, on the raw config entry."""
+    return rule.get("operation") == "fake" or rule.get("personal_data") is True
 
 
 def _node_at(data: Mapping[str, Any], path: tuple[str, ...]) -> Any:
