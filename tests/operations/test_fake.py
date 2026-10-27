@@ -71,8 +71,14 @@ def test_bad_columns_are_refused(raw: Any) -> None:
 
 def test_null_and_empty_stay_as_they_are() -> None:
     assert _sql("email").startswith(
-        "CASE WHEN `email` IS NULL THEN NULL WHEN `email` = '' THEN '' ELSE"
+        "CASE WHEN `email` IS NULL THEN NULL WHEN CAST(`email` AS CHAR) = '' THEN '' ELSE"
     )
+
+
+def test_the_empty_check_compares_as_text_so_a_numeric_column_survives() -> None:
+    # A bare `col = ''` casts '' to a number on an INT column: strict mode
+    # refuses it (error 1292) and a stored 0 would count as empty.
+    assert "`email` = ''" not in _sql("email")
 
 
 def test_the_hash_input_names_table_column_and_key() -> None:

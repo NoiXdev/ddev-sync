@@ -203,4 +203,10 @@ def value_sql(table: str, column: FakeColumn, key: str, *, email_domain: str, ma
     if column.kind == "text":
         length = column.settings.get("length", _DEFAULT_TEXT_LENGTH)
         generated = f"LEFT({generated}, {length})"
-    return f"CASE WHEN `{ident}` IS NULL THEN NULL WHEN `{ident}` = '' THEN '' ELSE {generated} END"
+    # CAST first: on a numeric column a bare `col = ''` makes MariaDB cast the
+    # '' to a number, which strict mode refuses (error 1292) and which would
+    # also match a stored 0. As text, only a real empty string is empty.
+    return (
+        f"CASE WHEN `{ident}` IS NULL THEN NULL "
+        f"WHEN CAST(`{ident}` AS CHAR) = '' THEN '' ELSE {generated} END"
+    )
