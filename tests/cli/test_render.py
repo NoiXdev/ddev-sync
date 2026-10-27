@@ -3,6 +3,8 @@ import os
 import re
 from pathlib import Path
 
+import pytest
+
 from ddev_sync.cli.render import render_doctor, render_features, render_plan, render_targets
 from ddev_sync.config.merge import merge_layers
 from ddev_sync.config.models import DeployerRef, Provider, ResolvedTarget, Stage, TargetSpec
@@ -946,3 +948,11 @@ def test_every_doctor_row_has_a_registered_topic() -> None:
         "web container",
         "ssh agent",
     }
+
+
+def test_a_failing_row_without_a_topic_carries_no_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ddev_sync.cli.render._DOCTOR_ROW_TOPICS", {})
+    report = PreflightReport(ssh_ok=False, remote_path_ok=True, free_bytes=50 * 1024**3)
+    output = render_doctor(report, _target())
+    assert "FAIL" in output
+    assert "More:" not in output

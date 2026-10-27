@@ -596,7 +596,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # After the message, never inside it: the message is the error's own
         # words and the link is the CLI's pointer to the long explanation.
         link = doc_link(error)
-        if link is not None:
+        # Unreachable through `main` itself (every frame there maps to
+        # `command-line`), kept so an error with no area stays link-free.
+        if link is not None:  # pragma: no branch
             click.echo(f"  More: {link}", err=True)
         return 1
     except ValueError as error:

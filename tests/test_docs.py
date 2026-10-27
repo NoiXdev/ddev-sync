@@ -50,6 +50,33 @@ def test_the_raising_module_decides_the_area() -> None:
     assert (doc_link(caught) or "").endswith("#database")
 
 
+def _call_through(inner_module: str, outer_module: str) -> Exception:
+    # `outer` (claiming `outer_module`) calls `inner` (claiming `inner_module`),
+    # which raises: the traceback runs outer -> inner.
+    inner_ns: dict[str, object] = {"__name__": inner_module}
+    inner_ns["DdevSyncError"] = DdevSyncError
+    exec("def inner():\n    raise DdevSyncError('x')\n", inner_ns)
+    outer_ns: dict[str, object] = {"__name__": outer_module, "inner": inner_ns["inner"]}
+    exec("def outer():\n    inner()\n", outer_ns)
+    outer = outer_ns["outer"]
+    assert callable(outer)
+    try:
+        outer()
+    except Exception as caught:
+        return caught
+    raise AssertionError("unreachable")
+
+
+def test_an_unmapped_helper_takes_its_callers_area() -> None:
+    caught = _call_through("ddev_sync.operations.base", "ddev_sync.operations.database")
+    assert (doc_link(caught) or "").endswith("#database")
+
+
+def test_an_unmapped_helper_called_from_the_cli_gets_command_line() -> None:
+    caught = _call_through("ddev_sync.operations.base", "ddev_sync.cli.commands")
+    assert (doc_link(caught) or "").endswith("#command-line")
+
+
 def test_the_longest_module_prefix_wins() -> None:
     caught = _raise_from("ddev_sync.config.targets", DdevSyncError("x"))
     assert (doc_link(caught) or "").endswith("#targets")

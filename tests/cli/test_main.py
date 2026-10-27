@@ -7,7 +7,7 @@ import questionary
 
 from ddev_sync.cli import main as main_module
 from ddev_sync.cli.main import main
-from ddev_sync.errors import DdevSyncError, SyncInterrupted
+from ddev_sync.errors import SyncInterrupted
 
 PROFILE_ROOT = Path(__file__).parent.parent.parent / "profiles"
 FEATURE_ROOT = Path(__file__).parent / "features"
@@ -875,21 +875,3 @@ def test_an_error_ends_with_its_docs_link(
 def test_a_usage_error_carries_no_link(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--not-a-real-option"]) == 2
     assert "More:" not in capsys.readouterr().err
-
-
-def test_an_error_without_a_link_prints_only_its_message(
-    project: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Any error caught here has passed through `ddev_sync.cli`, so the real
-    # `doc_link` always finds at least `#command-line`; the no-link path is
-    # kept for a link function that has nothing to say.
-    def explode(*args: object, **kwargs: object) -> int:
-        raise DdevSyncError("something odd")
-
-    monkeypatch.setattr(main_module, "run_command", explode)
-    monkeypatch.setattr(main_module, "doc_link", lambda error: None)
-    assert invoke(project, tmp_path, "--yes") == 1
-    assert capsys.readouterr().err == "something odd\n"

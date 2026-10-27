@@ -137,18 +137,22 @@ def _module_area(module: str) -> str | None:
     return None
 
 
-def _raising_module(traceback: TracebackType | None) -> str | None:
-    """The module of the innermost frame that belongs to ddev-sync.
+def _raising_area(traceback: TracebackType | None) -> str | None:
+    """The area of the innermost frame whose module maps to one.
 
-    Innermost, because that is where the error was decided: the frames above
-    it are only callers passing it along. Frames of other packages (a library
-    the error travelled through) are skipped so they cannot hide it.
+    Innermost, because that is where the error was decided; the frames above
+    it are only callers passing it along. A frame that belongs to ddev-sync
+    but maps to nothing (a shared helper such as `operations.base`) or to
+    another package is skipped, so the error takes the area of the code that
+    called the helper - the part of the tool the user was actually running.
     """
     found: str | None = None
     while traceback is not None:
         name = traceback.tb_frame.f_globals.get("__name__")
         if isinstance(name, str) and name.startswith("ddev_sync."):
-            found = name
+            area = _module_area(name)
+            if area is not None:
+                found = area
         traceback = traceback.tb_next
     return found
 
@@ -168,13 +172,13 @@ def doc_link(error: BaseException) -> str | None:
     explicit = getattr(error, "doc", None)
     if isinstance(explicit, str):
         return doc_url(explicit)
-    module = _raising_module(error.__traceback__)
-    if module is not None:
-        area = _module_area(module)
-        if area is not None:
-            return doc_url(area)
+    area = _raising_area(error.__traceback__)
+    if area is not None:
+        return doc_url(area)
     for cls in type(error).__mro__:
-        area = _CLASS_AREAS.get(cls.__name__)
+        # The module check keeps a foreign class that happens to share a name
+        # (a library's own `ConfigError`) from borrowing ours.
+        area = _CLASS_AREAS.get(cls.__name__) if cls.__module__.startswith("ddev_sync.") else None
         if area is not None:
             return doc_url(area)
     return None

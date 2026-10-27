@@ -241,7 +241,8 @@ def init_command(
     except DdevSyncError as error:
         raise DdevSyncError(
             f"the target {name!r} is in {PROJECT_LABEL}, but it could not be checked: {error}. "
-            f"Edit it there, then check it with 'ddev sync --target {name} doctor'."
+            f"Edit it there, then check it with 'ddev sync --target {name} doctor'.",
+            doc=getattr(error, "doc", None),
         ) from error
     except BaseException:
         echo(

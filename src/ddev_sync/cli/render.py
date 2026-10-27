@@ -248,7 +248,8 @@ def render_doctor(report: PreflightReport, target: ResolvedTarget, *, colour: bo
             else paint_padded("FAIL", _MARKER_WIDTH, Colour.RED, enabled=colour)
         )
         lines.append(f"  {marker}{label:<18}{detail}")
-        if not ok:
+        topic = _DOCTOR_ROW_TOPICS.get(label)
+        if not ok and topic is not None:
             # Under the label, not the marker: it belongs to the row's text.
-            lines.append(f"  {' ' * _MARKER_WIDTH}More: {doc_url(_DOCTOR_ROW_TOPICS[label])}")
+            lines.append(f"  {' ' * _MARKER_WIDTH}More: {doc_url(topic)}")
     return "\n".join(lines) + "\n"
