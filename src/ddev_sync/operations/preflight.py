@@ -38,6 +38,7 @@ from ddev_sync.operations.database import (
     read_remote_credentials,
     remote_tls_options,
 )
+from ddev_sync.operations.fake import parse_columns
 from ddev_sync.operations.files import validate_path_pairs
 from ddev_sync.operations.sanitize import SanitizeRule, active_rules
 from ddev_sync.transport.container import web_command
@@ -412,11 +413,14 @@ class PreflightOperation:
         form (`_check_sanitize_tables`) below, so the two can never quietly
         disagree about what counts as missing.
         """
-        required = _required_tables(active_rules(context))
-        if not required:
+        rules = active_rules(context)
+        required = _required_tables(rules)
+        if not required and not _fake_rules(rules):
             return
         tables = _remote_tables(context)
         problem = _first_missing_table_problem(context, required, tables)
+        if problem is None:
+            problem = _column_problem(context, rules, tables)
         if problem is not None:
             raise OperationError(problem)
 
@@ -500,13 +504,18 @@ class PreflightOperation:
         if not (report.ssh_ok and report.remote_path_ok):
             return None, ""
         try:
-            required = _required_tables(active_rules(context))
-            if not required:
+            rules = active_rules(context)
+            required = _required_tables(rules)
+            if not required and not _fake_rules(rules):
                 return None, ""
             tables = _remote_tables(context)
+            problem = _first_missing_table_problem(context, required, tables)
+            if problem is None:
+                # Inside the guard: a failed column query or a malformed
+                # `columns` mapping must be reported, not raised (see above).
+                problem = _column_problem(context, rules, tables)
         except OperationError as error:
             return False, str(error)
-        problem = _first_missing_table_problem(context, required, tables)
         if problem is not None:
             return False, problem
         plural = "table" if len(required) == 1 else "tables"
@@ -713,7 +722,91 @@ def _show_tables_result(context: ExecutionContext) -> tuple[RemoteCredentials, C
     return credentials, result
 
 
+def _remote_columns(context: ExecutionContext, tables: list[str]) -> set[tuple[str, str]]:
+    """Every (table, column) pair `tables` has on the remote, in one query.
+
+    Same credentials, TLS options and argv shape as the `SHOW TABLES` probe, so
+    the two can never disagree about how the remote is reached. `DATABASE()`
+    is the schema the connection selected (the trailing database-name argument),
+    so no schema name has to be interpolated.
+    """
+    credentials = read_remote_credentials(context)
+    names = ", ".join(
+        "'" + table.replace("\\", "\\\\").replace("'", "''") + "'" for table in tables
+    )
+    statement = (
+        "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS "
+        f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ({names})"
+    )
+    argv = _mysql_argv(credentials, remote_tls_options(context), statement)
+    result = context.runner.run(ssh_command(context.target, argv))
+    if not result.ok:
+        raise OperationError(
+            "could not list columns on the remote database to verify sanitize rules "
+            f"before the dump: {redact(result.stderr, credentials.password).strip()}"
+        )
+    # `--batch` separates the two columns with a tab; neither name can hold one.
+    return {
+        (table, column)
+        for table, _, column in (line.partition("\t") for line in result.stdout.splitlines())
+    }
+
+
+def _fake_rules(rules: list[SanitizeRule]) -> list[SanitizeRule]:
+    """The active `fake` rules that name a table (a rule without one fails at run time)."""
+    return [r for r in rules if r.operation == "fake" and _rule_table(r) is not None]
+
+
+def _column_problem(
+    context: ExecutionContext, rules: list[SanitizeRule], tables: set[str]
+) -> str | None:
+    """Query the columns of the fake rules' tables, then report the first one missing.
+
+    Runs only for tables that exist: a missing one is either already reported
+    (`_first_missing_table_problem`) or tolerated by its rule, and a tolerated
+    one has no columns to check. No fake rule left means no round trip at all.
+    """
+    present = sorted({str(_rule_table(r)) for r in _fake_rules(rules)} & tables)
+    if not present:
+        return None
+    return _first_missing_column_problem(rules, _remote_columns(context, present))
+
+
+def _first_missing_column_problem(
+    rules: list[SanitizeRule], columns: set[tuple[str, str]]
+) -> str | None:
+    """The message for the first fake column (or key column) the remote lacks, or `None`.
+
+    Names and the key are compared exactly as information_schema returned them,
+    case-sensitively - the UPDATE quotes them in backticks, and a column name
+    never folds case on any server. A table with no pair in `columns` was not
+    queried (missing or tolerated) and is skipped.
+    """
+    queried = {table for table, _ in columns}
+    for rule in _fake_rules(rules):
+        table = str(_rule_table(rule))
+        if table not in queried:
+            continue
+        key = str(rule.params.get("key") or "id")
+        wanted = [key, *(c.column for c in parse_columns(rule.name, rule.params.get("columns")))]
+        for column in wanted:
+            if (table, column) not in columns:
+                role = "key column" if column == key else "column"
+                return (
+                    f"sanitize rule {rule.name!r} names {role} {column!r} on table "
+                    f"{table!r}, which does not exist on the remote database. Nothing "
+                    "was downloaded or imported. Fix the column name in the rule - a "
+                    "typo here would make the sanitize step fail after the import, "
+                    "with production data already on this machine."
+                )
+    return None
+
+
 def _show_tables_argv(credentials: RemoteCredentials, tls: list[str]) -> list[str]:
+    return _mysql_argv(credentials, tls, "SHOW TABLES")
+
+
+def _mysql_argv(credentials: RemoteCredentials, tls: list[str], statement: str) -> list[str]:
     return [
         "mysql",
         f"--user={credentials.user}",
@@ -724,6 +817,6 @@ def _show_tables_argv(credentials: RemoteCredentials, tls: list[str]) -> list[st
         "--batch",
         "--skip-column-names",
         "--execute",
-        "SHOW TABLES",
+        statement,
         credentials.name,
     ]

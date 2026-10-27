@@ -1333,3 +1333,154 @@ def test_a_skipped_rules_table_is_not_required(tmp_path: Path) -> None:
         },
     )
     PreflightOperation().execute(context, {"sanitize_selected": True})
+
+
+def _fake_rule(**overrides: Any) -> dict[str, Any]:
+    rule: dict[str, Any] = {
+        "name": "fake-guests",
+        "operation": "fake",
+        "table": "reservations",
+        "columns": {"email": "email", "name": "name"},
+    }
+    return {**rule, **overrides}
+
+
+def _columns_runner(columns_stdout: str, tables: str = "reservations\n") -> FakeCommandRunner:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout=tables)  # SHOW TABLES
+    runner.script_prefix(["ssh"], stdout=columns_stdout)  # information_schema.COLUMNS
+    return runner
+
+
+def test_a_missing_fake_column_stops_the_sync_before_the_dump(tmp_path: Path) -> None:
+    runner = _columns_runner("reservations\tid\nreservations\tname\n")
+    context = context_with_rules(
+        runner, tmp_path, [_fake_rule(columns={"emial": "email", "name": "name"})]
+    )
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    message = str(caught.value)
+    assert "fake-guests" in message
+    assert "reservations" in message
+    assert "emial" in message
+    assert "Nothing was downloaded or imported." in message
+    assert len(runner.calls) == 3  # probe, SHOW TABLES, one column query
+
+
+def test_a_missing_key_column_stops_the_sync(tmp_path: Path) -> None:
+    runner = _columns_runner("reservations\tid\nreservations\temail\n")
+    context = context_with_rules(
+        runner, tmp_path, [_fake_rule(key="uid", columns={"email": "email"})]
+    )
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    message = str(caught.value)
+    assert "'uid'" in message
+    assert "Nothing was downloaded or imported." in message
+
+
+def test_present_columns_pass(tmp_path: Path) -> None:
+    runner = _columns_runner("reservations\tid\nreservations\temail\nreservations\tname\n")
+    context = context_with_rules(runner, tmp_path, [_fake_rule()])
+    PreflightOperation().execute(context, {"sanitize_selected": True})
+    remote = shlex.split(runner.calls[-1][-1])
+    query = remote[remote.index("--execute") + 1]
+    assert "information_schema.COLUMNS" in query
+    assert "TABLE_SCHEMA = DATABASE()" in query
+    assert "'reservations'" in query
+    assert "--skip-column-names" in remote
+
+
+def test_column_names_are_compared_case_sensitively(tmp_path: Path) -> None:
+    runner = _columns_runner("reservations\tid\nreservations\tEmail\n")
+    context = context_with_rules(runner, tmp_path, [_fake_rule(columns={"email": "email"})])
+    with pytest.raises(OperationError, match="'email'"):
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+
+
+def test_no_column_query_without_fake_rules(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="sys_log\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [{"name": "clear-log", "sql": "TRUNCATE TABLE sys_log", "requires_table": "sys_log"}],
+    )
+    PreflightOperation().execute(context, {"sanitize_selected": True})
+    assert not any("information_schema" in " ".join(call) for call in runner.calls)
+
+
+def test_a_tolerated_missing_table_skips_the_column_query(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="other\n")
+    context = context_with_rules(runner, tmp_path, [_fake_rule(tolerate_missing_table=True)])
+    PreflightOperation().execute(context, {"sanitize_selected": True})
+    assert len(runner.calls) == 2
+
+
+def test_a_failed_column_query_raises_with_the_redacted_stderr(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="reservations\n")
+    runner.script_prefix(["ssh"], returncode=1, stderr="denied using password p")
+    context = context_with_rules(runner, tmp_path, [_fake_rule()])
+    with pytest.raises(OperationError, match="could not list columns") as caught:
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+    assert "using password p" not in str(caught.value)
+
+
+def test_doctor_reports_a_missing_column_on_the_sanitize_row(tmp_path: Path) -> None:
+    runner = _columns_runner("reservations\tid\n")
+    context = context_with_rules(runner, tmp_path, [_fake_rule()])
+    report = PreflightOperation().check(context)
+    assert report.sanitize_tables_ok is False
+    assert "email" in report.sanitize_tables_detail
+    assert "fake-guests" in report.sanitize_tables_detail
+
+
+def test_doctor_reports_a_failed_column_query_without_raising(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="reservations\n")
+    runner.script_prefix(["ssh"], returncode=1, stderr="boom")
+    context = context_with_rules(runner, tmp_path, [_fake_rule()])
+    report = PreflightOperation().check(context)
+    assert report.sanitize_tables_ok is False
+    assert "boom" in report.sanitize_tables_detail
+
+
+def test_doctor_counts_present_columns_as_ok(tmp_path: Path) -> None:
+    runner = _columns_runner("reservations\tid\nreservations\temail\nreservations\tname\n")
+    context = context_with_rules(runner, tmp_path, [_fake_rule()])
+    report = PreflightOperation().check(context)
+    assert report.sanitize_tables_ok is True
+
+
+def test_a_fake_rule_without_a_table_is_left_to_the_run(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    context = context_with_rules(
+        runner, tmp_path, [{"name": "fake-x", "operation": "fake", "columns": {"a": "name"}}]
+    )
+    PreflightOperation().execute(context, {"sanitize_selected": True})
+    assert len(runner.calls) == 1  # nothing to list, nothing to query
+
+
+def test_a_tolerated_fake_rule_whose_table_exists_is_still_column_checked(tmp_path: Path) -> None:
+    runner = _columns_runner("reservations\tid\n")
+    context = context_with_rules(runner, tmp_path, [_fake_rule(tolerate_missing_table=True)])
+    with pytest.raises(OperationError, match="'email'"):
+        PreflightOperation().execute(context, {"sanitize_selected": True})
+
+
+def test_a_tolerated_missing_table_does_not_hide_another_rules_column_check(
+    tmp_path: Path,
+) -> None:
+    runner = _columns_runner("reservations\tid\n")
+    context = context_with_rules(
+        runner,
+        tmp_path,
+        [
+            _fake_rule(name="fake-gone", table="gone", tolerate_missing_table=True),
+            _fake_rule(),
+        ],
+    )
+    with pytest.raises(OperationError, match="fake-guests"):
+        PreflightOperation().execute(context, {"sanitize_selected": True})
