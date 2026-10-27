@@ -185,9 +185,11 @@ class PreflightOperation:
             # the selection: a `files`-only sync never reads credentials, and
             # refusing it over them would break a run that was going to work.
             context.progress("reading the remote database credentials")
-            ok, detail = self._check_credentials(context, report)
+            ok, detail, doc = self._credentials_probe(context, report)
             if ok is False:
-                raise OperationError(detail)
+                # The slug the credential source's own error carried, so the
+                # link stays the specific entry rather than the preflight area.
+                raise OperationError(detail, doc=doc)
         if bool(params.get("sanitize_selected", False)):
             context.progress("checking the tables the sanitize rules name")
             self._probe_sanitize_tables(context)
@@ -450,10 +452,18 @@ class PreflightOperation:
         if problem is not None:
             raise OperationError(problem, doc="column-named-by-a-fake-rule-is-missing")
 
-    @staticmethod
+    @classmethod
     def _check_credentials(
-        context: ExecutionContext, report: PreflightReport
+        cls, context: ExecutionContext, report: PreflightReport
     ) -> tuple[bool | None, str]:
+        """`_credentials_probe` without the docs slug, for `check()`."""
+        ok, detail, _ = cls._credentials_probe(context, report)
+        return ok, detail
+
+    @staticmethod
+    def _credentials_probe(
+        context: ExecutionContext, report: PreflightReport
+    ) -> tuple[bool | None, str, str | None]:
         """Whether the configured credential source actually yields credentials.
 
         The non-raising form, like `_check_sanitize_tables` below: `check()`
@@ -483,7 +493,7 @@ class PreflightOperation:
         embed an unredactable password-bearing `stderr`.
         """
         if not (report.ssh_ok and report.remote_path_ok):
-            return None, ""
+            return None, "", None
         source = context.config("database.remote_credentials", default="env")
         try:
             credentials = read_remote_credentials(context)
@@ -500,10 +510,9 @@ class PreflightOperation:
             # (`_check_sanitize_tables`) returns `str(error)` unclipped and
             # un-collapsed: its messages are single-line and authored by this
             # module, not reflecting arbitrary remote output.
-            return False, _bounded_front(" ".join(str(error).split()))
-        return True, (
-            f"{source}: {credentials.user}@{credentials.host}:{credentials.port}/{credentials.name}"
-        )
+            return False, _bounded_front(" ".join(str(error).split())), error.doc
+        where = f"{credentials.user}@{credentials.host}:{credentials.port}/{credentials.name}"
+        return True, f"{source}: {where}", None
 
     @staticmethod
     def _check_sanitize_tables(

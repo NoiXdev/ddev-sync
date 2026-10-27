@@ -296,7 +296,10 @@ class DbDumpOperation:
             destination.unlink(missing_ok=True)
             stderr = redact(result.stderr, credentials.password).strip()
             message = f"the remote dump failed (exit {result.returncode}): {stderr}"
-            if "certificate" in stderr.lower() or "ssl" in stderr.lower():
+            lowered = stderr.lower()
+            # The phrases the clients print for a certificate failure, not a
+            # bare "ssl": a host named `ssl-db` is not a TLS problem.
+            if any(p in lowered for p in ("certificate", "ssl connection error", "tls/ssl error")):
                 # mysqldump verifies the server certificate when the server
                 # offers TLS, and a self-signed one fails with a message that
                 # never mentions the setting that relaxes it.

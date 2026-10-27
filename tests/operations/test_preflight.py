@@ -316,6 +316,7 @@ def test_execute_refuses_a_database_run_whose_credentials_do_not_resolve(tmp_pat
             make_context(runner, tmp_path), {"db_selected": True, "sanitize_selected": False}
         )
     assert "no environment file found" in str(caught.value)
+    assert (doc_link(caught.value) or "").endswith("#no-environment-file-on-the-remote")
 
 
 def test_execute_lets_a_files_only_run_through_without_credentials(tmp_path: Path) -> None:

@@ -437,6 +437,16 @@ def test_a_failing_dump_reports_the_remote_error(tmp_path: Path) -> None:
     assert (doc_link(caught.value) or "").endswith("#database")
 
 
+def test_a_host_named_ssl_db_is_not_a_certificate_failure(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout=f"/srv/app/.env.local\n{REMOTE_ENV}")
+    runner.script_prefix(["ssh"], returncode=2, stderr="Unknown MySQL server host 'ssl-db'")
+    with pytest.raises(OperationError) as caught:
+        DbDumpOperation().execute(make_context(runner, tmp_path), {})
+    assert "verify_server_cert" not in str(caught.value)
+    assert (doc_link(caught.value) or "").endswith("#database")
+
+
 @pytest.mark.parametrize(
     "stderr",
     [
