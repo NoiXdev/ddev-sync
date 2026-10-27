@@ -228,16 +228,20 @@ def test_a_second_sync_gives_the_same_fake_values(stack: Stack, cell: Cell) -> N
     if cell.name != "mxlaravel":
         pytest.skip("one cell proves determinism; the value is a function of table, column, key")
     steps = ("--target", "production", "--steps", "db,sanitize", "--yes")
-    first = stack.engine(*steps)
-    assert first.returncode == 0, f"stdout:\n{first.stdout}\n\nstderr:\n{first.stderr}"
-    before = stack.sql("SELECT id, email FROM users ORDER BY id")
-    assert before.count("@example.fake") == 2, before
-    # The second run re-imports production's rows and fakes them again: equal
-    # values mean they depend on the row, not on the run.
-    second = stack.engine(*steps)
-    assert second.returncode == 0, f"stdout:\n{second.stdout}\n\nstderr:\n{second.stderr}"
-    assert stack.sql("SELECT id, email FROM users ORDER BY id") == before
-    _restore_whole_sync(stack)
+    # In a `finally`: a failed assertion below must not leave the shared stack
+    # without the setup step's marker table for the tests that follow.
+    try:
+        first = stack.engine(*steps)
+        assert first.returncode == 0, f"stdout:\n{first.stdout}\n\nstderr:\n{first.stderr}"
+        before = stack.sql("SELECT id, email FROM users ORDER BY id")
+        assert before.count("@example.fake") == 2, before
+        # The second run re-imports production's rows and fakes them again:
+        # equal values mean they depend on the row, not on the run.
+        second = stack.engine(*steps)
+        assert second.returncode == 0, f"stdout:\n{second.stdout}\n\nstderr:\n{second.stderr}"
+        assert stack.sql("SELECT id, email FROM users ORDER BY id") == before
+    finally:
+        _restore_whole_sync(stack)
 
 
 def _restore_whole_sync(stack: Stack) -> None:

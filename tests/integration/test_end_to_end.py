@@ -194,12 +194,14 @@ def test_sanitizing_removes_the_real_email_addresses(project: Path, tmp_path: Pa
     assert code == 0
     emails = local_query("SELECT GROUP_CONCAT(email) FROM fe_users")
     assert "customer.example" not in emails
+    assert emails
     assert all(e.endswith("@example.fake") for e in emails.split(",") if e)
     fe_names = local_query("SELECT GROUP_CONCAT(first_name, last_name, name) FROM fe_users")
     for seeded in ("Renate", "Realperson", "Anton", "Otherperson"):
         assert seeded not in fe_names
     be_user_emails = local_query("SELECT GROUP_CONCAT(email) FROM be_users")
     assert "customer.example" not in be_user_emails
+    assert be_user_emails
     assert all(e.endswith("@example.fake") for e in be_user_emails.split(",") if e)
     assert "Realeditor" not in local_query("SELECT realName FROM be_users WHERE uid = 1")
     assert local_query("SELECT password FROM be_users WHERE uid = 1") == "$argon2i$disabled"

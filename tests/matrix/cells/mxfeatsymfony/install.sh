@@ -23,9 +23,11 @@ doctrine_migrations:
     migrations_paths:
         'DoctrineMigrations': '%kernel.project_dir%/migrations'
 YAML
-# The container the console compiled before this file existed is stale when the
-# file lands within the same second as that cache (mtime granularity), and the
-# migrate below then saw no migrations in some runs (intermittent; cache removed to be safe).
+# Suspected, not proven: the container the console compiled before this file
+# existed goes stale when the file lands within the same second as that cache
+# (mtime granularity), and the migrate below then saw no migrations in some
+# runs (intermittent). The cache is removed to be safe; the cause was never
+# isolated.
 rm -rf var/cache
 cat > migrations/Version20260101000000.php <<'PHP'
 <?php
