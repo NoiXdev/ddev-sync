@@ -1,3 +1,4 @@
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -368,6 +369,40 @@ def test_the_dump_command_carries_the_credentials_and_flags(tmp_path: Path) -> N
     assert "--single-transaction" in remote
     assert "acme_prod" in remote
     assert "--user=acme" in remote
+
+
+def _with_verify(verify: object) -> dict[str, Any]:
+    return {**ENV_PROFILE, "database": {**ENV_PROFILE["database"], "verify_server_cert": verify}}
+
+
+@pytest.mark.parametrize("verify", [None, True])
+def test_the_dump_verifies_the_server_certificate_unless_told_not_to(
+    verify: object, tmp_path: Path
+) -> None:
+    runner = dump_runner()
+    config = ENV_PROFILE if verify is None else _with_verify(verify)
+    DbDumpOperation().execute(make_context(runner, tmp_path, config), {})
+    assert "ssl-verify-server-cert" not in runner.calls[1][-1]
+
+
+def test_a_project_can_turn_the_dumps_certificate_check_off(tmp_path: Path) -> None:
+    # A MariaDB 11.4+ client against MySQL's self-signed certificate refuses
+    # outright; `--loose-` keeps a MySQL client, which lacks the option, working.
+    runner = dump_runner()
+    DbDumpOperation().execute(make_context(runner, tmp_path, _with_verify(False)), {})
+    remote = shlex.split(runner.calls[1][-1])
+    assert "--loose-skip-ssl-verify-server-cert" in remote
+    # An option, so before the database name, which mysqldump reads last.
+    assert remote.index("--loose-skip-ssl-verify-server-cert") < remote.index("acme_prod")
+
+
+@pytest.mark.parametrize("verify", ["no", "false", 0])
+def test_a_certificate_setting_that_is_not_a_boolean_is_refused(
+    verify: object, tmp_path: Path
+) -> None:
+    # "no" turning the check off, or quietly leaving it on, would both be guesses.
+    with pytest.raises(OperationError, match="verify_server_cert must be true or false"):
+        DbDumpOperation().execute(make_context(dump_runner(), tmp_path, _with_verify(verify)), {})
 
 
 def test_the_dump_is_streamed_rather_than_buffered(tmp_path: Path) -> None:

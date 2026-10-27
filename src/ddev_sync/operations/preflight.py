@@ -33,7 +33,11 @@ from typing import Any
 
 from ddev_sync.config.models import Provider
 from ddev_sync.operations.base import ExecutionContext, OperationError, redact
-from ddev_sync.operations.database import RemoteCredentials, read_remote_credentials
+from ddev_sync.operations.database import (
+    RemoteCredentials,
+    read_remote_credentials,
+    remote_tls_options,
+)
 from ddev_sync.operations.files import validate_path_pairs
 from ddev_sync.operations.sanitize import SanitizeRule, parse_rules
 from ddev_sync.transport.container import web_command
@@ -704,17 +708,19 @@ def _show_tables_result(context: ExecutionContext) -> tuple[RemoteCredentials, C
     is made.
     """
     credentials = read_remote_credentials(context)
-    result = context.runner.run(ssh_command(context.target, _show_tables_argv(credentials)))
+    argv = _show_tables_argv(credentials, remote_tls_options(context))
+    result = context.runner.run(ssh_command(context.target, argv))
     return credentials, result
 
 
-def _show_tables_argv(credentials: RemoteCredentials) -> list[str]:
+def _show_tables_argv(credentials: RemoteCredentials, tls: list[str]) -> list[str]:
     return [
         "mysql",
         f"--user={credentials.user}",
         f"--password={credentials.password}",
         f"--host={credentials.host}",
         f"--port={credentials.port}",
+        *tls,
         "--batch",
         "--skip-column-names",
         "--execute",

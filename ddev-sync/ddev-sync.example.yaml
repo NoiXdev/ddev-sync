@@ -82,6 +82,10 @@ version: 1
 #   env_file: .env            # the remote .env's name, when it differs from
 #                             # this project's own env.file below; falls back
 #                             # to env.file when unset
+#   verify_server_cert: false # skip the remote client's check of the database
+#                             # server's TLS certificate. Off only by choice:
+#                             # for a MariaDB 11.4+ client against MySQL's
+#                             # self-signed certificate, e.g. under provider: docker
 
 # The URL this site serves in production. WordPress rewrites it to the local
 # DDEV address after the import (`wp search-replace`), so a sync cannot do

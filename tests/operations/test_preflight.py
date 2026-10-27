@@ -1,5 +1,6 @@
 import dataclasses
 import os
+import shlex
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -1277,3 +1278,27 @@ def test_an_ssh_failure_about_forwarding_says_what_to_turn_on(tmp_path: Path) ->
 
     with pytest.raises(OperationError, match="AllowTcpForwarding"):
         PreflightOperation().execute(make_context(runner, tmp_path), {})
+
+
+def test_the_table_probe_verifies_the_server_certificate_by_default(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout="sessions\n")
+    verify_credentials(context_with_rules(runner, tmp_path, []))
+    assert "ssl-verify-server-cert" not in runner.calls[-1][-1]
+
+
+def test_the_table_probe_follows_the_projects_certificate_setting(tmp_path: Path) -> None:
+    # Measured: the endpoint's MariaDB 11.4 client against Percona MySQL 8.4
+    # failed here with "self-signed certificate in certificate chain".
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout="sessions\n")
+    context = context_with_rules(runner, tmp_path, [])
+    context = make_context(
+        runner,
+        tmp_path,
+        database={**context.merged.data["database"], "verify_server_cert": False},
+    )
+    verify_credentials(context)
+    remote = shlex.split(runner.calls[-1][-1])
+    assert "--loose-skip-ssl-verify-server-cert" in remote
+    assert remote.index("--loose-skip-ssl-verify-server-cert") < remote.index("--execute")

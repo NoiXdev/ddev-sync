@@ -282,7 +282,9 @@ class DbDumpOperation:
         """Dump the remote database into `downloads_dir/dump.sql`."""
         credentials = read_remote_credentials(context)
         destination = context.downloads_dir / DUMP_FILENAME
-        argv = ssh_command(context.target, _mysqldump_argv(credentials))
+        argv = ssh_command(
+            context.target, _mysqldump_argv(credentials, remote_tls_options(context))
+        )
         result = context.runner.run(argv, stdout_path=destination)
         if not result.ok:
             destination.unlink(missing_ok=True)
@@ -299,13 +301,14 @@ class DbDumpOperation:
             )
 
 
-def _mysqldump_argv(credentials: RemoteCredentials) -> list[str]:
+def _mysqldump_argv(credentials: RemoteCredentials, tls: list[str]) -> list[str]:
     return [
         "mysqldump",
         f"--user={credentials.user}",
         f"--password={credentials.password}",
         f"--host={credentials.host}",
         f"--port={credentials.port}",
+        *tls,
         *MYSQLDUMP_FLAGS,
         credentials.name,
     ]
@@ -358,11 +361,40 @@ LOCAL_DB_PORT = "3306"
 # connects.
 #
 # The remote side is not covered by this. That traffic goes through ssh, and
-# the remote's own client decides its policy - see
-# `preflight.py::_show_tables_argv`, which deliberately does not pass this.
+# the remote's own client decides its policy - unless the project turns its
+# verification off, see `remote_tls_options` below.
 #
 # The spelling is the MariaDB client's, which the Dockerfile pins.
 LOCAL_DB_TLS_OPTION = "--skip-ssl-verify-server-cert"
+
+VERIFY_SERVER_CERT_KEY = "database.verify_server_cert"
+
+# What `database.verify_server_cert: false` adds to every remote `mysql` and
+# `mysqldump`. Opt-in, because it gives up the client's check of the server's
+# certificate, and on by default nowhere: the remote client is whatever that
+# machine has, and its policy is the operator's.
+#
+# It exists for a MariaDB client from 11.4 on against a server whose
+# certificate it cannot verify. That client verifies by default and, against a
+# MariaDB server, does it through the password; against MySQL - measured with
+# the endpoint's 11.4 client and Percona MySQL 8.4 on the Docker host - it
+# meets the server's own self-signed certificate and refuses with "TLS/SSL
+# error: self-signed certificate in certificate chain".
+#
+# `--loose-` because the remote client may be MySQL's, which has no such
+# option and would otherwise refuse to start; with the prefix it is ignored.
+REMOTE_SKIP_VERIFY_OPTION = "--loose-skip-ssl-verify-server-cert"
+
+
+def remote_tls_options(context: ExecutionContext) -> list[str]:
+    """The TLS options for a remote `mysql` or `mysqldump`, from the project's setting."""
+    verify = context.setting(VERIFY_SERVER_CERT_KEY)
+    if verify is None or verify is True:
+        return []
+    if verify is False:
+        return [REMOTE_SKIP_VERIFY_OPTION]
+    raise OperationError(f"{VERIFY_SERVER_CERT_KEY} must be true or false, got {verify!r}")
+
 
 _DEFINER = re.compile(rb"\sDEFINER=`[^`]*`@`[^`]*`")
 
