@@ -70,6 +70,19 @@ class SanitizeRule:
     # `requires_table` would be redundant there and, if ever read by mistake
     # instead of `params["table"]`, silently wrong.
     requires_table: str | None = None
+    # Marks a `sql` rule as one that hides personal data (a rewritten e-mail
+    # column, a blanked name) as opposed to a protective one (truncating
+    # sessions, dropping tokens). The `sanitize.disable_sanitize*` switches
+    # tell the two apart so a developer can keep realistic data without ever
+    # switching off protection. Only accepted on `sql` rules: an `operation`
+    # rule's nature is fixed by the operation itself (`fake` hides personal
+    # data, `reset_passwords` protects), so a marker there could only
+    # contradict it.
+    personal_data: bool = False
+
+    @property
+    def is_personal_data(self) -> bool:
+        return self.operation == "fake" or self.personal_data
 
 
 class SanitizeOperationHandler(Protocol):
@@ -81,7 +94,14 @@ class SanitizeOperationHandler(Protocol):
 
 SANITIZE_OPERATIONS: dict[str, SanitizeOperationHandler] = {}
 
-_RESERVED = {"name", "sql", "operation", "tolerate_missing_table", "requires_table"}
+_RESERVED = {
+    "name",
+    "sql",
+    "operation",
+    "tolerate_missing_table",
+    "requires_table",
+    "personal_data",
+}
 
 
 def parse_rules(context: ExecutionContext) -> list[SanitizeRule]:
@@ -111,6 +131,18 @@ def _parse_rule(entry: Mapping[str, Any], context: ExecutionContext) -> Sanitize
             "'operation' rule already declares its table through its own 'table' "
             "parameter"
         )
+    personal_data = entry.get("personal_data", False)
+    # A real boolean, not bool(): `personal_data: "no"` would be truthy and
+    # silently classify a rule the opposite way from what its author meant.
+    if not isinstance(personal_data, bool):
+        raise OperationError(
+            f"sanitize rule {name!r}: 'personal_data' must be true or false, got {personal_data!r}"
+        )
+    if "personal_data" in entry and operation is not None:
+        raise OperationError(
+            f"sanitize rule {name!r} sets 'personal_data' but is an 'operation' rule; only "
+            "a 'sql' rule can be marked (a 'fake' operation is always personal data)"
+        )
     raw_params = {key: value for key, value in entry.items() if key not in _RESERVED}
     if operation == "fake":
         # Validated here, not when the rule runs, so preflight rejects a typo in
@@ -137,6 +169,7 @@ def _parse_rule(entry: Mapping[str, Any], context: ExecutionContext) -> Sanitize
         requires_table=None
         if requires_table is None
         else str(expand_value(str(requires_table), context)),
+        personal_data=personal_data,
     )
 
 

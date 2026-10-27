@@ -349,3 +349,44 @@ def test_the_local_mysql_argv_relaxes_tls_verification(tmp_path: Path) -> None:
     # measurements behind the option.
     argv = local_mysql_argv(make_context(FakeCommandRunner(), tmp_path), "db")
     assert LOCAL_DB_TLS_OPTION in argv
+
+
+def _one_rule(tmp_path: Path, **rule: Any) -> SanitizeRule:
+    config = {"sanitize": {"rules": [{"name": "r", **rule}]}}
+    return parse_rules(make_context(FakeCommandRunner(), tmp_path, **config))[0]
+
+
+def test_a_fake_rule_is_personal_data(tmp_path: Path) -> None:
+    rule = _one_rule(tmp_path, operation="fake", table="users", columns={"mail": "email"})
+    assert rule.is_personal_data is True
+
+
+def test_a_marked_sql_rule_is_personal_data(tmp_path: Path) -> None:
+    rule = _one_rule(tmp_path, sql="UPDATE users SET mail = ''", personal_data=True)
+    assert rule.personal_data is True
+    assert rule.is_personal_data is True
+
+
+def test_an_unmarked_rule_is_protective(tmp_path: Path) -> None:
+    rule = _one_rule(tmp_path, sql="TRUNCATE TABLE sys_log")
+    assert rule.personal_data is False
+    assert rule.is_personal_data is False
+
+
+def test_reset_passwords_is_protective(tmp_path: Path) -> None:
+    rule = _one_rule(tmp_path, operation="reset_passwords", table="users")
+    assert rule.is_personal_data is False
+
+
+def test_personal_data_must_be_a_boolean(tmp_path: Path) -> None:
+    with pytest.raises(OperationError) as caught:
+        _one_rule(tmp_path, sql="SELECT 1", personal_data="yes")
+    assert "'r'" in str(caught.value)
+    assert "personal_data" in str(caught.value)
+
+
+def test_personal_data_only_on_sql_rules(tmp_path: Path) -> None:
+    with pytest.raises(OperationError) as caught:
+        _one_rule(tmp_path, operation="reset_passwords", table="users", personal_data=True)
+    assert "'r'" in str(caught.value)
+    assert "personal_data" in str(caught.value)
