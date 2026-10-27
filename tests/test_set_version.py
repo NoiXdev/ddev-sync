@@ -33,6 +33,16 @@ services:
 """
 
 
+README = """\
+# ddev-sync
+
+```bash
+ddev add-on get NoiXdev/ddev-sync --version v0.1.0
+```
+
+Other commands such as `ddev add-on get NoiXdev/other --version v9.9.9` stay put.
+"""
+
 UV_LOCK = """\
 version = 1
 
@@ -57,6 +67,7 @@ def build_tree(root: Path) -> None:
     (root / "version.json").write_text(VERSION_JSON, encoding="utf-8")
     (root / "docker-compose.ddev-sync.yaml").write_text(COMPOSE, encoding="utf-8")
     (root / "uv.lock").write_text(UV_LOCK, encoding="utf-8")
+    (root / "README.md").write_text(README, encoding="utf-8")
     (root / "ddev-sync").mkdir()
     (root / "ddev-sync" / "prepare-sidecar.sh").write_text(SIDECAR, encoding="utf-8")
     (root / "endpoint").mkdir()
@@ -76,6 +87,7 @@ def test_it_writes_the_version_into_every_target(tmp_path: Path) -> None:
     changed = rewrite("0.2.0", root=tmp_path)
 
     assert sorted(path.name for path in changed) == [
+        "README.md",
         "docker-compose.ddev-sync-endpoint.yaml",
         "docker-compose.ddev-sync.yaml",
         "prepare-sidecar.sh",
@@ -95,6 +107,10 @@ def test_it_writes_the_version_into_every_target(tmp_path: Path) -> None:
         "ddev-sync-endpoint:0.2.0"
         in (tmp_path / "endpoint" / "docker-compose.ddev-sync-endpoint.yaml").read_text()
     )
+    readme = (tmp_path / "README.md").read_text()
+    assert "ddev add-on get NoiXdev/ddev-sync --version v0.2.0\n" in readme
+    # Anchored on this project's own line: another add-on's pin is not ours.
+    assert "NoiXdev/other --version v9.9.9" in readme
 
 
 def test_a_prerelease_lands_as_semver_everywhere_but_pep440_in_pyproject(
@@ -123,6 +139,11 @@ def test_a_prerelease_lands_as_semver_everywhere_but_pep440_in_pyproject(
     assert (
         "ddev-sync-endpoint:0.1.0-rc.1"
         in (tmp_path / "endpoint" / "docker-compose.ddev-sync-endpoint.yaml").read_text()
+    )
+    # The README command pins a git tag, which is `v` + the semver form.
+    assert (
+        "ddev add-on get NoiXdev/ddev-sync --version v0.1.0-rc.1\n"
+        in (tmp_path / "README.md").read_text()
     )
 
 
@@ -204,6 +225,17 @@ def test_it_refuses_a_file_whose_pattern_matches_twice(tmp_path: Path) -> None:
     before = snapshot(tmp_path)
 
     with pytest.raises(ValueError, match="expected exactly one version to rewrite, found 2"):
+        rewrite("0.4.0", root=tmp_path)
+
+    assert snapshot(tmp_path) == before
+
+
+def test_it_refuses_a_readme_without_the_install_command(tmp_path: Path) -> None:
+    build_tree(tmp_path)
+    (tmp_path / "README.md").write_text("# ddev-sync\n", encoding="utf-8")
+    before = snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match=r"README\.md: expected exactly one"):
         rewrite("0.4.0", root=tmp_path)
 
     assert snapshot(tmp_path) == before

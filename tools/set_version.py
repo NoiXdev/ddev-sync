@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write one version into every file in this repository that names one.
 
-Six files carry a version and three different forms of it, which is why this
+Seven files carry a version and three different forms of it, which is why this
 exists rather than a `sed` line in the release workflow:
 
 - `pyproject.toml` feeds `importlib.metadata`, so it must hold a PEP 440
@@ -23,6 +23,10 @@ exists rather than a `sed` line in the release workflow:
   tag, in the same semver form and for the same reason: it is the template an
   operator copies into a production stack, and a tag nobody published is a
   stack that does not start.
+- `README.md` quick start installs the add-on from a git tag, which is `v` +
+  the semver (the release tags are `v0.1.0-rc.4`). Left alone it would name the
+  previous release from the day after every release, and a reader following it
+  would install the wrong version.
 - `uv.lock` records the root project's own version, and `uv run` rewrites it to
   match `pyproject.toml` on sight, so it holds the PEP 440 form too; a release
   that bumped `pyproject.toml` alone would be followed by the next `uv run`
@@ -110,6 +114,14 @@ TARGETS: tuple[Target, ...] = (
     (
         "endpoint/docker-compose.ddev-sync-endpoint.yaml",
         re.compile(r"ddev-sync-endpoint:(?P<version>[\w.+-]+)"),
+        _unchanged,
+    ),
+    # Anchored on the whole command rather than on the version: a README is
+    # prose, and another version-shaped string in it must never be rewritten.
+    # The `v` sits outside the group, so the new version keeps its tag prefix.
+    (
+        "README.md",
+        re.compile(r"(?m)^ddev add-on get NoiXdev/ddev-sync --version v(?P<version>[\w.+-]+)$"),
         _unchanged,
     ),
     # Anchored on the project's own block: every other package has a
