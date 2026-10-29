@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from ddev_sync.config.merge import LayerDoc, merge_layers
-from ddev_sync.config.models import Layout, ResolvedTarget, Stage
+from ddev_sync.config.models import Layout, Provider, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.docs import doc_link
 from ddev_sync.operations.base import ExecutionContext, OperationError
@@ -48,6 +48,7 @@ def make_context(
     config: dict[str, Any] | None = None,
     *,
     layout: Layout = Layout.PLAIN,
+    provider: Provider = Provider.SERVER,
 ) -> ExecutionContext:
     return ExecutionContext(
         project=DdevProject(name="acme", type="typo3", docroot="public", root=root),
@@ -59,6 +60,7 @@ def make_context(
             path="/srv/app/",
             stage=Stage.PRODUCTION,
             layout=layout,
+            provider=provider,
         ),
         merged=merge_layers([LayerDoc("profile", config if config is not None else ENV_PROFILE)]),
         runner=runner,
@@ -568,3 +570,112 @@ def test_the_remote_env_read_is_marked_sensitive(tmp_path: Path) -> None:
     runner = env_runner()
     read_remote_credentials(make_context(runner, tmp_path))
     assert runner.invocations[0].sensitive is True
+
+
+# --- the endpoint handover file ----------------------------------------------
+
+HANDOVER_PATH = "/run/ddev-sync/app.env"
+HANDOVER = (
+    "# ddev-sync endpoint handover v1\n"
+    "DB_DATABASE=acme\n"
+    "DB_USERNAME=acme\n"
+    "DB_HOST=db\n"
+    "DB_PORT=3306\n"
+    "DB_PASSWORD= pa'ss\"#=$ word \n"
+)
+HANDOVER_PASSWORD = " pa'ss\"#=$ word "
+LARAVEL_MAP: dict[str, str] = {
+    "name": "DB_DATABASE",
+    "user": "DB_USERNAME",
+    "password": "DB_PASSWORD",
+    "host": "DB_HOST",
+    "port": "DB_PORT",
+}
+LARAVEL_PROFILE: dict[str, Any] = {
+    "database": {"remote_credentials": "env", "env_map": LARAVEL_MAP}
+}
+
+
+def handover_runner(stdout: str, path: str = HANDOVER_PATH) -> FakeCommandRunner:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout=f"{path}\n{stdout}")
+    return runner
+
+
+def docker_context(runner: FakeCommandRunner, root: Path) -> ExecutionContext:
+    return make_context(runner, root, LARAVEL_PROFILE, provider=Provider.DOCKER)
+
+
+def test_under_docker_the_handover_file_is_the_last_candidate(tmp_path: Path) -> None:
+    runner = handover_runner(HANDOVER)
+    read_remote_credentials(docker_context(runner, tmp_path))
+    probe = runner.calls[0][-1]
+    assert probe.index("/srv/app/.env ]") < probe.index(HANDOVER_PATH)
+
+
+def test_under_server_the_handover_file_is_never_probed(tmp_path: Path) -> None:
+    runner = handover_runner(HANDOVER, "/srv/app/.env")
+    read_remote_credentials(make_context(runner, tmp_path, LARAVEL_PROFILE))
+    assert HANDOVER_PATH not in runner.calls[0][-1]
+
+
+def test_the_handover_file_is_read_verbatim(tmp_path: Path) -> None:
+    credentials = read_remote_credentials(docker_context(handover_runner(HANDOVER), tmp_path))
+    assert credentials.password == HANDOVER_PASSWORD
+    assert credentials.host == "db"
+
+
+def test_an_empty_handover_value_is_reported_as_not_set(tmp_path: Path) -> None:
+    body = HANDOVER.replace(HANDOVER_PASSWORD, "")
+    with pytest.raises(OperationError, match="DB_PASSWORD is not set") as caught:
+        read_remote_credentials(docker_context(handover_runner(body), tmp_path))
+    link = doc_link(caught.value)
+    assert link is not None
+    assert link.endswith("#variable-missing-in-the-remote-env-file")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "DB_HOST=db\n",
+        "# ddev-sync endpoint handover v2\nDB_HOST=db\n",
+        "# ddev-sync endpoint handover v1\r\nDB_HOST=db\r\n",
+        "# ddev-sync endpoint handover v1\nnot an assignment\n",
+        "# ddev-sync endpoint handover v1\nDB_HOST=db",
+        "",
+    ],
+)
+def test_a_handover_file_that_is_not_one_is_refused(tmp_path: Path, body: str) -> None:
+    with pytest.raises(OperationError, match=HANDOVER_PATH) as caught:
+        read_remote_credentials(docker_context(handover_runner(body), tmp_path))
+    link = doc_link(caught.value)
+    assert link is not None
+    assert link.endswith("#endpoint-handover-file-unreadable")
+
+
+def test_a_configured_env_file_naming_the_handover_path_uses_the_handover_parser(
+    tmp_path: Path,
+) -> None:
+    config = {"database": {**LARAVEL_PROFILE["database"], "env_file": [HANDOVER_PATH]}}
+    runner = handover_runner(HANDOVER)
+    credentials = read_remote_credentials(make_context(runner, tmp_path, config))
+    assert credentials.password == HANDOVER_PASSWORD
+    assert f"if [ -f {HANDOVER_PATH} ]" in runner.calls[0][-1]
+
+
+def test_a_mounted_env_file_still_wins_under_docker(tmp_path: Path) -> None:
+    plain = "DB_DATABASE=m\nDB_USERNAME=m\nDB_HOST=h\nDB_PORT=1\nDB_PASSWORD='quoted'\n"
+    runner = handover_runner(plain, "/srv/app/.env")
+    assert read_remote_credentials(docker_context(runner, tmp_path)).password == "quoted"
+
+
+def test_the_missing_file_message_under_docker_names_the_export_list(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=9)
+    with pytest.raises(OperationError) as caught:
+        read_remote_credentials(docker_context(runner, tmp_path))
+    assert HANDOVER_PATH in str(caught.value)
+    assert "DDEV_SYNC_EXPORT_ENV" in str(caught.value)
+    link = doc_link(caught.value)
+    assert link is not None
+    assert link.endswith("#no-environment-file-on-the-remote")

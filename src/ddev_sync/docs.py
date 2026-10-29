@@ -76,6 +76,7 @@ ENTRIES: tuple[str, ...] = (
     "endpoint-export-env-name-invalid",
     "endpoint-export-env-variable-unset",
     "endpoint-export-env-value-has-a-newline",
+    "endpoint-handover-file-unreadable",
     # targets
     "unknown-target",
     "no-targets-defined",

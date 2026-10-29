@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ddev_sync.config.models import Provider
 from ddev_sync.operations.base import ExecutionContext, OperationError, confirm, redact
 from ddev_sync.transport.ssh import ssh_command
 
@@ -33,6 +34,12 @@ _REQUIRED = ("name", "user", "password", "host", "port")
 DATABASE_ENV_FILE_KEY = "database.env_file"
 
 _DEFAULT_ENV_FILES = (".env.local", ".env")
+
+# Where the docker endpoint writes the variables it was told to export, and the
+# first line it writes to say so (endpoint/ holds the writing side of this
+# contract).
+HANDOVER_PATH = "/run/ddev-sync/app.env"
+HANDOVER_MARKER = "# ddev-sync endpoint handover v1"
 
 
 @dataclass(frozen=True)
@@ -114,9 +121,10 @@ def _from_config(context: ExecutionContext) -> RemoteCredentials:
 
 
 def _from_remote_env(context: ExecutionContext) -> RemoteCredentials:
-    candidates = remote_env_candidates(context)
-    path, contents = _fetch_first_env_file(context, candidates)
-    parsed = _parse_env(contents)
+    path, contents = _fetch_first_env_file(context, remote_env_paths(context))
+    # The handover file is the one place a value may carry quotes, `#` or edge
+    # spaces that belong to it, so it must not go through the .env parser.
+    parsed = parse_handover(contents, path) if path == HANDOVER_PATH else _parse_env(contents)
     mapping = {
         key: context.config(f"database.env_map.{key}", default=_default_env_key(key))
         for key in _REQUIRED
@@ -163,7 +171,53 @@ def remote_env_candidates(context: ExecutionContext) -> list[str]:
     return list(_DEFAULT_ENV_FILES)
 
 
-def _fetch_first_env_file(context: ExecutionContext, candidates: list[str]) -> tuple[str, str]:
+def remote_env_paths(context: ExecutionContext) -> list[str]:
+    """The remote paths to probe, in order: `remote_env_candidates` on the data root.
+
+    Under `provider: docker` the endpoint's handover file comes last, so a
+    mounted `.env` keeps winning and the file only answers when the stack has
+    none. A candidate that is already absolute is taken as is: that is how a
+    project names the handover path itself in `database.env_file`.
+    """
+    paths = [
+        name if name.startswith("/") else context.remote_data(name)
+        for name in remote_env_candidates(context)
+    ]
+    if context.target.provider == Provider.DOCKER and HANDOVER_PATH not in paths:
+        paths.append(HANDOVER_PATH)
+    return paths
+
+
+def parse_handover(contents: str, path: str) -> dict[str, str]:
+    """Parse the file an endpoint writes from its environment, strictly.
+
+    The format is the endpoint's own and not `.env`: one `NAME=value` line per
+    variable, the value being everything after the first `=` with nothing
+    stripped or unquoted, since a production password may well start with a
+    quote or end in a space. Splitting on `"\\n"` alone keeps a stray `\\r` from
+    hiding in a value, and the file must end in a newline, so a truncated
+    write is refused instead of yielding a cut-off password.
+    """
+    lines = contents.split("\n")
+    if lines.pop() != "" or not lines or lines[0] != HANDOVER_MARKER:
+        raise _handover_unreadable(path, "it does not start with the handover marker")
+    parsed: dict[str, str] = {}
+    for line in lines[1:]:
+        name, separator, value = line.partition("=")
+        if not separator or "\r" in line:
+            raise _handover_unreadable(path, "it has a line that is not NAME=value")
+        parsed[name] = value
+    return parsed
+
+
+def _handover_unreadable(path: str, reason: str) -> OperationError:
+    return OperationError(
+        f"{path} cannot be read as a handover file: {reason}",
+        doc="endpoint-handover-file-unreadable",
+    )
+
+
+def _fetch_first_env_file(context: ExecutionContext, paths: list[str]) -> tuple[str, str]:
     """Build a remote probe script that tries each candidate path in turn.
 
     Each `if ... fi` must be terminated with `;` (or a newline) before the
@@ -179,7 +233,6 @@ def _fetch_first_env_file(context: ExecutionContext, candidates: list[str]) -> t
     the probe. `shlex.quote` is also the only form that survives a literal
     `"` in the path at all.
     """
-    paths = [context.remote_data(name) for name in candidates]
     tests = "; ".join(
         f"if [ -f {shlex.quote(path)} ]; then echo {shlex.quote(path)}; "
         f"cat {shlex.quote(path)}; exit 0; fi"
@@ -191,8 +244,14 @@ def _fetch_first_env_file(context: ExecutionContext, candidates: list[str]) -> t
     result = context.runner.run(ssh_command(context.target, ["sh", "-c", script]), sensitive=True)
     if not result.ok:
         looked = ", ".join(paths)
+        hint = ""
+        if HANDOVER_PATH in paths:
+            hint = (
+                ". To hand the stack's variables over instead, set DDEV_SYNC_EXPORT_ENV "
+                "on the endpoint"
+            )
         raise OperationError(
-            f"no environment file found on {context.target.host}; looked at: {looked}",
+            f"no environment file found on {context.target.host}; looked at: {looked}{hint}",
             doc="no-environment-file-on-the-remote",
         )
     first_line, _, body = result.stdout.partition("\n")
