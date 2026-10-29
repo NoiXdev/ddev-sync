@@ -195,9 +195,12 @@ def parse_handover(contents: str, path: str) -> dict[str, str]:
     The format is the endpoint's own and not `.env`: one `NAME=value` line per
     variable, the value being everything after the first `=` with nothing
     stripped or unquoted, since a production password may well start with a
-    quote or end in a space. Splitting on `"\\n"` alone keeps a stray `\\r` from
-    hiding in a value, and the file must end in a newline, so a truncated
-    write is refused instead of yielding a cut-off password.
+    quote or end in a space. The file must end in a newline, so a truncated
+    write is refused instead of yielding a cut-off password. A `\\r` is
+    refused too, though the real runner reads with universal newlines and
+    turns one into `\\n` before this sees it, and the endpoint refuses to
+    write one anyway: the check guards the fakes and any other runner that
+    hands the bytes over as they are.
     """
     lines = contents.split("\n")
     if lines.pop() != "" or not lines or lines[0] != HANDOVER_MARKER:
