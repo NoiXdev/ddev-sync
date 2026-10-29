@@ -320,14 +320,16 @@ CELLS: tuple[Cell, ...] = (
         # `mxlaravel`'s assertions, reached through `provider: docker`. The
         # framework is incidental here and the transport is the subject: the
         # endpoint's session uid against files the harness wrote, the
-        # production database addressed by a compose service name out of a
-        # mounted .env, and a host key that outlives its container - three
+        # production database addressed by a compose service name out of
+        # credentials the stack hands the endpoint through its environment,
+        # and a host key that outlives its container - three
         # things the unit and integration suites can each only answer apart.
         #
         # Laravel rather than the generic profile because the design's claim
         # is that a *real framework* syncs through the endpoint, and because
-        # its .env is where the credentials the endpoint does not have come
-        # from.
+        # its profile maps the DB_* variables the endpoint hands over. The
+        # endpoint mounts no .env; the mounted-.env route is covered by
+        # tests/integration/test_docker_provider.py.
         profile="laravel",
         project_type="laravel",
         docroot="public",

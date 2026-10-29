@@ -140,8 +140,15 @@ services:
   # `network_mode` rather than a network of its own, because that is what a
   # published port is: the endpoint has no address anything outside can reach,
   # `127.0.0.1:22` on the jump is this container, and `remote-db` still
-  # resolves here - which is how it reads credentials from a .env naming a
-  # compose service and carries none of its own.
+  # resolves here - which is how it reaches a database host that is a compose
+  # service name.
+  #
+  # The endpoint mounts no .env: production's credentials are the stack's
+  # environment, handed over by name in DDEV_SYNC_EXPORT_ENV, and the endpoint
+  # writes them to /run/ddev-sync/app.env for the engine to read. `remote-db`
+  # is the host for the same reason as above - the endpoint resolves it
+  # because it shares the stack's network. The values are those `remote-db`
+  # is created with, further up.
   endpoint:
     build:
       context: ../../endpoint
@@ -155,6 +162,12 @@ services:
       # leaving the image's default to be right by luck.
       - DDEV_SYNC_UID=${MATRIX_UID}
       - DDEV_SYNC_GID=${MATRIX_GID}
+      - DDEV_SYNC_EXPORT_ENV=DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD
+      - DB_HOST=remote-db
+      - DB_PORT=3306
+      - DB_DATABASE=acme_prod
+      - DB_USERNAME=acme
+      - DB_PASSWORD=s3cret
     volumes:
       - ${MATRIX_KEYS_DIR}/id_ed25519.pub:/etc/ddev-sync/authorized_keys:ro
       # The same tree the `remote` service serves, so what differs between
