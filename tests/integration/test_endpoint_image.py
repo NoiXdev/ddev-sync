@@ -594,6 +594,23 @@ def test_a_name_the_entrypoint_uses_itself_is_handed_over_with_its_own_value(
     assert result.stdout == f"# ddev-sync endpoint handover v1\n{name}={TRICKY}\n", result.stderr
 
 
+def test_a_variable_is_found_in_an_environment_too_large_for_one_command_line(
+    endpoint_image: str, tmp_path: Path
+) -> None:
+    key, keys = _keys(tmp_path)
+    # Far past what one xargs command line holds, the way a few PEM keys in
+    # the stack's environment would be.
+    padding = {f"PEM_{index}": "k" * 8192 for index in range(16)}
+
+    with endpoint(
+        endpoint_image,
+        environment={**keys, **padding, "DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD", "DB_PASSWORD": TRICKY},
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    assert result.stdout == f"# ddev-sync endpoint handover v1\nDB_PASSWORD={TRICKY}\n", result.stderr
+
+
 @pytest.mark.parametrize(
     ("environment", "named", "slug"),
     [
@@ -605,11 +622,21 @@ def test_a_name_the_entrypoint_uses_itself_is_handed_over_with_its_own_value(
             "DDEV_SYNC_UID",
             "endpoint-export-env-name-invalid",
         ),
-        # A value pasted into the list where the name belongs: refused by the
-        # name before the `=`, and the value stays out of the log.
+        # A value pasted into the list where the name belongs, however it is
+        # spaced: refused for the `=`, and no piece of the list is quoted.
         (
             {"DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD=s3cret-first"},
-            "DB_PASSWORD (list names only, not NAME=value)",
+            "not NAME=value",
+            "endpoint-export-env-name-invalid",
+        ),
+        (
+            {"DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD = s3cret-first"},
+            "not NAME=value",
+            "endpoint-export-env-name-invalid",
+        ),
+        (
+            {"DDEV_SYNC_EXPORT_ENV": "s3cret-first = DB_PASSWORD"},
+            "not NAME=value",
             "endpoint-export-env-name-invalid",
         ),
         (
