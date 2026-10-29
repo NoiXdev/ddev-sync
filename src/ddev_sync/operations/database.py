@@ -176,11 +176,12 @@ def remote_env_paths(context: ExecutionContext) -> list[str]:
 
     Under `provider: docker` the endpoint's handover file comes last, so a
     mounted `.env` keeps winning and the file only answers when the stack has
-    none. A candidate that is already absolute is taken as is: that is how a
-    project names the handover path itself in `database.env_file`.
+    none. Only an entry that is exactly the handover path is taken as is, which
+    is how a project names it in `database.env_file`; every other entry,
+    absolute or not, is joined onto the data root as it always was.
     """
     paths = [
-        name if name.startswith("/") else context.remote_data(name)
+        HANDOVER_PATH if name == HANDOVER_PATH else context.remote_data(name)
         for name in remote_env_candidates(context)
     ]
     if context.target.provider == Provider.DOCKER and HANDOVER_PATH not in paths:
@@ -245,7 +246,7 @@ def _fetch_first_env_file(context: ExecutionContext, paths: list[str]) -> tuple[
     if not result.ok:
         looked = ", ".join(paths)
         hint = ""
-        if HANDOVER_PATH in paths:
+        if context.target.provider == Provider.DOCKER:
             hint = (
                 ". To hand the stack's variables over instead, set DDEV_SYNC_EXPORT_ENV "
                 "on the endpoint"

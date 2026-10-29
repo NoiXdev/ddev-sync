@@ -663,6 +663,15 @@ def test_a_configured_env_file_naming_the_handover_path_uses_the_handover_parser
     assert f"if [ -f {HANDOVER_PATH} ]" in runner.calls[0][-1]
 
 
+def test_an_absolute_env_file_other_than_the_handover_is_joined_onto_the_data_root(
+    tmp_path: Path,
+) -> None:
+    config = {"database": {**LARAVEL_PROFILE["database"], "env_file": ["/shared/.env"]}}
+    runner = handover_runner(HANDOVER, "/srv/app/shared/.env")
+    read_remote_credentials(make_context(runner, tmp_path, config))
+    assert "/srv/app/shared/.env" in runner.calls[0][-1]
+
+
 def test_a_mounted_env_file_still_wins_under_docker(tmp_path: Path) -> None:
     plain = "DB_DATABASE=m\nDB_USERNAME=m\nDB_HOST=h\nDB_PORT=1\nDB_PASSWORD='quoted'\n"
     runner = handover_runner(plain, "/srv/app/.env")
