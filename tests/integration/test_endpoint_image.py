@@ -577,6 +577,23 @@ def test_an_empty_value_is_handed_over_as_empty(endpoint_image: str, tmp_path: P
     assert "DB_PASSWORD=\n" in result.stdout, result.stderr
 
 
+@pytest.mark.parametrize("name", ["ACCOUNT", "HOME_DIR"])
+def test_a_name_the_entrypoint_uses_itself_is_handed_over_with_its_own_value(
+    endpoint_image: str, tmp_path: Path, name: str
+) -> None:
+    key, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={**keys, "DDEV_SYNC_EXPORT_ENV": name, name: TRICKY},
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    # Not `sync` or `/home/sync`: what the entrypoint sets for itself is not
+    # what the stack handed it.
+    assert result.stdout == f"# ddev-sync endpoint handover v1\n{name}={TRICKY}\n", result.stderr
+
+
 @pytest.mark.parametrize(
     ("environment", "named", "slug"),
     [
@@ -588,8 +605,21 @@ def test_an_empty_value_is_handed_over_as_empty(endpoint_image: str, tmp_path: P
             "DDEV_SYNC_UID",
             "endpoint-export-env-name-invalid",
         ),
+        # A value pasted into the list where the name belongs: refused by the
+        # name before the `=`, and the value stays out of the log.
+        (
+            {"DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD=s3cret-first"},
+            "DB_PASSWORD (list names only, not NAME=value)",
+            "endpoint-export-env-name-invalid",
+        ),
         (
             {"DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD", "DB_PASSWORD": "s3cret-first\ns3cret-second"},
+            "DB_PASSWORD",
+            "endpoint-export-env-value-has-a-newline",
+        ),
+        # Trailing, where a `$(...)` would have eaten it.
+        (
+            {"DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD", "DB_PASSWORD": "s3cret-first\n"},
             "DB_PASSWORD",
             "endpoint-export-env-value-has-a-newline",
         ),

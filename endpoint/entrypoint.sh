@@ -108,14 +108,20 @@ if [ -n "${DDEV_SYNC_EXPORT_ENV:-}" ]; then
         esac
     done
 
-    # Every name is checked before any of them is evaluated: the name is
-    # spliced into an `eval` below, and one that is not a plain identifier
-    # would be code. The DDEV_SYNC_ prefix is the endpoint's own settings,
-    # which include the authorised keys and have no business in a handover.
+    # Every name is checked before any of them is looked up: the name is
+    # handed to a command below and written into the file as the left of a
+    # `NAME=value` line, and one that is not a plain identifier would make
+    # the line mean something else. The DDEV_SYNC_ prefix is the endpoint's
+    # own settings, which include the authorised keys and have no business in
+    # a handover. The refusal quotes a name only up to its first `=`: a
+    # `DB_PASSWORD=...` in the list is a value pasted where a name belongs,
+    # and this goes to a log.
     for name in $names; do
         case "$name" in
             DDEV_SYNC_* | *[!A-Za-z0-9_]* | [0-9]*)
-                refuse "DDEV_SYNC_EXPORT_ENV lists ${name}, which is not a variable name the endpoint can hand over. Names are letters, digits and underscores, do not start with a digit, and the endpoint's own DDEV_SYNC_ settings are not available." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-export-env-name-invalid"
+                hint=""
+                case "$name" in *=*) hint=" (list names only, not NAME=value)" ;; esac
+                refuse "DDEV_SYNC_EXPORT_ENV lists ${name%%=*}${hint}, which is not a variable name the endpoint can hand over. Names are letters, digits and underscores, do not start with a digit, and the endpoint's own DDEV_SYNC_ settings are not available." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-export-env-name-invalid"
                 ;;
         esac
     done
@@ -133,10 +139,20 @@ if [ -n "${DDEV_SYNC_EXPORT_ENV:-}" ]; then
     printf '# ddev-sync endpoint handover v1\n' > "$staged"
     count=0
     for name in $names; do
-        eval "is_set=\${$name+x}"
-        [ -n "$is_set" ] ||
+        # From the environment the container was started with, not from this
+        # shell: a variable inherited from it is the shell's own, so a listed
+        # ACCOUNT or HOME_DIR would otherwise be handed over as whatever this
+        # script set it to. `printenv` alone does not escape that - the
+        # assignment is exported along with the variable - so it runs in an
+        # environment rebuilt from /proc, which the shell never writes to.
+        # Unset is printenv failing; empty is set. The `x` keeps a value's own
+        # trailing line break from being eaten by `$(...)`, printenv's own is
+        # taken off after it, and what is left is byte for byte what the stack
+        # set.
+        value="$(xargs -0 -x sh -c 'name=$1; shift; exec env -i -- "$@" printenv "$name"' sh "$name" < "/proc/$$/environ" && printf x)" ||
             refuse "DDEV_SYNC_EXPORT_ENV lists ${name}, but ${name} is not set in this container. Pass it to the endpoint through environment: or env_file:, or remove it from the list." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-export-env-variable-unset"
-        eval "value=\${$name}"
+        value="${value%x}"
+        value="${value%?}"
         # One line per variable is the whole format. A value with a line break
         # in it would split into two, and the second would be read as a
         # variable of its own. The message names the variable and never the
