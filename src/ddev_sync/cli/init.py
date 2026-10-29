@@ -78,13 +78,13 @@ from ddev_sync.config.loader import (
     load_user_layers,
 )
 from ddev_sync.config.merge import LayerDoc, merge_layers
-from ddev_sync.config.models import ResolvedTarget
+from ddev_sync.config.models import Provider, ResolvedTarget
 from ddev_sync.config.targets import CollectedTarget, collect_targets, resolve_target
 from ddev_sync.config.writer import WriteRefused, render_target, write_settings, write_target
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.errors import ConfigError, DdevSyncError, DeployerError, DeployerNotFound
 from ddev_sync.operations.base import ExecutionContext, OperationError, discard_progress
-from ddev_sync.operations.database import DATABASE_ENV_FILE_KEY, remote_env_candidates
+from ddev_sync.operations.database import DATABASE_ENV_FILE_KEY, remote_env_paths
 from ddev_sync.operations.placeholders import (
     PRODUCTION_URL_CONFIG_KEY,
     PRODUCTION_URL_PLACEHOLDER,
@@ -702,6 +702,13 @@ def _fix_credentials(
     return True, _offer_override(execution, paths, wordpress, echo)
 
 
+_HANDOVER_HINT = (
+    "If the stack keeps its credentials in its environment, set DDEV_SYNC_EXPORT_ENV "
+    "on the endpoint - see "
+    "https://docs.noix.dev/ddev-sync/guide/docker-endpoint/#credentials-from-the-stacks-environment"
+)
+
+
 def _offer_remote_env_file(
     execution: ExecutionContext,
     paths: ConfigPaths,
@@ -723,9 +730,13 @@ def _offer_remote_env_file(
     local path - unchanged, so `_fix_credentials` has one place to collect it
     regardless of which of the two questions actually wrote it.
     """
-    looked_for = remote_env_candidates(execution)
+    looked_for = remote_env_paths(execution)
     present = _remote_env_entries(execution)
-    answer = choose_remote_env_file(looked_for, present)
+    # A docker endpoint can hand the stack's environment over, which is no
+    # file in the data root and so never among `present`: the hint says so
+    # instead of leaving "none of these" as the only way on.
+    hint = _HANDOVER_HINT if execution.target.provider == Provider.DOCKER else None
+    answer = choose_remote_env_file(looked_for, present, hint)
     if answer is None:
         raise _no_terminal()
     if answer == REMOTE_ENV_NONE:

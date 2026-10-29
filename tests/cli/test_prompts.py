@@ -410,6 +410,21 @@ def test_the_remote_env_question_offers_what_is_there_plus_an_opt_out(
     assert ".env" in str(asked["q"])
 
 
+def test_the_remote_env_question_ends_with_the_hint_when_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked: dict[str, object] = {}
+    monkeypatch.setattr(
+        prompts,
+        "_select",
+        lambda question, choices: asked.update(q=question, c=choices) or choices[0],
+    )
+    prompts.choose_remote_env_file([".env"], [], hint="X")
+    assert str(asked["q"]).endswith("X")
+    prompts.choose_remote_env_file([".env"], [])
+    assert str(asked["q"]).endswith("Which file is it?")
+
+
 def test_the_remote_env_question_passes_a_missing_terminal_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

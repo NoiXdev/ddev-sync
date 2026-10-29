@@ -161,17 +161,26 @@ def choose_env_file(looked_for: list[str], present: list[str]) -> str | None:
     )
 
 
-def choose_remote_env_file(looked_for: list[str], present: list[str]) -> str | None:
+def choose_remote_env_file(
+    looked_for: list[str], present: list[str], hint: str | None = None
+) -> str | None:
     """Ask which file on the target holds the database credentials.
 
     `present` is what the target's data root really contains, so the usual
     cause of this question - the file is there under another name - is one
     keystroke away. The opt-out is last because the override branch behind it
     is the heavier answer, and most projects do not need it.
+
+    `hint` is appended to the question when the caller knows a way out the
+    choices cannot offer - a docker endpoint's handover, which is not a file
+    in the data root to pick from.
     """
-    return _select(
+    question = (
         f"No credentials file found on the target (looked for {', '.join(looked_for)}). "
-        "Which file is it?",
+        "Which file is it?"
+    )
+    return _select(
+        question if hint is None else f"{question} {hint}",
         [*present, REMOTE_ENV_NONE],
     )
 

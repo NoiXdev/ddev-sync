@@ -1804,14 +1804,45 @@ def test_init_offers_the_env_files_that_are_on_the_server(
     monkeypatch.setattr(
         init,
         "choose_remote_env_file",
-        lambda looked_for, present: (
-            seen.update(looked_for=looked_for, present=present) or REMOTE_ENV_NONE
+        lambda looked_for, present, hint=None: (
+            seen.update(looked_for=looked_for, present=present, hint=hint) or REMOTE_ENV_NONE
         ),
     )
     stub_checks(monkeypatch, _report(False))
     invoke(project, tmp_path)
-    assert seen["looked_for"] == [".env.local", ".env"]
+    assert seen["hint"] is None
+    assert all(not path.endswith("app.env") for path in seen["looked_for"])
+    assert [path.rsplit("/", 1)[-1] for path in seen["looked_for"]] == [".env.local", ".env"]
     assert seen["present"] == [".env.example", ".env.production"]
+
+
+def test_a_docker_target_is_pointed_at_the_handover(
+    project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _symfony(project)
+    (project / ".env").write_text("APP_ENV=local\n", encoding="utf-8")
+    _runner_whose_remote_listing_is(monkeypatch, [".env.production"])
+    script(
+        monkeypatch,
+        connection=({**CONNECTION, "provider": "docker", "sync_port": 2223},),
+        credentials_source=(None,),
+    )
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        init,
+        "choose_remote_env_file",
+        lambda looked_for, present, hint=None: (
+            seen.update(looked_for=looked_for, present=present, hint=hint) or REMOTE_ENV_NONE
+        ),
+    )
+    stub_checks(monkeypatch, _report(False))
+    invoke(project, tmp_path)
+    assert "/run/ddev-sync/app.env" in seen["looked_for"]
+    assert "/run/ddev-sync/app.env" not in seen["present"]
+    assert "DDEV_SYNC_EXPORT_ENV" in seen["hint"]
+    assert "#credentials-from-the-stacks-environment" in seen["hint"]
 
 
 def test_init_does_not_ask_when_ssh_itself_is_down(
@@ -1921,7 +1952,7 @@ def test_a_remote_listing_that_fails_offers_only_the_opt_out(
     monkeypatch.setattr(
         init,
         "choose_remote_env_file",
-        lambda looked_for, present: (
+        lambda looked_for, present, hint=None: (
             seen.update(looked_for=looked_for, present=present) or REMOTE_ENV_NONE
         ),
     )
