@@ -497,3 +497,124 @@ def test_the_endpoint_does_not_forward_tcp(endpoint_image: str, tmp_path: Path) 
     # client reports the consequence, and `LogLevel=ERROR` keeps the server's
     # line out of this stderr.
     assert "forwarding failed" in forwarded.stderr.lower(), forwarded.stderr
+
+
+# Every character a quoting mistake would eat: quotes, `#`, `=`, `$`, and the
+# spaces on both ends that a shell would trim.
+TRICKY = " pa'ss\"#=$ word "
+HANDOVER_FILE = "/run/ddev-sync/app.env"
+
+
+def _keys(directory: Path) -> tuple[Path, dict[str, str]]:
+    """A keypair and the environment that lets it into an endpoint."""
+    key = keypair(directory, "id")
+    return key, {"DDEV_SYNC_AUTHORIZED_KEYS": key.with_suffix(".pub").read_text(encoding="utf-8")}
+
+
+def test_without_an_export_list_no_handover_file_is_written(
+    endpoint_image: str, tmp_path: Path
+) -> None:
+    _, keys = _keys(tmp_path)
+
+    with endpoint(endpoint_image, environment=keys) as container:
+        result = _run(["docker", "exec", container, "test", "-e", HANDOVER_FILE])
+
+    assert result.returncode != 0
+
+
+def test_the_listed_variables_reach_the_session_verbatim(
+    endpoint_image: str, tmp_path: Path
+) -> None:
+    key, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={
+            **keys,
+            "DDEV_SYNC_EXPORT_ENV": "DB_HOST,DB_PASSWORD DB_HOST",
+            "DB_HOST": "db",
+            "DB_PASSWORD": TRICKY,
+            "UNLISTED": "nope",
+        },
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    # The duplicate is written once, and nothing that was not listed - the
+    # authorised keys included - is in the file.
+    expected = f"# ddev-sync endpoint handover v1\nDB_HOST=db\nDB_PASSWORD={TRICKY}\n"
+    assert result.stdout == expected, result.stderr
+
+
+def test_the_handover_file_belongs_to_the_session_and_nobody_else(
+    endpoint_image: str, tmp_path: Path
+) -> None:
+    _, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={
+            **keys,
+            "DDEV_SYNC_UID": "1234",
+            "DDEV_SYNC_GID": "1234",
+            "DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD",
+            "DB_PASSWORD": "secret",
+        },
+    ) as container:
+        result = _run(["docker", "exec", container, "stat", "-c", "%u:%g %a", HANDOVER_FILE])
+
+    assert result.stdout.strip() == "1234:1234 400", result.stderr
+
+
+def test_an_empty_value_is_handed_over_as_empty(endpoint_image: str, tmp_path: Path) -> None:
+    key, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={**keys, "DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD", "DB_PASSWORD": ""},
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    assert "DB_PASSWORD=\n" in result.stdout, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("environment", "named", "slug"),
+    [
+        ({"DDEV_SYNC_EXPORT_ENV": "DB_HOST"}, "DB_HOST", "endpoint-export-env-variable-unset"),
+        ({"DDEV_SYNC_EXPORT_ENV": "1BAD"}, "1BAD", "endpoint-export-env-name-invalid"),
+        ({"DDEV_SYNC_EXPORT_ENV": "$(id)"}, "$(id)", "endpoint-export-env-name-invalid"),
+        (
+            {"DDEV_SYNC_EXPORT_ENV": "DDEV_SYNC_UID"},
+            "DDEV_SYNC_UID",
+            "endpoint-export-env-name-invalid",
+        ),
+        (
+            {"DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD", "DB_PASSWORD": "s3cret-first\ns3cret-second"},
+            "DB_PASSWORD",
+            "endpoint-export-env-value-has-a-newline",
+        ),
+        (
+            {"DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD", "DB_PASSWORD": "s3cret-first\rs3cret-second"},
+            "DB_PASSWORD",
+            "endpoint-export-env-value-has-a-newline",
+        ),
+    ],
+)
+def test_a_bad_export_list_stops_the_endpoint(
+    endpoint_image: str,
+    tmp_path: Path,
+    environment: dict[str, str],
+    named: str,
+    slug: str,
+) -> None:
+    _, keys = _keys(tmp_path)
+
+    result = start_in_foreground(endpoint_image, environment={**keys, **environment})
+
+    assert result.returncode != 0, result.stdout
+    assert named in result.stderr
+    assert f"#{slug}" in result.stderr
+    # The message names the variable; a secret in the log would defeat the
+    # point of refusing.
+    assert "s3cret-first" not in result.stderr
+    assert "s3cret-second" not in result.stderr

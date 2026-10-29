@@ -14,6 +14,7 @@ HOME_DIR=/home/sync
 HOST_KEY=/etc/ssh/keys/ssh_host_ed25519_key
 MOUNTED_KEYS=/etc/ddev-sync/authorized_keys
 COMPOSED_KEYS=/run/ddev-sync/authorized_keys
+HANDOVER_FILE=/run/ddev-sync/app.env
 
 # refuse MESSAGE [URL]: the message, then the docs entry that explains it as
 # the last line, so it is the one a log reader ends on.
@@ -86,6 +87,75 @@ grep -qE '^[[:space:]]*[^#[:space:]]' "$COMPOSED_KEYS" ||
 # for the host key, so this costs nothing it does not already carry.
 ssh-keygen -l -f "$COMPOSED_KEYS" > /dev/null 2>&1 ||
     refuse "the authorized keys are not readable as public keys. Check for truncated lines or CRLF line endings in DDEV_SYNC_AUTHORIZED_KEYS and ${MOUNTED_KEYS}." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#no-authorized-keys"
+
+# sshd starts a session with a clean environment, so a credential the stack
+# sets as a runtime variable on this container is invisible to the sync. The
+# variables DDEV_SYNC_EXPORT_ENV lists are written to a file the session's own
+# account can read, and the engine reads it from there.
+# Removed first: an endpoint restarted without the list must not leave the
+# previous run's credentials behind.
+rm -f "$HANDOVER_FILE"
+if [ -n "${DDEV_SYNC_EXPORT_ENV:-}" ]; then
+    # Commas and whitespace both separate, because a stack file writes the list
+    # either way. Globbing is off until the names are validated: a name
+    # like `*` must reach that check as itself, not as a directory listing.
+    names=""
+    set -f
+    for name in $(printf '%s' "$DDEV_SYNC_EXPORT_ENV" | tr ',' ' '); do
+        case " ${names} " in
+            *" ${name} "*) ;;
+            *) names="${names} ${name}" ;;
+        esac
+    done
+
+    # Every name is checked before any of them is evaluated: the name is
+    # spliced into an `eval` below, and one that is not a plain identifier
+    # would be code. The DDEV_SYNC_ prefix is the endpoint's own settings,
+    # which include the authorised keys and have no business in a handover.
+    for name in $names; do
+        case "$name" in
+            DDEV_SYNC_* | *[!A-Za-z0-9_]* | [0-9]*)
+                refuse "DDEV_SYNC_EXPORT_ENV lists ${name}, which is not a variable name the endpoint can hand over. Names are letters, digits and underscores, do not start with a digit, and the endpoint's own DDEV_SYNC_ settings are not available." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-export-env-name-invalid"
+                ;;
+        esac
+    done
+    set +f
+
+    mkdir -p "$(dirname "$HANDOVER_FILE")"
+    chmod 755 "$(dirname "$HANDOVER_FILE")"
+    # Under a umask of its own so the file is never readable by anyone for the
+    # moment between creating it and restricting it; moved into place so a
+    # reader never sees it half written. Put back afterwards: the host key
+    # and the files sshd reads are not meant to inherit it.
+    previous_umask="$(umask)"
+    umask 077
+    staged="$(dirname "$HANDOVER_FILE")/.app.env.$$"
+    printf '# ddev-sync endpoint handover v1\n' > "$staged"
+    count=0
+    for name in $names; do
+        eval "is_set=\${$name+x}"
+        [ -n "$is_set" ] ||
+            refuse "DDEV_SYNC_EXPORT_ENV lists ${name}, but ${name} is not set in this container. Pass it to the endpoint through environment: or env_file:, or remove it from the list." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-export-env-variable-unset"
+        eval "value=\${$name}"
+        # One line per variable is the whole format. A value with a line break
+        # in it would split into two, and the second would be read as a
+        # variable of its own. The message names the variable and never the
+        # value: it is a credential, and this goes to a log.
+        case "$value" in
+            *"
+"* | *"$(printf '\r')"*)
+                refuse "${name} holds a line break, which the handover file cannot carry: it keeps one variable per line. Use a value without one." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-export-env-value-has-a-newline"
+                ;;
+        esac
+        printf '%s=%s\n' "$name" "$value" >> "$staged"
+        count=$((count + 1))
+    done
+    chown "${uid}:${gid}" "$staged"
+    chmod 400 "$staged"
+    mv "$staged" "$HANDOVER_FILE"
+    umask "$previous_umask"
+    say "handing over ${count} variables to the sync session"
+fi
 
 # Said out loud either way: a developer whose connection was just refused as a
 # changed host key needs to know whether this container generated a new one.

@@ -53,6 +53,22 @@ services:
       # account at start instead, which works for any uid.
       DDEV_SYNC_UID: "33"
       DDEV_SYNC_GID: "33"
+      # Only if the credentials are not in the .env mounted below: the names
+      # of the variables to hand to the sync session, separated by commas or
+      # spaces. An sshd session does not inherit this container's environment,
+      # so a variable your stack sets here is invisible to the sync unless it
+      # is listed. Give the variables their values the way you would for any
+      # service - either from the stack's own variables here:
+      #
+      # DDEV_SYNC_EXPORT_ENV: "DB_HOST,DB_NAME,DB_USER,DB_PASSWORD"
+      # DB_HOST: "db"
+      # DB_NAME: "${DB_NAME}"
+      # DB_USER: "${DB_USER}"
+      # DB_PASSWORD: "${DB_PASSWORD}"
+      #
+      # or from a file: add `env_file: [./app.env]` to this service and keep
+      # only the DDEV_SYNC_EXPORT_ENV line. A listed variable that is not set stops the
+      # endpoint, and so does a value with a line break in it.
 
     volumes:
       # What the sync pulls, read-only: the sync only ever reads production,
@@ -60,6 +76,8 @@ services:
       # behaviour. Your target's `path:` is a path *inside this container*, so
       # these mount points are what it names.
       - app_storage:/data/storage:ro
+      # The application's credentials, one of two ways: this file, or the
+      # variables listed in DDEV_SYNC_EXPORT_ENV above.
       - ./.env:/data/.env:ro
       # The host key, which has to outlive the container: the engine trusts a
       # key on first sight and refuses a *changed* one, so without this volume

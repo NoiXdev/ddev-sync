@@ -73,6 +73,9 @@ ENTRIES: tuple[str, ...] = (
     "sync-port-missing",
     "endpoint-uid-or-gid",
     "no-authorized-keys",
+    "endpoint-export-env-name-invalid",
+    "endpoint-export-env-variable-unset",
+    "endpoint-export-env-value-has-a-newline",
     # targets
     "unknown-target",
     "no-targets-defined",

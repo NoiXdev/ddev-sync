@@ -142,6 +142,9 @@ def test_the_shell_links_use_the_registry_base_url() -> None:
     shell = "\n".join(path.read_text(encoding="utf-8") for path in _SHELL_FILES)
     slugs = re.findall(r"troubleshooting/#([a-z0-9-]+)", shell)
     assert sorted(set(slugs)) == [
+        "endpoint-export-env-name-invalid",
+        "endpoint-export-env-value-has-a-newline",
+        "endpoint-export-env-variable-unset",
         "endpoint-uid-or-gid",
         "no-authorized-keys",
         "sidecar-image-not-found",
