@@ -60,15 +60,20 @@ services:
       # is listed. Give the variables their values the way you would for any
       # service - either from the stack's own variables here:
       #
-      # DDEV_SYNC_EXPORT_ENV: "DB_HOST,DB_NAME,DB_USER,DB_PASSWORD"
+      # DDEV_SYNC_EXPORT_ENV: "DB_HOST,DB_PORT,DB_DATABASE,DB_USERNAME,DB_PASSWORD"
       # DB_HOST: "db"
-      # DB_NAME: "${DB_NAME}"
-      # DB_USER: "${DB_USER}"
+      # DB_PORT: "3306"
+      # DB_DATABASE: "${DB_DATABASE}"
+      # DB_USERNAME: "${DB_USERNAME}"
       # DB_PASSWORD: "${DB_PASSWORD}"
       #
-      # or from a file: add `env_file: [./app.env]` to this service and keep
-      # only the DDEV_SYNC_EXPORT_ENV line. A listed variable that is not set stops the
-      # endpoint, and so does a value with a line break in it.
+      # or from a file: add `env_file: [./stack.env]` to this service and keep
+      # only the DDEV_SYNC_EXPORT_ENV line. These are Laravel's names; list
+      # the five your project's profile reads, all of them - see
+      # https://docs.noix.dev/ddev-sync/guide/docker-endpoint/#credentials-from-the-stacks-environment
+      # A listed variable that is not set stops the endpoint, and so does a
+      # value with a line break in it. With the handover in use, drop the
+      # `./.env` mount below.
 
     volumes:
       # What the sync pulls, read-only: the sync only ever reads production,
@@ -77,7 +82,8 @@ services:
       # these mount points are what it names.
       - app_storage:/data/storage:ro
       # The application's credentials, one of two ways: this file, or the
-      # variables listed in DDEV_SYNC_EXPORT_ENV above.
+      # variables listed in DDEV_SYNC_EXPORT_ENV above - in which case remove
+      # this line, so there is one place the credentials come from.
       - ./.env:/data/.env:ro
       # The host key, which has to outlive the container: the engine trusts a
       # key on first sight and refuses a *changed* one, so without this volume
