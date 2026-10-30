@@ -604,11 +604,18 @@ def test_a_variable_is_found_in_an_environment_too_large_for_one_command_line(
 
     with endpoint(
         endpoint_image,
-        environment={**keys, **padding, "DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD", "DB_PASSWORD": TRICKY},
+        environment={
+            **keys,
+            **padding,
+            "DDEV_SYNC_EXPORT_ENV": "DB_PASSWORD",
+            "DB_PASSWORD": TRICKY,
+        },
     ):
         result = ssh(key, f"cat {HANDOVER_FILE}")
 
-    assert result.stdout == f"# ddev-sync endpoint handover v1\nDB_PASSWORD={TRICKY}\n", result.stderr
+    assert result.stdout == f"# ddev-sync endpoint handover v1\nDB_PASSWORD={TRICKY}\n", (
+        result.stderr
+    )
 
 
 @pytest.mark.parametrize(
