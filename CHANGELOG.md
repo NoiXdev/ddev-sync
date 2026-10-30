@@ -1,3 +1,24 @@
+## [0.1.0-rc.5](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.4...v0.1.0-rc.5) (2026-10-30)
+
+
+### Features
+
+* **cli:** end every error with a link to its docs entry ([3d73561](https://github.com/NoiXdev/ddev-sync/commit/3d73561bfea2163b523a4ebb1dad34556e845a90))
+* **database:** read credentials an endpoint hands over from its environment ([0e7dfb3](https://github.com/NoiXdev/ddev-sync/commit/0e7dfb3ea594ebb42965883366c0e8d75fd7e669))
+* **endpoint:** hand listed environment variables to the sync session ([98b28ef](https://github.com/NoiXdev/ddev-sync/commit/98b28ef2d366875c2a6ea57600aba25fc603f793))
+* **init:** point a docker target without an env file at the handover ([8d8b8f1](https://github.com/NoiXdev/ddev-sync/commit/8d8b8f1ca37edd806d31d748cc466296c562b2ac))
+* link the most common errors to their own docs entry ([dd8e3ba](https://github.com/NoiXdev/ddev-sync/commit/dd8e3ba9cee6ac8e817483e28661c90403ae3fd5))
+
+
+### Bug Fixes
+
+* **cli:** give a helper's error the area of the code that called it ([5903e49](https://github.com/NoiXdev/ddev-sync/commit/5903e49786a43e3ae9b9d8a46633eabc27751ae8))
+* **database:** join every env file but the handover onto the data root ([b92349e](https://github.com/NoiXdev/ddev-sync/commit/b92349e507d7a4107dec9d685d8e53216e32f403))
+* **endpoint:** find listed variables in a large environment and quote nothing from a list with an = ([499c0e0](https://github.com/NoiXdev/ddev-sync/commit/499c0e0f98134c3b10c78617bc4ca94d07eaf937))
+* **endpoint:** keep a mistyped export list out of the log and read only the environment ([8ba210a](https://github.com/NoiXdev/ddev-sync/commit/8ba210af151864bf6e72f25cee65fe1fe297084f))
+* give certificate failures their hint wherever the remote is queried ([b510ac7](https://github.com/NoiXdev/ddev-sync/commit/b510ac7baf9739e3311305dca4d7f73923f0ad9e))
+* keep the specific credentials link through preflight ([ecfd908](https://github.com/NoiXdev/ddev-sync/commit/ecfd9088debe518a0e4d11f3adabab6af3f6c9ee))
+
 ## [0.1.0-rc.4](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.3...v0.1.0-rc.4) (2026-10-27)
 
 
