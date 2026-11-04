@@ -55,6 +55,26 @@ def test_a_name_that_is_no_variable_name_is_refused(name: Any) -> None:
         pull_names(_data([name]))
 
 
+def test_a_refused_entry_is_named_by_its_position_and_its_value_stays_out() -> None:
+    # What a misread `env.pull` holds may be the secret itself, pasted with its name.
+    with pytest.raises(ConfigError, match=r"entry 2") as caught:
+        pull_names(_data(["FINE", "APP_KEY=base64:topsecret"]))
+    assert "topsecret" not in str(caught.value)
+    assert "APP_KEY" not in str(caught.value)
+
+
+@pytest.mark.parametrize("raw", ["APP_KEY=base64:topsecret", {"APP_KEY": "topsecret"}, 7])
+def test_a_refused_block_does_not_print_what_it_holds(raw: Any) -> None:
+    with pytest.raises(ConfigError, match=r"env\.pull must be a list") as caught:
+        pull_names(_data(raw))
+    assert "topsecret" not in str(caught.value)
+
+
+def test_a_well_shaped_name_refused_for_another_reason_is_named() -> None:
+    with pytest.raises(ConfigError, match="DDEV_SYNC_X"):
+        pull_names(_data(["DDEV_SYNC_X"]))
+
+
 def test_the_endpoints_own_names_are_refused() -> None:
     with pytest.raises(ConfigError, match="DDEV_SYNC_X"):
         pull_names(_data(["DDEV_SYNC_X"]))

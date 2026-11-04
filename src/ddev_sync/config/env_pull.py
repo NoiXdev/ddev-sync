@@ -38,11 +38,13 @@ def pull_names(data: Mapping[str, Any]) -> list[str]:
     if raw is None:
         return []
     if not isinstance(raw, list):
-        raise ConfigError(f"env.pull must be a list of variable names, got {raw!r}")
+        raise ConfigError(f"env.pull must be a list of variable names, not a {type(raw).__name__}")
     database_names = _database_names(data)
-    for name in raw:
+    for position, name in enumerate(raw, start=1):
+        # By position, never what it holds: an entry that is no name may be
+        # `NAME=value`, with the secret itself pasted in.
         if not isinstance(name, str) or _NAME.fullmatch(name) is None:
-            raise ConfigError(f"env.pull must list variable names, got {name!r}")
+            raise ConfigError(f"env.pull must list variable names, and entry {position} is not one")
         if name.startswith(_RESERVED_PREFIX):
             raise ConfigError(
                 f"env.pull cannot name {name}: {_RESERVED_PREFIX}* is never handed over"
