@@ -543,6 +543,7 @@ def test_the_listed_variables_reach_the_session_verbatim(
     # authorised keys included - is in the file.
     expected = f"# ddev-sync endpoint handover v1\nDB_HOST=db\nDB_PASSWORD={TRICKY}\n"
     assert result.stdout == expected, result.stderr
+    assert "DDEV_SYNC_SKIPPED" not in result.stdout
 
 
 def test_the_handover_file_belongs_to_the_session_and_nobody_else(
@@ -616,6 +617,111 @@ def test_a_variable_is_found_in_an_environment_too_large_for_one_command_line(
     assert result.stdout == f"# ddev-sync endpoint handover v1\nDB_PASSWORD={TRICKY}\n", (
         result.stderr
     )
+
+
+def test_all_hands_over_the_environment_and_not_the_endpoint_settings(
+    endpoint_image: str, tmp_path: Path
+) -> None:
+    key, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={
+            **keys,
+            "DDEV_SYNC_EXPORT_ENV": "all",
+            "DB_PASSWORD": TRICKY,
+            "ACCOUNT": "stack-value",
+        },
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    lines = result.stdout.splitlines(keepends=True)
+    assert lines[0] == "# ddev-sync endpoint handover v1\n", result.stderr
+    assert f"DB_PASSWORD={TRICKY}\n" in lines
+    assert "ACCOUNT=stack-value\n" in lines
+    assert not [line for line in lines if line.startswith("DDEV_SYNC_")]
+
+
+def test_all_with_spaces_around_it_is_still_all(endpoint_image: str, tmp_path: Path) -> None:
+    key, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={**keys, "DDEV_SYNC_EXPORT_ENV": " all ", "DB_HOST": "db"},
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    assert "DB_HOST=db\n" in result.stdout, result.stderr
+
+
+def test_all_skips_a_multi_line_value_and_names_it(endpoint_image: str, tmp_path: Path) -> None:
+    key, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={
+            **keys,
+            "DDEV_SYNC_EXPORT_ENV": "all",
+            "PEM": "line1\nline2",
+            "CR": "a\rb",
+            "DB_HOST": "db",
+        },
+    ) as container:
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+        logs = _run(["docker", "logs", container])
+
+    assert "DB_HOST=db\n" in result.stdout, result.stderr
+    skipped = [
+        line for line in result.stdout.split("\n") if line.startswith("DDEV_SYNC_SKIPPED=")
+    ]
+    assert len(skipped) == 1
+    assert sorted(skipped[0].removeprefix("DDEV_SYNC_SKIPPED=").split(",")) == ["CR", "PEM"]
+    assert "line1" not in result.stdout
+    assert "a\rb" not in result.stdout
+    log = logs.stdout + logs.stderr
+    assert ", skipped 2 with a line break" in log
+    assert "PEM" not in log
+    assert "CR" not in log
+
+
+def test_all_ignores_a_name_that_is_not_a_shell_name(endpoint_image: str, tmp_path: Path) -> None:
+    key, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={**keys, "DDEV_SYNC_EXPORT_ENV": "all", "my.var": "x", "PEM": "a\nb"},
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    assert result.returncode == 0, result.stderr
+    assert not [line for line in result.stdout.split("\n") if line.startswith("my.var")]
+
+
+def test_all_in_a_large_environment(endpoint_image: str, tmp_path: Path) -> None:
+    key, keys = _keys(tmp_path)
+    padding = {f"PEM_{index}": "k" * 8192 for index in range(16)}
+
+    with endpoint(
+        endpoint_image,
+        environment={**keys, **padding, "DDEV_SYNC_EXPORT_ENV": "all", "DB_PASSWORD": TRICKY},
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    assert f"DB_PASSWORD={TRICKY}\n" in result.stdout.splitlines(keepends=True), result.stderr
+
+
+def test_a_list_naming_all_beside_another_name_still_means_a_variable(
+    endpoint_image: str, tmp_path: Path
+) -> None:
+    _, keys = _keys(tmp_path)
+
+    result = start_in_foreground(
+        endpoint_image, environment={**keys, "DDEV_SYNC_EXPORT_ENV": "all,DB_HOST"}
+    )
+
+    assert result.returncode != 0, result.stdout
+    assert "all" in result.stderr
+    assert "#endpoint-export-env-variable-unset" in result.stderr
 
 
 @pytest.mark.parametrize(

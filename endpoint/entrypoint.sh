@@ -90,8 +90,9 @@ ssh-keygen -l -f "$COMPOSED_KEYS" > /dev/null 2>&1 ||
 
 # sshd starts a session with a clean environment, so a credential the stack
 # sets as a runtime variable on this container is invisible to the sync. The
-# variables DDEV_SYNC_EXPORT_ENV lists are written to a file the session's own
-# account can read, and the engine reads it from there.
+# variables DDEV_SYNC_EXPORT_ENV lists - or all of them, for the word `all` -
+# are written to a file the session's own account can read, and the engine
+# reads it from there.
 # Removed first: an endpoint restarted without the list must not leave the
 # previous run's credentials behind.
 rm -f "$HANDOVER_FILE"
@@ -103,17 +104,27 @@ if [ -n "${DDEV_SYNC_EXPORT_ENV:-}" ]; then
     case "$DDEV_SYNC_EXPORT_ENV" in
         *=*) refuse "DDEV_SYNC_EXPORT_ENV holds an =. List the names of the variables to hand over, not NAME=value; their values come from the container's environment." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-export-env-name-invalid" ;;
     esac
+    # The one word `all` hands over everything the stack gave this container.
+    # A comma keeps it a list, where `all` is a variable name like any other:
+    # `all,DB_HOST` is not "everything, and DB_HOST".
+    every=""
+    set -f
+    # shellcheck disable=SC2086
+    set -- $DDEV_SYNC_EXPORT_ENV
+    if [ "$#" = 1 ] && [ "$1" = all ]; then every=1; fi
+
     # Commas and whitespace both separate, because a stack file writes the list
     # either way. Globbing is off until the names are validated: a name
     # like `*` must reach that check as itself, not as a directory listing.
     names=""
-    set -f
-    for name in $(printf '%s' "$DDEV_SYNC_EXPORT_ENV" | tr ',' ' '); do
-        case " ${names} " in
-            *" ${name} "*) ;;
-            *) names="${names} ${name}" ;;
-        esac
-    done
+    if [ -z "$every" ]; then
+        for name in $(printf '%s' "$DDEV_SYNC_EXPORT_ENV" | tr ',' ' '); do
+            case " ${names} " in
+                *" ${name} "*) ;;
+                *) names="${names} ${name}" ;;
+            esac
+        done
+    fi
 
     # Every name is checked before any of them is looked up: the name is
     # handed to a command below and written into the file as the left of a
@@ -141,6 +152,30 @@ if [ -n "${DDEV_SYNC_EXPORT_ENV:-}" ]; then
     staged="$(dirname "$HANDOVER_FILE")/.app.env.$$"
     printf '# ddev-sync endpoint handover v1\n' > "$staged"
     count=0
+    skipped_names="$(dirname "$HANDOVER_FILE")/.app.skipped.$$"
+    : > "$skipped_names"
+    if [ -n "$every" ]; then
+        # Walked entry by entry, as the lookup below is. A name that is not a
+        # plain identifier would make its line mean something else, so it is
+        # left out like the endpoint's own settings; a value with a line break
+        # cannot be carried, and there is no one to refuse it to - its name is
+        # kept for the sync to report, never its value.
+        xargs -0 -n 1 sh -c '
+            case $3 in *=*) ;; *) exit 0 ;; esac
+            name=${3%%=*}
+            case $name in
+                "" | DDEV_SYNC_* | *[!A-Za-z0-9_]* | [0-9]*) exit 0 ;;
+            esac
+            value=${3#*=}
+            case $value in
+                *"
+"* | *"$(printf "\r")"*) printf "%s\n" "$name" >> "$2" ;;
+                *) printf "%s=%s\n" "$name" "$value" >> "$1" ;;
+            esac
+        ' sh "$staged" "$skipped_names" < "/proc/$$/environ" ||
+            refuse "could not read the container's environment." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-export-env-variable-unset"
+        count=$(($(wc -l < "$staged") - 1))
+    fi
     for name in $names; do
         # From the environment the container was started with, not from this
         # shell: a variable inherited from it is the shell's own, so a listed
@@ -172,11 +207,23 @@ if [ -n "${DDEV_SYNC_EXPORT_ENV:-}" ]; then
         printf '%s=%s\n' "$name" "$value" >> "$staged"
         count=$((count + 1))
     done
+    # Last, and only when there is something to say: the sync reports these
+    # names, so a stack that left a variable out is told which one.
+    skipped=0
+    if [ -s "$skipped_names" ]; then
+        skipped="$(wc -l < "$skipped_names")"
+        printf 'DDEV_SYNC_SKIPPED=%s\n' "$(paste -sd, "$skipped_names")" >> "$staged"
+    fi
+    rm -f "$skipped_names"
     chown "${uid}:${gid}" "$staged"
     chmod 400 "$staged"
     mv "$staged" "$HANDOVER_FILE"
     umask "$previous_umask"
-    say "handing over ${count} variables to the sync session"
+    if [ "$skipped" -gt 0 ]; then
+        say "handing over ${count} variables to the sync session, skipped ${skipped} with a line break"
+    else
+        say "handing over ${count} variables to the sync session"
+    fi
 fi
 
 # Said out loud either way: a developer whose connection was just refused as a

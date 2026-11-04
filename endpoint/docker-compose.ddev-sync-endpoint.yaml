@@ -74,6 +74,10 @@ services:
       # A listed variable that is not set stops the endpoint, and so does a
       # value with a line break in it. With the handover in use, drop the
       # `./.env` mount below.
+      #
+      # Or the single word `all`: everything given to this service except
+      # DDEV_SYNC_* is handed over, and everyone holding a key can read it.
+      # Values with a line break are left out.
 
     volumes:
       # What the sync pulls, read-only: the sync only ever reads production,
