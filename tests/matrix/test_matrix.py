@@ -7,6 +7,7 @@ a cell three recipe files rather than a new test.
 """
 
 import contextlib
+import json
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -874,6 +875,31 @@ def test_the_env_step_imposed_what_it_must_and_kept_what_it_should(
         assert declared[marker.key] == marker.expected, (
             f"{marker.key} is {declared[marker.key]!r}, not the {marker.kind} {marker.expected!r}"
         )
+
+
+def test_a_pulled_value_reads_back_through_the_framework(stack: Stack, cell: Cell) -> None:
+    # The claim: a value `env.pull` names reaches the application exactly as
+    # production holds it. The reading is the installed framework's own - it
+    # boots Laravel, whose bootstrapper loads the synced project's `.env`
+    # through phpdotenv - so the check is of what the application sees, not of
+    # what the sync wrote. The tricky value carries a leading and trailing
+    # space, both quote characters, `#`, `=` and `$`, which every encoder gets
+    # wrong somewhere. The whole sync has run by now (`test_a_whole_sync_succeeds`),
+    # and the env step is in its `db` group.
+    if not cell.pulled:
+        pytest.skip(f"{cell.name} pulls no env values")
+    names = [name for name, _ in cell.pulled]
+    script = (
+        'require "vendor/autoload.php";'
+        '$app = require "bootstrap/app.php";'
+        "$app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap();"
+        f"echo json_encode(array_map('env', {names!r}));"
+    )
+    result = stack.web(["php", "-r", script])
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+    assert json.loads(result.stdout) == [value for _, value in cell.pulled], (
+        f"the framework did not read back what {cell.name} pulled: {result.stdout}"
+    )
 
 
 def test_the_feature_command_emptied_the_planted_queue(stack: Stack, cell: Cell) -> None:

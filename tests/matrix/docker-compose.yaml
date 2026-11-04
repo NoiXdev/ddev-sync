@@ -162,12 +162,16 @@ services:
       # leaving the image's default to be right by luck.
       - DDEV_SYNC_UID=${MATRIX_UID}
       - DDEV_SYNC_GID=${MATRIX_GID}
-      - DDEV_SYNC_EXPORT_ENV=DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD
+      - DDEV_SYNC_EXPORT_ENV=all
       - DB_HOST=remote-db
       - DB_PORT=3306
       - DB_DATABASE=acme_prod
       - DB_USERNAME=acme
       - DB_PASSWORD=s3cret
+      # What `env.pull` carries to the project. `$$` is compose's escape for the
+      # `$` in the tricky value.
+      - PULLED_PLAIN=plain-value
+      - "PULLED_TRICKY= pa'ss\"#=$$ word "
     volumes:
       - ${MATRIX_KEYS_DIR}/id_ed25519.pub:/etc/ddev-sync/authorized_keys:ro
       # The same tree the `remote` service serves, so what differs between

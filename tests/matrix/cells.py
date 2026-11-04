@@ -259,6 +259,10 @@ class Cell:
     # What `test_no_production_address_survives` reads from the user table: all
     # of it, unless the profile deliberately leaves a column alone.
     scan_columns: str = "*"
+    # Names `env.pull` brings across and the value the installed framework must
+    # read for each from the synced project's `.env`, exactly. Empty means the
+    # cell pulls nothing and states nothing about it.
+    pulled: tuple[tuple[str, str], ...] = ()
 
 
 # Email only: the profile cannot know the project's name column, so it leaves
@@ -314,6 +318,10 @@ CELLS: tuple[Cell, ...] = (
         seeded_users=("1", "2"),
         fakes=LARAVEL_FAKES,
         scan_columns=LARAVEL_SCAN_COLUMNS,
+        pulled=(
+            ("PULLED_PLAIN", "plain-value"),
+            ("PULLED_TRICKY", " pa'ss\"#=$ word "),
+        ),
     ),
     Cell(
         name="mxdocker",
@@ -344,6 +352,10 @@ CELLS: tuple[Cell, ...] = (
         fakes=LARAVEL_FAKES,
         scan_columns=LARAVEL_SCAN_COLUMNS,
         services=("jump", "endpoint"),
+        pulled=(
+            ("PULLED_PLAIN", "plain-value"),
+            ("PULLED_TRICKY", " pa'ss\"#=$ word "),
+        ),
         # This cell verifies a transport, not a profile's commands, and
         # `mxlaravel` already holds the `laravel` row with evidence about
         # those commands. Emitting one here would overwrite that evidence

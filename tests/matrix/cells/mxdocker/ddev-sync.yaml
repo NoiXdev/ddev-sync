@@ -24,3 +24,7 @@ database:
   # a compose service name that resolves because the endpoint sits inside the
   # stack's network.
   remote_credentials: env
+env:
+  pull:
+    - PULLED_PLAIN
+    - PULLED_TRICKY

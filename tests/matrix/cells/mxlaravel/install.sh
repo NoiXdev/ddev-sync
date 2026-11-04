@@ -13,6 +13,10 @@ DB_PORT=3306
 DB_DATABASE=db
 DB_USERNAME=db
 DB_PASSWORD=db
+# A multi-line double-quoted value, which `env.pull` must replace whole: the
+# sync leaves neither line of it behind and the framework still loads.
+PULLED_PLAIN="first line
+second line"
 ENV
 
 php artisan migrate --force --no-interaction
