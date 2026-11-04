@@ -71,14 +71,18 @@ def handover(*lines: str) -> str:
 def read_like_phpdotenv(text: str) -> str:
     """What phpdotenv makes of a right-hand side `encode_for_env_file` wrote.
 
-    Only the two forms the encoder produces. Inside single quotes phpdotenv
-    takes `\\'` and `\\\\` as escapes and everything else literally
-    (`EntryParser::parseValue`), and a bare value is the value.
+    Only the three forms the encoder produces, by `EntryParser::processToken`:
+    single quotes are literal and close on the first `'`, double quotes take
+    `\\"`, `\\\\` and `\\$` as escapes and read a bare `$` as a variable, and a
+    bare value is the value. Anything else fails here, as it would there.
     """
-    if not text.startswith("'"):
-        return text
-    assert text.endswith("'")
-    return re.sub(r"\\(['\\])", r"\1", text[1:-1])
+    if text.startswith("'"):
+        assert text.index("'", 1) == len(text) - 1
+        return text[1:-1]
+    if text.startswith('"'):
+        assert re.fullmatch(r'"(?:[^"\\$]|\\["\\$])*"', text)
+        return re.sub(r'\\(["\\$])', r"\1", text[1:-1])
+    return text
 
 
 # --- encode_for_env_file ----------------------------------------------------
@@ -92,19 +96,41 @@ def read_like_phpdotenv(text: str) -> str:
         ("base64:abc+/=", "base64:abc+/="),
         ("a,b_c", "a,b_c"),
         ("a b", "'a b'"),
-        ("it's", "'it\\'s'"),
-        ("a\\b", "'a\\\\b'"),
+        ("a\\b", "'a\\b'"),
+        ("C:\\", "'C:\\'"),
         ("${X}", "'${X}'"),
         ("#x", "'#x'"),
         ('"x"', "'\"x\"'"),
         ("abc\n", "'abc\n'"),
+        ("it's", '"it\'s"'),
+        ('it\'s $x \\ "q"', '"it\'s \\$x \\\\ \\"q\\""'),
     ],
 )
 def test_encoding_a_verbatim_value(value: str, written: str) -> None:
     assert encode_for_env_file(value) == written
 
 
-@pytest.mark.parametrize("value", [TRICKY, "\\'", "'\\", "\\\\", "a\\'b", "${X}", "$"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        TRICKY,
+        "",
+        "abc-1.2:x@y",
+        "a b",
+        "a\\b",
+        "${X}",
+        "$",
+        "it's",
+        'it\'s $x \\ "q"',
+        "C:\\",
+        "\\\\",
+        "\\'",
+        "'\\",
+        "a\\'b",
+        "'\"",
+        "'\\\"",
+    ],
+)
 def test_an_encoded_value_reads_back_as_it_was(value: str) -> None:
     assert read_like_phpdotenv(encode_for_env_file(value)) == value
 
@@ -154,6 +180,19 @@ def test_a_quote_left_open_takes_the_lines_up_to_its_close_with_it() -> None:
 
 def test_a_single_quote_left_open_does_too() -> None:
     assert raw_assignments("A='line1\nB=2\nline3'\nC=3\n") == ({"C": "3"}, {"A"})
+
+
+def test_a_backslash_is_an_ordinary_character_in_single_quotes() -> None:
+    # Measured against phpdotenv v5.7.0: `A='C:\'` reads `C:\`, and the next line
+    # is the next assignment.
+    assert raw_assignments("A='C:\\'\nB=2\nC=3\n") == (
+        {"A": "'C:\\'", "B": "2", "C": "3"},
+        set(),
+    )
+
+
+def test_a_backslash_does_not_hide_the_quote_that_closes_a_multi_line_single_quote() -> None:
+    assert raw_assignments("A='line1\nline2\\'\nB=2\n") == ({"B": "2"}, {"A"})
 
 
 def test_a_quote_of_the_other_kind_does_not_close_it() -> None:

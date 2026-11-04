@@ -4,7 +4,7 @@ Two sources, and they are written differently because they mean different
 things. A remote `.env` already is text a dotenv loader reads, so its right-hand
 side is carried over as written, quotes and all: decoding and re-encoding it
 could only change what phpdotenv makes of it. The handover holds the value
-itself, so it is encoded here into the one form phpdotenv reads back literally.
+itself, so it is encoded here into a form phpdotenv reads back as that value.
 
 No value leaves this module except in `RemoteValues.text`, whose `repr` leaves it
 out, for the same reason `RemoteCredentials` redacts its password.
@@ -37,11 +37,13 @@ _ASSIGNMENT = re.compile(
     r"[ \t]*(?:export[ \t]+)?['\"]?(?P<name>[A-Za-z_][A-Za-z0-9_]*)['\"]?\s*=(?P<value>.*)"
 )
 
-# What is left of a quoted value up to its closing quote, a backslash taking the
-# character after it along in both kinds, as it does in phpdotenv.
+# What is left of a quoted value up to its closing quote, as phpdotenv reads it
+# (`EntryParser::processToken`): in double quotes a backslash takes the character
+# after it along, and in single quotes it is an ordinary character, so `'C:\'`
+# is closed.
 _CLOSES = {
     '"': re.compile(r'(?:[^"\\]|\\.)*"'),
-    "'": re.compile(r"(?:[^'\\]|\\.)*'"),
+    "'": re.compile(r"[^']*'"),
 }
 
 _ESCAPE = re.compile(r"\\.")
@@ -66,13 +68,17 @@ class RemoteValues:
 def encode_for_env_file(value: str) -> str:
     """Write a verbatim value so that phpdotenv reads back exactly that value.
 
-    In single quotes phpdotenv expands nothing and takes only `\\'` and `\\\\`
-    as escapes, so those two characters are the only ones to look after.
+    In single quotes phpdotenv takes everything literally up to the first `'`, with
+    no escapes at all, so they serve any value that does not hold one. A value that
+    does goes in double quotes, where `\\`, `"` and `$` need a backslash to stay
+    themselves.
     """
     if _BARE_VALUE.fullmatch(value) is not None:
         return value
-    escaped = value.replace("\\", "\\\\").replace("'", "\\'")
-    return f"'{escaped}'"
+    if "'" not in value:
+        return f"'{value}'"
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+    return f'"{escaped}"'
 
 
 def raw_assignments(contents: str) -> tuple[dict[str, str], set[str]]:

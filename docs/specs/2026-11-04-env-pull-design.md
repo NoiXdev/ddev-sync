@@ -144,9 +144,11 @@ one more value.
     and resolves against the local file. One notice line names it, because it can read
     differently from the remote if the other variable is not pulled.
 19. **From the handover: encoded.** The value is verbatim, so it is written bare
-    when it holds only `[A-Za-z0-9_./:@+=,-]`, otherwise in single quotes with `\`
-    and `'` escaped by a backslash, which phpdotenv reads literally. An empty value
-    writes `NAME=`.
+    when it holds only `[A-Za-z0-9_./:@+=,-]`, otherwise in single quotes as it is,
+    or, when it holds a `'`, in double quotes with `\`, `"` and `$` escaped by a
+    backslash. Single quotes alone are not enough because phpdotenv has no escape
+    inside them: it takes everything literally up to the first `'`, so no single-quoted
+    form can hold one. An empty value writes `NAME=`.
 20. **A new write path.** `patch_keys` and `_requote` wrap the replacement in the
     old line's quotes, which is wrong for an already quoted or encoded value. A
     pulled value must replace the whole right-hand side, on every line assigning it,
