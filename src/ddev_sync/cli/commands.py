@@ -67,6 +67,7 @@ def doctor_command(
         secrets=set(),
         stdout_is_terminal=False,
         progress=discard_progress,
+        notice=discard_progress,
     )
     report = PreflightOperation().check(execution)
     echo(render_doctor(report, context.target, colour=colour))
@@ -139,6 +140,7 @@ def run_command(
                     secrets=set(),
                     stdout_is_terminal=False,
                     progress=discard_progress,
+                    notice=discard_progress,
                 ),
                 ConsoleReporter(write=echo, colour=colour, verbose=verbose),
             )
@@ -159,6 +161,7 @@ def run_command(
         secrets=secrets,
         stdout_is_terminal=stdout_is_terminal,
         progress=_progress_listener(reporter, stdout_is_terminal=stdout_is_terminal),
+        notice=reporter.notice,
     )
     report = Executor(reporter=reporter).run(plan, execution)
     if "sanitize" in selection:
@@ -298,6 +301,7 @@ def _execution_context(
     secrets: set[str],
     stdout_is_terminal: bool,
     progress: Callable[[str], None],
+    notice: Callable[[str], None],
 ) -> ExecutionContext:
     return ExecutionContext(
         project=context.project,
@@ -310,6 +314,7 @@ def _execution_context(
         secrets=secrets,
         stdout_is_terminal=stdout_is_terminal,
         progress=progress,
+        notice=notice,
     )
 
 

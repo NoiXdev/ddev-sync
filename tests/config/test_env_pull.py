@@ -4,8 +4,22 @@ from typing import Any
 
 import pytest
 
-from ddev_sync.config.env_pull import pull_names
+from ddev_sync.config.env_pull import names_to_read, pull_names
 from ddev_sync.errors import ConfigError
+
+
+def test_names_to_read_leaves_out_what_env_set_keeps() -> None:
+    data = {"env": {"pull": ["A", "B"], "set": {"A": "1"}}}
+    assert names_to_read(data) == ["B"]
+
+
+@pytest.mark.parametrize("imposed", [None, "oops"])
+def test_names_to_read_reads_a_set_that_is_no_mapping_as_no_block(imposed: Any) -> None:
+    assert names_to_read({"env": {"pull": ["A"], "set": imposed}}) == ["A"]
+
+
+def test_names_to_read_of_nothing_listed_is_nothing() -> None:
+    assert names_to_read({"env": "oops"}) == []
 
 
 def _data(pull: Any, **database: Any) -> dict[str, Any]:

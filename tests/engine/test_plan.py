@@ -923,6 +923,45 @@ def test_env_pull_with_no_file_to_write_to_is_refused() -> None:
         plan_for(["db"], user_layers=[extra])
 
 
+@pytest.mark.parametrize("bad", [["config/.env"], "config/.env", [".env", "../.env"]])
+def test_env_pull_with_a_candidate_in_another_directory_is_refused_naming_it(bad: object) -> None:
+    # The step only ever looks in the project root, so a file created there would
+    # not be found by the next run.
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"file": bad, "pull": ["A"]}})
+    with pytest.raises(ConfigError, match=r"env\.file.*(config/\.env|\.\./\.env)"):
+        plan_for(["db"], user_layers=[extra])
+
+
+def test_a_candidate_in_another_directory_stays_allowed_without_env_pull() -> None:
+    assert env_detail({"file": ["config/.env"], "set": {"A": "1"}}) == (
+        "patch_keys: 1 key(s) -> config/.env (A)"
+    )
+
+
+def test_a_name_in_both_env_set_and_env_pull_is_a_plan_notice() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {"env": {"set": {"A": "secret", "B": "x"}, "pull": ["A", "B", "C"]}},
+    )
+    plan = plan_for(["db"], user_layers=[extra], notice="from the profile")
+    assert plan.notices[0] == "from the profile"
+    assert len(plan.notices) == 2
+    assert "env.set" in plan.notices[1]
+    assert "A, B" in plan.notices[1]
+    assert "C" not in plan.notices[1]
+    assert "secret" not in plan.notices[1]
+
+
+def test_no_overlap_of_env_set_and_env_pull_is_no_notice() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"set": {"A": "1"}, "pull": ["B"]}})
+    assert plan_for(["db"], user_layers=[extra]).notices == ()
+
+
+def test_the_overlap_notice_needs_the_env_step_to_be_selected() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"set": {"A": "1"}, "pull": ["A"]}})
+    assert plan_for(["files"], user_layers=[extra]).notices == ()
+
+
 def test_selecting_files_alone_does_not_pull_in_env() -> None:
     extra = LayerDoc(
         ".ddev/ddev-sync.yaml",

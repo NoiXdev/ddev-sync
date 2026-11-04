@@ -1,4 +1,5 @@
 import dataclasses
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,6 @@ from ddev_sync.operations.env import (
     BLOCK_END,
     BLOCK_START,
     EnvRewriteOperation,
-    _diff,
     append_block,
     confirm_env_change,
     declared_keys,
@@ -701,13 +701,13 @@ def test_a_character_python_calls_a_line_break_stays_inside_its_value(separator:
     assert patch_pulled(text, {"A": f"'x{separator}B=y'"}) == text
     assert patch_keys(text, {"C": "1"}) == f"{text}C=1\n"
     assert declared_keys(text) == {"A"}
-    masked = mask_pulled(_diff(".env", "", text), {"A"})
+    masked = mask_pulled(".env", "", text, {"A"})
     assert masked.endswith("\n+A=***")
     assert "y'" not in masked
 
 
 def test_masking_hides_both_sides_of_a_pulled_name() -> None:
-    masked = mask_pulled(_diff(".env", "A=before\nB=keep\n", "A=after\nB=keep\n"), {"A"})
+    masked = mask_pulled(".env", "A=before\nB=keep\n", "A=after\nB=keep\n", {"A"})
     assert "-A=***" in masked
     assert "+A=***" in masked
     assert "before" not in masked
@@ -715,7 +715,7 @@ def test_masking_hides_both_sides_of_a_pulled_name() -> None:
 
 
 def test_masking_leaves_the_header_lines_and_other_names_alone() -> None:
-    masked = mask_pulled(_diff(".env", "DB_HOST=a\nA=old\n", "DB_HOST=b\nA=new\n"), {"A"})
+    masked = mask_pulled(".env", "DB_HOST=a\nA=old\n", "DB_HOST=b\nA=new\n", {"A"})
     assert masked.splitlines()[:2] == ["--- .env", "+++ .env (new)"]
     assert "-DB_HOST=a" in masked
     assert "+DB_HOST=b" in masked
@@ -723,17 +723,136 @@ def test_masking_leaves_the_header_lines_and_other_names_alone() -> None:
 
 def test_masking_hides_a_pulled_name_on_an_unchanged_context_line() -> None:
     # The diff prints three lines around a change, so a pulled value that did
-    # not change still reaches the screen beside an imposed key that did.
-    masked = mask_pulled(_diff(".env", "A=secret\nB=1\n", "A=secret\nB=2\n"), {"A"})
-    assert " A=***" in masked
+    # not change still reaches the screen beside an imposed key that did. As a
+    # context line and not a change: the mask must not hide which of the two it is.
+    masked = mask_pulled(".env", "A=secret\nB=1\n", "A=secret\nB=2\n", {"A"})
+    assert " A=***" in masked.splitlines()
+    assert "-A=***" not in masked
+    assert "+A=***" not in masked
     assert "secret" not in masked
 
 
 @pytest.mark.parametrize("line", ["export A=secret", "  A=secret", '"A"=secret', "A = secret"])
 def test_masking_hides_every_form_of_assigning_a_pulled_name(line: str) -> None:
-    masked = mask_pulled(_diff(".env", f"{line}\nB=1\n", f"{line}\nB=2\n"), {"A"})
-    assert " A=***" in masked
+    masked = mask_pulled(".env", f"{line}\nB=1\n", f"{line}\nB=2\n", {"A"})
+    assert " A=***" in masked.splitlines()
     assert "secret" not in masked
+
+
+def test_masking_nothing_is_the_plain_diff() -> None:
+    assert mask_pulled(".env", "A=1\n", "A=2\n", ()).splitlines() == [
+        "--- .env",
+        "+++ .env (new)",
+        "@@ -1 +1 @@",
+        "-A=1",
+        "+A=2",
+    ]
+
+
+def load_like_phpdotenv(text: str) -> dict[str, str]:
+    """The names and values phpdotenv reads from a file, or an AssertionError.
+
+    Written apart from the code under test, by the rules of `Lines` and
+    `EntryParser`: a quoted value may span lines, and a line that is neither blank,
+    a comment nor an assignment is what makes phpdotenv throw `InvalidFileException`.
+    Escapes are left as they stand, since these tests only compare values.
+    """
+    entry = re.compile(
+        r"""[ \t]*(?:export[ \t]+)?(?P<name>\w+)[ \t]*=[ \t]*
+        (?:"(?P<double>(?:[^"\\]|\\.)*)"|'(?P<single>[^']*)'|(?P<bare>[^\n#"']*?))
+        [ \t]*(?:\#[^\n]*)?(?:\n|\Z)""",
+        re.VERBOSE | re.DOTALL,
+    )
+    skipped = re.compile(r"[ \t]*(?:#[^\n]*)?(?:\n|\Z)")
+    found: dict[str, str] = {}
+    position = 0
+    while position < len(text):
+        match = entry.match(text, position)
+        if match is not None:
+            found[match["name"]] = match["double"] or match["single"] or match["bare"] or ""
+            position = match.end()
+            continue
+        blank = skipped.match(text, position)
+        assert blank is not None, f"InvalidFileException at: {text[position:]!r}"
+        position = blank.end()
+    return found
+
+
+def test_the_phpdotenv_rules_helper_refuses_what_phpdotenv_refuses() -> None:
+    # The form the line-by-line rewrite left behind, which the reviewer saw throw
+    # `InvalidFileException` in phpdotenv 5.7.
+    with pytest.raises(AssertionError, match="InvalidFileException"):
+        load_like_phpdotenv('A=new\ny"\nB=1\n')
+    assert load_like_phpdotenv('# c\n\nA="x\ny"\nB=1 # c\n') == {"A": "x\ny", "B": "1"}
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        'A="x\ny"\nB=1\n',
+        'A="-----BEGIN\nabc=def\n-----END"\nB=1\n',
+        "A='x\nsecret2\n'\nB=1\n",
+        'export A="x\ny" # a comment\nB=1\n',
+    ],
+)
+def test_a_multi_line_local_value_is_replaced_whole(start: str) -> None:
+    written = patch_pulled(start, {"A": "new"})
+    head = "export " if start.startswith("export") else ""
+    assert written == f"{head}A=new\nB=1\n"
+    assert load_like_phpdotenv(written) == {"A": "new", "B": "1"}
+    assert patch_pulled(written, {"A": "new"}) == written
+
+
+def test_a_line_inside_another_names_value_assigns_nothing() -> None:
+    start = 'PEM="l1\nA=inner\nl3"\nB=1\n'
+    written = patch_pulled(start, {"A": "new"})
+    assert written == 'PEM="l1\nA=inner\nl3"\nB=1\nA=new\n'
+    assert load_like_phpdotenv(written) == {"PEM": "l1\nA=inner\nl3", "B": "1", "A": "new"}
+
+
+def test_a_name_assigned_beside_another_names_value_is_replaced_only_where_it_assigns() -> None:
+    start = 'A=old\nPEM="l1\nA=inner\nl3"\n'
+    assert patch_pulled(start, {"A": "new"}) == 'A=new\nPEM="l1\nA=inner\nl3"\n'
+
+
+def test_a_multi_line_value_of_another_name_is_kept_as_it_is_when_nothing_changes() -> None:
+    start = 'PEM="l1\nA=inner\nl3"\nA=same\n'
+    assert patch_pulled(start, {"A": "same"}) == start
+
+
+def test_an_unclosed_quote_takes_only_its_own_line() -> None:
+    # The file was unreadable already; the lines behind it stay the developer's.
+    assert patch_pulled('A="x\nB=1\n', {"A": "new"}) == "A=new\nB=1\n"
+    assert patch_pulled('A="x\nB=1\n', {"B": "new"}) == 'A="x\nB=new\n'
+
+
+@pytest.mark.parametrize(
+    "start",
+    ['A="x\ny"\nB=1\n', 'A="-----BEGIN\nabc=def\n-----END"\nB=1\n', "A='x\nsecret2\n'\nB=1\n"],
+)
+def test_the_mask_takes_a_whole_multi_line_value(start: str) -> None:
+    masked = mask_pulled(".env", start, "A=new\nB=1\n", {"A"})
+    assert masked.splitlines() == [
+        "--- .env",
+        "+++ .env (new)",
+        masked.splitlines()[2],
+        "-A=***",
+        "+A=***",
+        " B=1",
+    ]
+
+
+def test_the_mask_says_when_a_multi_line_value_did_not_change() -> None:
+    masked = mask_pulled(".env", 'A="x\ny"\nB=1\n', 'A="x\ny"\nB=2\n', {"A"})
+    assert " A=***" in masked.splitlines()
+    assert "-A=***" not in masked
+    assert "x" not in masked.replace(".env", "")
+
+
+def test_the_mask_leaves_a_line_inside_another_names_value_alone() -> None:
+    masked = mask_pulled(".env", 'PEM="l1\nA=inner\nl3"\n', 'PEM="l1\nA=inner\nl3"\nA=new\n', {"A"})
+    assert " A=inner" in masked.splitlines()
+    assert "+A=***" in masked.splitlines()
 
 
 REMOTE_ENV = "/srv/app/.env"
@@ -744,15 +863,15 @@ def pull_context(
     remote: str,
     *,
     assume_yes: bool = True,
-    progress: list[str] | None = None,
+    notices: list[str] | None = None,
     **env: Any,
 ) -> ExecutionContext:
     """A project whose remote `.env` holds `remote`, with `env` as its `env:` block."""
     runner = FakeCommandRunner()
     runner.script_prefix(["ssh"], stdout=f"{REMOTE_ENV}\n{remote}")
     context = dataclasses.replace(make_context(root, env=env), runner=runner, assume_yes=assume_yes)
-    if progress is not None:
-        return dataclasses.replace(context, progress=progress.append)
+    if notices is not None:
+        return dataclasses.replace(context, notice=notices.append)
     return context
 
 
@@ -806,17 +925,32 @@ def test_a_placeholder_in_a_pulled_value_is_not_expanded(tmp_path: Path) -> None
     assert env.read_text(encoding="utf-8") == "HOST=acme\nA='${DDEV_SITENAME}-${SECRET}'\n"
 
 
-def test_a_name_in_env_set_keeps_the_imposed_value_and_says_so(tmp_path: Path) -> None:
+def test_a_name_in_env_set_keeps_the_imposed_value(tmp_path: Path) -> None:
     env = write_env(tmp_path, "A=old\n")
-    seen: list[str] = []
-    context = pull_context(
-        tmp_path, "A=remote\nB=2\n", progress=seen, pull=["A", "B"], set={"A": "imposed"}
-    )
+    context = pull_context(tmp_path, "A=remote\nB=2\n", pull=["A", "B"], set={"A": "imposed"})
     EnvRewriteOperation().execute(context, {})
     assert env.read_text(encoding="utf-8") == "A=imposed\nB=2\n"
-    assert len(seen) == 1
-    assert "env.set" in seen[0]
-    assert seen[0].split()[-1] == "A"
+
+
+def test_a_file_that_started_multi_line_is_healed_and_stays_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = write_env(tmp_path, "A='old\nsecret2\n'\nB=1\n")
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+    context = pull_context(tmp_path, "A=new\n", assume_yes=False, pull=["A"])
+    EnvRewriteOperation().execute(context, {})
+    printed = capsys.readouterr().out
+    assert "-A=***" in printed
+    assert "+A=***" in printed
+    assert "secret2" not in printed
+    assert env.read_text(encoding="utf-8") == "A=new\nB=1\n"
+    assert load_like_phpdotenv(env.read_text(encoding="utf-8")) == {"A": "new", "B": "1"}
+
+    diffs = seen_diffs(monkeypatch)
+    EnvRewriteOperation().execute(
+        pull_context(tmp_path, "A=new\n", assume_yes=False, pull=["A"]), {}
+    )
+    assert diffs == []
 
 
 def test_only_names_in_env_set_make_no_remote_read(tmp_path: Path) -> None:
@@ -861,13 +995,13 @@ def test_the_printed_diff_holds_no_pulled_value(
     assert "+DB_HOST=local" in printed
 
 
-def test_a_reference_is_named_in_a_progress_line(tmp_path: Path) -> None:
+def test_a_reference_is_named_in_a_notice(tmp_path: Path) -> None:
     env = write_env(tmp_path, "")
     seen: list[str] = []
     context = pull_context(
         tmp_path,
         'VITE_NAME="${APP_NAME}"\nPLAIN=topsecret\n',
-        progress=seen,
+        notices=seen,
         pull=["VITE_NAME", "PLAIN"],
     )
     EnvRewriteOperation().execute(context, {})
@@ -879,10 +1013,10 @@ def test_a_reference_is_named_in_a_progress_line(tmp_path: Path) -> None:
     assert "APP_NAME" not in seen[0]
 
 
-def test_no_reference_means_no_progress_line(tmp_path: Path) -> None:
+def test_no_reference_means_no_notice(tmp_path: Path) -> None:
     write_env(tmp_path, "")
     seen: list[str] = []
-    EnvRewriteOperation().execute(pull_context(tmp_path, "A=1\n", progress=seen, pull=["A"]), {})
+    EnvRewriteOperation().execute(pull_context(tmp_path, "A=1\n", notices=seen, pull=["A"]), {})
     assert seen == []
 
 
@@ -890,11 +1024,10 @@ def test_a_name_in_env_set_is_not_named_as_a_reference(tmp_path: Path) -> None:
     write_env(tmp_path, "")
     seen: list[str] = []
     context = pull_context(
-        tmp_path, 'A="$B"\nC=1\n', progress=seen, pull=["A", "C"], set={"A": "imposed"}
+        tmp_path, 'A="$B"\nC=1\n', notices=seen, pull=["A", "C"], set={"A": "imposed"}
     )
     EnvRewriteOperation().execute(context, {})
-    assert len(seen) == 1
-    assert "env.set" in seen[0]
+    assert seen == []
 
 
 def test_a_second_run_changes_nothing_and_does_not_prompt(
@@ -989,14 +1122,32 @@ def test_declining_leaves_the_existing_file_alone(
 
 
 def test_creating_never_overwrites_what_the_probe_did_not_recognise(tmp_path: Path) -> None:
-    # A directory stands in for the `.ENV` a case-insensitive filesystem would
-    # hand back for `.env`: the probe compares exact names and misses it, so
-    # the create has to be the thing that refuses, in the sync's own words.
+    # A dangling link stands in for the `.ENV` a case-insensitive filesystem would
+    # hand back for `.env`: the probe compares exact names and takes this for no
+    # file, so the create has to be the thing that refuses, in the sync's own
+    # words. Opening it to write would go through the link and create the target.
     write_env(tmp_path, "A=\n", ".env.example")
-    (tmp_path / ".env.local").mkdir()
+    target = tmp_path / "elsewhere"
+    (tmp_path / ".env.local").symlink_to(target)
     context = pull_context(tmp_path, "A=1\n", pull=["A"])
     with pytest.raises(OperationError, match=r"could not create .*\.env\.local"):
         EnvRewriteOperation().execute(context, {})
+    assert not target.exists()
+
+
+def test_a_created_file_can_be_read_by_its_owner_alone(tmp_path: Path) -> None:
+    # It holds production values, and umask is what would decide otherwise.
+    write_env(tmp_path, "A=\n", ".env.example")
+    EnvRewriteOperation().execute(pull_context(tmp_path, "A=1\n", pull=["A"]), {})
+    assert (tmp_path / ".env.local").stat().st_mode & 0o777 == 0o600
+
+
+def test_an_existing_file_keeps_its_mode(tmp_path: Path) -> None:
+    env = write_env(tmp_path, "A=old\n")
+    env.chmod(0o640)
+    EnvRewriteOperation().execute(pull_context(tmp_path, "A=1\n", pull=["A"]), {})
+    assert env.read_text(encoding="utf-8") == "A=1\n"
+    assert env.stat().st_mode & 0o777 == 0o640
 
 
 def test_a_project_without_env_pull_makes_no_remote_read(tmp_path: Path) -> None:

@@ -84,7 +84,7 @@ def redact(text: str, secret: str) -> str:
 
 
 def discard_progress(text: str) -> None:
-    """Throw away a progress line, for a context nobody is watching.
+    """Throw away a progress line or a notice, for a context nobody is watching.
 
     A module-level function rather than a lambda or `None`: it is the default
     of a dataclass field, so it has to be a single shared object, and a caller
@@ -147,6 +147,11 @@ class ExecutionContext:
     # same reason as the flag above. `compare=False` so that two otherwise
     # identical contexts stay equal when only their listener differs.
     progress: Callable[[str], None] = field(default=discard_progress, compare=False, repr=False)
+    # Where a step says something the user should read, for what only the run can
+    # find out; `Plan.notices` is the place for what the plan already knows.
+    # Heard on or off a terminal: unlike a line about a wait, it still matters
+    # in a log read afterwards. Never a value, only names.
+    notice: Callable[[str], None] = field(default=discard_progress, compare=False, repr=False)
 
     def setting(self, path: str) -> Any:
         """The raw value at a dotted path in the merged config, or `None`.

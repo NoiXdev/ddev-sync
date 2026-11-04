@@ -9,7 +9,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ddev_sync.config.env_pull import pull_names
+from ddev_sync.config.env_pull import (
+    names_to_read,
+    pull_names,
+    refuse_an_unusable_strategy,
+    refuse_unusable_files,
+)
 from ddev_sync.config.merge import LIST_MODES, MergeResult
 from ddev_sync.config.models import Provider, ResolvedTarget
 from ddev_sync.ddev.project import DdevProject
@@ -175,7 +180,7 @@ def build_plan(
         )
         for number, entry in enumerate(entries, start=1)
     )
-    notices = () if profile.notice is None else (profile.notice,)
+    notices = (*(() if profile.notice is None else (profile.notice,)), *builder.notices)
     return Plan(
         target=target,
         profile_label=profile.label,
@@ -332,6 +337,8 @@ class _Builder:
         # `_sanitize_selected` is: the operation never sees the Plan.
         self._db_selected = StepKind.DB_DUMP in steps
         self._files_selected = StepKind.FILES_SYNC in steps
+        # What building a step found the reader should know. Filled by `step`.
+        self.notices: list[str] = []
 
     def step(self, kind: StepKind) -> list[_Entry]:
         handlers = {
@@ -433,13 +440,7 @@ class _Builder:
         # First, so a malformed list is refused whatever the strategy, in the
         # dry-run and before preflight reads the names.
         names = pull_names(self._data)
-        if names and strategy != "patch_keys":
-            # Neither of the others has anywhere to put a value that must replace
-            # a whole right-hand side, and a profile with `none` writes nothing
-            # at all until a project opts in.
-            raise ConfigError(
-                f"env.pull needs env.strategy: patch_keys, but the strategy is {strategy!r}"
-            )
+        refuse_an_unusable_strategy(names, strategy)
         if strategy == "none":
             return []
         raw_values = settings.get("set", {})
@@ -480,11 +481,7 @@ class _Builder:
                 f"env.file must be a file name or a list of file names, got {configured!r}"
             )
         candidates = [configured] if isinstance(configured, str) else [str(c) for c in configured]
-        if names and not candidates:
-            # The step creates a missing file as the first candidate, so unlike
-            # the other keys, which only ever find nothing to patch, this one
-            # would have nowhere to go.
-            raise ConfigError("env.pull needs a file to write to, but env.file lists none")
+        refuse_unusable_files(names, candidates)
         # An imposed empty string blanks the key rather than setting it, which a
         # bare name in the list reads as the opposite of (`DB_URL` is emptied so
         # that it cannot override the discrete `DB_*` keys). A key whose value
@@ -496,12 +493,20 @@ class _Builder:
         # profile has one; the limit is recorded here rather than closed.
         emptied = sorted(str(key) for key, value in imposed.items() if str(value) == "")
         set_keys = sorted(str(key) for key in imposed if str(key) not in emptied)
-        imposed_keys = {str(key) for key in imposed}
         # `set` wins a key declared in both, so such a default is never written
         # and is not worth naming. The same goes for a name `set` and `pull` both
         # have, and for a default of a pulled name.
-        written_if_absent = sorted({str(key) for key in defaulted} - imposed_keys - set(names))
-        pulled = [name for name in names if name not in imposed_keys]
+        written_if_absent = sorted(
+            {str(key) for key in defaulted} - {str(key) for key in imposed} - set(names)
+        )
+        pulled = names_to_read(self._data)
+        kept_by_set = [name for name in names if name not in pulled]
+        if kept_by_set:
+            # On the plan, so it is read in a dry run and in a log alike.
+            self.notices.append(
+                f"env.set keeps its own value for {', '.join(kept_by_set)}, "
+                "so env.pull does not bring them"
+            )
         # Built piece by piece, so a profile with no emptied keys, no defaults
         # and nothing pulled renders exactly the string it always has and the
         # goldens of every profile without them do not move.

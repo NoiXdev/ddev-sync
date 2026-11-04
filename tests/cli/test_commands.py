@@ -808,10 +808,69 @@ def test_the_secrets_set_is_handed_to_the_execution_context_not_copied(
         runner=SubprocessRunner(),
         assume_yes=True,
         progress=discard_progress,
+        notice=discard_progress,
         secrets=secrets,
         stdout_is_terminal=False,
     )
     assert execution.secrets is secrets
+
+
+def test_env_pull_notices_reach_a_run_without_a_terminal(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Progress lines go nowhere off a terminal, and these two are not progress:
+    one says a value will not come along, the other that one may read differently.
+    """
+    env_file = (
+        "/srv/app/.env\n"
+        "DATABASE_NAME=app\nDATABASE_USER=deploy\n"
+        "DATABASE_PASSWORD=hunter2\n"
+        "DATABASE_HOST=db.internal\nDATABASE_PORT=3306\n"
+        'VITE_NAME="${APP_NAME}-topsecret"\nKEPT=remote-topsecret\n'
+    )
+
+    def run(
+        self: object,
+        argv: list[str],
+        *,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        stdout_path: Path | None = None,
+        sensitive: bool = False,
+        passthrough: bool = False,
+    ) -> CommandResult:
+        if sensitive:
+            return CommandResult(tuple(argv), 0, env_file, "")
+        if stdout_path is not None:
+            stdout_path.parent.mkdir(parents=True, exist_ok=True)
+            stdout_path.write_text("-- Dump completed\n", encoding="utf-8")
+            return CommandResult(tuple(argv), 0, "", "")
+        return CommandResult(tuple(argv), 0, "ddev-sync-ok\n", "")
+
+    _configure(
+        project,
+        "database:\n  remote_credentials: env\n"
+        "env:\n  strategy: patch_keys\n  file: [.env]\n"
+        "  set: {KEPT: local}\n  pull: [VITE_NAME, KEPT]\n",
+    )
+    (project / ".env").write_text("OTHER=1\n", encoding="utf-8")
+    monkeypatch.setattr("ddev_sync.transport.runner.SubprocessRunner.run", run)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    code = invoke(project, tmp_path, "--yes", "--target", "production", "--steps", "db")
+    output = capsys.readouterr().out
+    assert code == 0
+    set_line = next(line for line in output.splitlines() if "env.set" in line)
+    assert "KEPT" in set_line
+    reference_line = next(line for line in output.splitlines() if "another variable" in line)
+    assert "VITE_NAME" in reference_line
+    assert "topsecret" not in output
+    assert (project / ".env").read_text(encoding="utf-8") == (
+        'OTHER=1\nVITE_NAME="${APP_NAME}-topsecret"\nKEPT=local\n'
+    )
 
 
 @pytest.mark.parametrize("flag", ["-vv", "-vvv"])

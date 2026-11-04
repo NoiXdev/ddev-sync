@@ -6,7 +6,7 @@ stand for are, and nothing here ever sees one.
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ddev_sync.errors import ConfigError
@@ -53,6 +53,49 @@ def pull_names(data: Mapping[str, Any]) -> list[str]:
                 "into the local file it would point this project at production"
             )
     return list(dict.fromkeys(raw))
+
+
+def names_to_read(data: Mapping[str, Any]) -> list[str]:
+    """`pull_names` without the names `env.set` keeps, whose remote value is never used.
+
+    A non-mapping `set` is no block, as the planner and the env step read it.
+    """
+    names = pull_names(data)
+    if not names:
+        return []
+    imposed = data["env"].get("set")
+    kept = {str(key) for key in imposed} if isinstance(imposed, Mapping) else set()
+    return [name for name in names if name not in kept]
+
+
+def refuse_an_unusable_strategy(names: Sequence[str], strategy: str) -> None:
+    """Neither other strategy can replace a whole right-hand side, and `none` writes nothing.
+
+    Shared by the planner and `cli/init.py`, which runs before any plan does.
+    """
+    if names and strategy != "patch_keys":
+        raise ConfigError(
+            f"env.pull needs env.strategy: patch_keys, but the strategy is {strategy!r}"
+        )
+
+
+def refuse_unusable_files(names: Sequence[str], candidates: Sequence[str]) -> None:
+    """Refuse `env.file` candidates the env step could not create a file for.
+
+    With `env.pull` a missing file is created as the first candidate, and every
+    run looks for the candidates among the entries of the project root. So with
+    none there is nowhere to go, and a file created in another directory would
+    not be found by the next run. Shared like `refuse_an_unusable_strategy`.
+    """
+    if not names:
+        return
+    if not candidates:
+        raise ConfigError("env.pull needs a file to write to, but env.file lists none")
+    for candidate in candidates:
+        if "/" in candidate:
+            raise ConfigError(
+                f"env.pull needs its env.file candidates in the project root, got {candidate}"
+            )
 
 
 def _database_names(data: Mapping[str, Any]) -> set[str]:

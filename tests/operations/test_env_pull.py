@@ -22,6 +22,7 @@ from ddev_sync.operations.env_pull import (
     RemoteValues,
     check_pull,
     encode_for_env_file,
+    logical_assignments,
     raw_assignments,
     read_remote_values,
 )
@@ -172,6 +173,29 @@ def test_a_comment_and_a_line_without_assignment_are_skipped() -> None:
 
 def test_a_set_but_empty_value_is_an_assignment() -> None:
     assert raw_assignments("A=\nB=''\n") == ({"A": "", "B": "''"}, set())
+
+
+def test_the_scanner_says_which_lines_each_assignment_takes() -> None:
+    lines = ["# c", 'A="x', "B=2", 'y" # z', "export C = 3", "D='open"]
+    found = [
+        (entry.name, entry.first, entry.last, entry.closed, entry.head)
+        for entry in logical_assignments(lines)
+    ]
+    assert found == [
+        ("A", 1, 3, True, "A="),
+        ("C", 4, 4, True, "export C = "),
+        ("D", 5, 5, False, "D="),
+    ]
+
+
+def test_the_scanner_goes_on_behind_a_quote_never_closed() -> None:
+    # Its caller decides what that means: the remote reading stops there, and the
+    # local rewrite treats the assignment as its own line.
+    assert [entry.name for entry in logical_assignments(["A='x", "B=1"])] == ["A", "B"]
+
+
+def test_a_scanned_value_does_not_reach_a_repr() -> None:
+    assert "topsecret" not in repr(next(iter(logical_assignments(["A=topsecret"]))))
 
 
 def test_a_quote_left_open_takes_the_lines_up_to_its_close_with_it() -> None:
@@ -510,6 +534,33 @@ def test_the_candidates_are_the_ones_env_file_names(tmp_path: Path) -> None:
             env={"pull": ["A"], "file": [".env.app"]},
         )
     )
+
+
+def test_a_name_env_set_keeps_cannot_refuse_the_run(tmp_path: Path) -> None:
+    # Its value would never be used, so it does not matter that the remote has none.
+    runner = remote_file(ENV_PATH, "B=1\n")
+    context = make_context(
+        runner, with_local_file(tmp_path), env={"pull": ["A", "B"], "set": {"A": "x"}}
+    )
+    check_pull(context)
+
+
+def test_a_name_env_set_keeps_makes_no_remote_read(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    context = make_context(
+        runner, with_local_file(tmp_path), env={"pull": ["A"], "set": {"A": "x"}}
+    )
+    seen: list[str] = []
+    check_pull(dataclasses.replace(context, progress=seen.append))
+    assert runner.calls == []
+    assert seen == []
+
+
+def test_with_only_names_env_set_keeps_the_step_still_needs_a_file(tmp_path: Path) -> None:
+    # `env.pull` is what lets the step create a file, so it answers for there being
+    # one to create from, whether or not there is anything to read.
+    context = make_context(FakeCommandRunner(), tmp_path, env={"pull": ["A"], "set": {"A": "x"}})
+    assert (doc_link(refusal(context)) or "").endswith("#env-pull-no-example-file")
 
 
 def test_a_directory_is_no_local_file_and_no_example(tmp_path: Path) -> None:

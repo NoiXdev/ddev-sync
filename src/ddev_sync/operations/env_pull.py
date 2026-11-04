@@ -6,15 +6,16 @@ side is carried over as written, quotes and all: decoding and re-encoding it
 could only change what phpdotenv makes of it. The handover holds the value
 itself, so it is encoded here into a form phpdotenv reads back as that value.
 
-No value leaves this module except in `RemoteValues.text`, whose `repr` leaves it
-out, for the same reason `RemoteCredentials` redacts its password.
+A value leaves this module only in `RemoteValues.text` and `Assignment.value`,
+whose `repr` leaves it out, for the same reason `RemoteCredentials` redacts its
+password.
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
-from ddev_sync.config.env_pull import pull_names
+from ddev_sync.config.env_pull import names_to_read, pull_names
 from ddev_sync.config.models import Provider
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import (
@@ -34,7 +35,8 @@ _BARE_VALUE = re.compile(r"[A-Za-z0-9_./:@+=,-]*")
 # The forms phpdotenv accepts as a declaration; see `_DECLARATION` in
 # `operations/env.py`, which has no use for the value and so does not capture it.
 _ASSIGNMENT = re.compile(
-    r"[ \t]*(?:export[ \t]+)?['\"]?(?P<name>[A-Za-z_][A-Za-z0-9_]*)['\"]?\s*=(?P<value>.*)"
+    r"[ \t]*(?:export[ \t]+)?['\"]?(?P<name>[A-Za-z_][A-Za-z0-9_]*)['\"]?\s*="
+    r"[ \t]*(?P<value>.*)"
 )
 
 # What is left of a quoted value up to its closing quote, as phpdotenv reads it
@@ -65,6 +67,65 @@ class RemoteValues:
     references: list[str]
 
 
+@dataclass(frozen=True)
+class Assignment:
+    """One name's assignment in an env file, as many lines as it takes.
+
+    `first` and `last` are indexes into the lines scanned, `last` included. `head`
+    is what stands ahead of the value on the first line, and `value` the rest of
+    that line, trimmed. `closed` is false for a value whose opening quote closes
+    nowhere, which then takes only its own line.
+    """
+
+    name: str
+    first: int
+    last: int
+    head: str
+    value: str = field(repr=False)
+    closed: bool
+
+
+def logical_assignments(lines: Sequence[str]) -> Iterator[Assignment]:
+    """Every assignment in the lines of an env file, in order.
+
+    An opening quote that does not close on its line makes a multi-line value, and
+    the lines up to its close belong to it: one of them looking like `B=2` assigns
+    nothing. What a quote never closed means is left to the caller, so the scan goes
+    on behind it.
+
+    Trimmed of what a loader trims: a bare `strip` also takes characters such as a
+    form feed, which here can be part of the value.
+    """
+    position = 0
+    while position < len(lines):
+        line = lines[position]
+        match = _ASSIGNMENT.match(line)
+        if match is None:
+            position += 1
+            continue
+        value = match["value"].strip(" \t\r")
+        quote = value[:1]
+        last: int | None = position
+        if quote in _CLOSES and _CLOSES[quote].match(value, 1) is None:
+            last = next(
+                (
+                    later
+                    for later in range(position + 1, len(lines))
+                    if _CLOSES[quote].match(lines[later]) is not None
+                ),
+                None,
+            )
+        yield Assignment(
+            name=match["name"],
+            first=position,
+            last=position if last is None else last,
+            head=line[: match.start("value")],
+            value=value,
+            closed=last is not None,
+        )
+        position = (position if last is None else last) + 1
+
+
 def encode_for_env_file(value: str) -> str:
     """Write a verbatim value so that phpdotenv reads back exactly that value.
 
@@ -84,35 +145,24 @@ def encode_for_env_file(value: str) -> str:
 def raw_assignments(contents: str) -> tuple[dict[str, str], set[str]]:
     """Each name's right-hand side as written, and the names whose value spans lines.
 
-    The last assignment of a name decides, as it does in phpdotenv. An opening
-    quote that does not close on its line makes a multi-line value, and the lines
-    up to its close belong to it: one of them looking like `B=2` assigns nothing.
+    The last assignment of a name decides, as it does in phpdotenv. A quote never
+    closed takes the rest of the file with it: a pulled value has to be a value
+    the remote really has, so nothing behind that line can count.
 
-    Split on line feeds alone, and trimmed of what a loader trims: `splitlines`
-    and a bare `strip` also take characters such as a form feed, which here can
-    be part of the value.
+    Split on line feeds alone: `splitlines` also ends a line at characters such as
+    a form feed, which here can be part of the value.
     """
     text: dict[str, str] = {}
     multi_line: set[str] = set()
-    open_quote: str | None = None
-    for line in contents.split("\n"):
-        if open_quote is not None:
-            if _CLOSES[open_quote].match(line) is not None:
-                open_quote = None
+    for entry in logical_assignments(contents.split("\n")):
+        text.pop(entry.name, None)
+        multi_line.discard(entry.name)
+        if entry.closed and entry.first == entry.last:
+            text[entry.name] = entry.value
             continue
-        match = _ASSIGNMENT.match(line)
-        if match is None:
-            continue
-        name = match["name"]
-        value = match["value"].strip(" \t\r")
-        text.pop(name, None)
-        multi_line.discard(name)
-        quote = value[:1]
-        if quote in _CLOSES and _CLOSES[quote].match(value, 1) is None:
-            multi_line.add(name)
-            open_quote = quote
-        else:
-            text[name] = value
+        multi_line.add(entry.name)
+        if not entry.closed:
+            break
     return text, multi_line
 
 
@@ -165,16 +215,21 @@ def check_pull(context: ExecutionContext) -> None:
     problem's slug is the link: one error carries one link. Only names go into
     the message, never a value.
     """
-    names = pull_names(context.merged.data)
-    if not names:
+    if not pull_names(context.merged.data):
         return
-    context.progress("reading the values env.pull names")
-    values = read_remote_values(context, names)
     problems: list[tuple[str, str]] = []
-    if values.missing:
-        problems.append((_missing_problem(context, values), "env-pull-variable-missing"))
-    if values.multi_line:
-        problems.append((_line_break_problem(context, values), "env-pull-value-has-a-line-break"))
+    # A name `env.set` keeps is not read: a value that would never be used cannot
+    # refuse the run. It still lets the step create a file, so the local check stays.
+    names = names_to_read(context.merged.data)
+    if names:
+        context.progress("reading the values env.pull names")
+        values = read_remote_values(context, names)
+        if values.missing:
+            problems.append((_missing_problem(context, values), "env-pull-variable-missing"))
+        if values.multi_line:
+            problems.append(
+                (_line_break_problem(context, values), "env-pull-value-has-a-line-break")
+            )
     local = _local_file_problem(context)
     if local is not None:
         problems.append((local, "env-pull-no-example-file"))

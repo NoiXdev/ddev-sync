@@ -68,6 +68,7 @@ from ddev_sync.cli.render import describe_endpoint
 from ddev_sync.cli.waiting import Wait, not_shown
 from ddev_sync.composer import requires
 from ddev_sync.config.detect import WORDPRESS_PROFILE
+from ddev_sync.config.env_pull import pull_names, refuse_an_unusable_strategy, refuse_unusable_files
 from ddev_sync.config.loader import (
     GLOBAL_LABEL,
     LEGACY_LOCAL_LABEL,
@@ -85,6 +86,7 @@ from ddev_sync.ddev.project import DdevProject
 from ddev_sync.errors import ConfigError, DdevSyncError, DeployerError, DeployerNotFound
 from ddev_sync.operations.base import ExecutionContext, OperationError, discard_progress
 from ddev_sync.operations.database import DATABASE_ENV_FILE_KEY, remote_env_paths
+from ddev_sync.operations.env_pull import EXAMPLE_FILE
 from ddev_sync.operations.placeholders import (
     PRODUCTION_URL_CONFIG_KEY,
     PRODUCTION_URL_PLACEHOLDER,
@@ -216,6 +218,7 @@ def init_command(
             secrets=set(),
             stdout_is_terminal=False,
             progress=discard_progress,
+            notice=discard_progress,
         )
         wordpress = resolution.profile.name == WORDPRESS_PROFILE
         fixed, wrote_legacy_credentials = _fix_credentials(execution, paths, wordpress, echo)
@@ -340,9 +343,14 @@ def _ask_project_settings(
         if answer is None:
             raise _no_terminal()
         if answer == ENV_FILE_NONE:
+            # `env.pull` is checked in preflight, which the others have no need of.
+            stops = (
+                "in preflight, before anything has moved"
+                if pull_names(resolution.merged.data)
+                else "at the env step, after the database has been imported"
+            )
             echo(
-                f"No environment file was named. The sync will stop at the env step, "
-                f"after the database has been imported - create one of "
+                f"No environment file was named. The sync will stop {stops} - create one of "
                 f"{', '.join(candidates)} in the project root before running it."
             )
         else:
@@ -387,33 +395,39 @@ def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:
 
     The conditions for "there is no env step" are `engine/plan.py::_env`'s
     own, read from the same merged configuration: the strategy is not `none`,
-    and `env.set` or `env.default` has something in it, a non-mapping `env.set`
-    counting as empty as it does there. So the question appears when that step
-    would, with one exception. `_env` refuses a non-mapping `env.default`; this
-    reads it as empty, so for that input a plan raises where this question is
-    not asked (or is asked on the strength of `env.set` alone). Init plans
-    nothing; the mistake is reported by the first plan a
-    sync or dry-run builds, before anything is written. The file is matched the
+    and `env.set`, `env.default` or `env.pull` has something in it, a non-mapping
+    `env.set` counting as empty as it does there. So the question appears when
+    that step would, with two exceptions. `_env` refuses a non-mapping
+    `env.default`; this reads it as empty, so for that input a plan raises where
+    this question is not asked (or is asked on the strength of `env.set` alone).
+    Init plans nothing; the mistake is reported by the first plan a
+    sync or dry-run builds, before anything is written. And beside `env.pull` a
+    `.env.example` answers the question, since the step creates the file from it.
+    The file is matched the
     way `operations/env.py::_find_env_file` matches it, against real directory
     entries rather than a constructed path, because `is_file()` folds case on
-    a case-insensitive filesystem. Two guards are `_env`'s too, raising the
+    a case-insensitive filesystem. The other guards are `_env`'s too, raising the
     same sentences: a hand-edited `env.file` that is neither a name nor a list
     of names would otherwise reach the comprehension below as a raw
-    `TypeError`, and `env.default` under `append_block` is a combination no
-    step can honour, which `_env` refuses before it looks at any file. The
-    malformed-`env.default` guard is the one `_env` has that this lacks.
+    `TypeError`, `env.default` under `append_block` is a combination no
+    step can honour, which `_env` refuses before it looks at any file, and so are
+    a bad `env.pull`, or one beside another strategy or an `env.file` it cannot
+    use. The malformed-`env.default` guard is the one `_env` has that this lacks.
     """
     node = resolution.merged.data.get("env", {})
     settings = node if isinstance(node, dict) else {}
-    if str(settings.get("strategy", "patch_keys")) == "none":
+    strategy = str(settings.get("strategy", "patch_keys"))
+    names = pull_names(resolution.merged.data)
+    refuse_an_unusable_strategy(names, strategy)
+    if strategy == "none":
         return None
     raw_values = settings.get("set", {})
     raw_default = settings.get("default", {})
     imposed = raw_values if isinstance(raw_values, dict) else {}
     defaulted = raw_default if isinstance(raw_default, dict) else {}
-    if not imposed and not defaulted:
+    if not imposed and not defaulted and not names:
         return None
-    if defaulted and str(settings.get("strategy", "patch_keys")) == "append_block":
+    if defaulted and strategy == "append_block":
         raise ConfigError("env.default cannot be used with strategy 'append_block'")
     configured = settings.get("file", [".env.local", ".env"])
     if not isinstance(configured, str | list):
@@ -423,8 +437,9 @@ def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:
     candidates = (
         [configured] if isinstance(configured, str) else [str(entry) for entry in configured]
     )
+    refuse_unusable_files(names, candidates)
     existing = {entry.name for entry in resolution.project.root.iterdir() if entry.is_file()}
-    if any(name in existing for name in candidates):
+    if any(name in existing for name in candidates) or (names and EXAMPLE_FILE in existing):
         return None
     return candidates
 

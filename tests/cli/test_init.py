@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
@@ -1536,6 +1537,101 @@ def test_init_asks_for_an_env_file_when_only_env_default_is_configured(
     report_green(monkeypatch)
     invoke(project, tmp_path)
     assert asked == [[".env"]]
+
+
+def test_init_asks_for_an_env_file_when_only_env_pull_is_configured(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No example to create one from, so preflight will stop the run, and it does
+    # so before the database has been touched.
+    project_file.write_text(
+        "version: 1\nenv:\n  strategy: patch_keys\n  file: [.env]\n  pull: [APP_KEY]\n",
+        encoding="utf-8",
+    )
+    asked: list[list[str]] = []
+
+    def answer(looked_for: list[str], present: list[str]) -> str:
+        asked.append(looked_for)
+        return ENV_FILE_NONE
+
+    monkeypatch.setattr(init, "choose_env_file", answer)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    invoke(project, tmp_path)
+    assert asked == [[".env"]]
+    output = capsys.readouterr().out
+    assert "before anything has moved" in output
+    assert "after the database has been imported" not in output
+
+
+def test_init_does_not_ask_when_env_pull_can_create_the_file_from_the_example(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_file.write_text(
+        "version: 1\nenv:\n  strategy: patch_keys\n  file: [.env]\n  pull: [APP_KEY]\n",
+        encoding="utf-8",
+    )
+    (project / ".env.example").write_text("APP_KEY=\n", encoding="utf-8")
+    monkeypatch.setattr(init, "choose_env_file", _never_called)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    assert invoke(project, tmp_path) == 0
+
+
+def test_init_still_asks_beside_an_example_without_env_pull(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_file.write_text(
+        "version: 1\nenv:\n  strategy: patch_keys\n  file: [.env]\n  set: {APP_ENV: local}\n",
+        encoding="utf-8",
+    )
+    (project / ".env.example").write_text("APP_ENV=\n", encoding="utf-8")
+    asked: list[list[str]] = []
+
+    def answer(looked_for: list[str], present: list[str]) -> str:
+        asked.append(looked_for)
+        return ENV_FILE_NONE
+
+    monkeypatch.setattr(init, "choose_env_file", answer)
+    _answer_the_target_questions(monkeypatch)
+    report_green(monkeypatch)
+    invoke(project, tmp_path)
+    assert asked == [[".env"]]
+
+
+@pytest.mark.parametrize(
+    ("env_yaml", "expected"),
+    [
+        ("pull: APP_KEY", r"env\.pull must be a list"),
+        ("strategy: none\n  pull: [APP_KEY]", "patch_keys"),
+        ("strategy: patch_keys\n  file: []\n  pull: [APP_KEY]", r"env\.file lists none"),
+        ("strategy: patch_keys\n  file: [config/.env]\n  pull: [APP_KEY]", r"config/\.env"),
+    ],
+)
+def test_init_refuses_an_env_pull_as_the_plan_does(
+    project: Path,
+    project_file: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    env_yaml: str,
+    expected: str,
+) -> None:
+    project_file.write_text(f"version: 1\nenv:\n  {env_yaml}\n", encoding="utf-8")
+    monkeypatch.setattr(init, "choose_env_file", _never_called)
+    _answer_the_target_questions(monkeypatch)
+    assert invoke(project, tmp_path) == 1
+    assert re.search(expected, capsys.readouterr().err)
 
 
 def test_init_refuses_env_default_under_append_block_as_the_plan_does(

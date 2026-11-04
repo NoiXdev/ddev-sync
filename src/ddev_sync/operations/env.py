@@ -12,14 +12,20 @@ their own way through the confirmation diff. They are deliberately not added to
 """
 
 import difflib
+import os
 import re
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from ddev_sync.config.env_pull import pull_names
+from ddev_sync.config.env_pull import names_to_read, pull_names
 from ddev_sync.operations.base import ExecutionContext, OperationError, confirm
-from ddev_sync.operations.env_pull import EXAMPLE_FILE, read_remote_values
+from ddev_sync.operations.env_pull import (
+    EXAMPLE_FILE,
+    Assignment,
+    logical_assignments,
+    read_remote_values,
+)
 
 # Re-exported (not just used internally) so `tests/operations/test_env.py`'s
 # existing `from ddev_sync.operations.env import expand_placeholders` keeps
@@ -49,11 +55,6 @@ _ASSIGNMENT = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?P<gap>\s*=\s*)(?P<v
 _DECLARATION = re.compile(
     r"^[ \t]*(?:export[ \t]+)?['\"]?(?P<key>[A-Za-z_][A-Za-z0-9_]*)['\"]?\s*="
 )
-
-# Everything ahead of a pulled value, gap included. As wide as `_DECLARATION`
-# because a pulled value replaces only the right-hand side and so has nothing to
-# reproduce, which is what keeps `patch_keys` to the narrow `_ASSIGNMENT`.
-_PULLED_HEAD = re.compile(rf"{_DECLARATION.pattern}\s*")
 
 _LINE_END = re.compile(r"\r?\n")
 
@@ -105,44 +106,65 @@ def patch_keys(text: str, values: Mapping[str, str]) -> str:
     return "\n".join(patched) + "\n" if patched else ""
 
 
+def _parts(lines: Sequence[str], names: Collection[str]) -> list[tuple[Assignment | None, str]]:
+    """The lines of a file, each assignment of one of `names` as one part, whole.
+
+    Everything else stays a line of its own, with no assignment beside it, so a
+    line inside another name's multi-line value is never taken for one of `names`.
+    """
+    parts: list[tuple[Assignment | None, str]] = []
+    position = 0
+    for entry in logical_assignments(lines):
+        if entry.name in names:
+            parts.extend((None, line) for line in lines[position : entry.first])
+            parts.append((entry, "\n".join(lines[entry.first : entry.last + 1])))
+            position = entry.last + 1
+    parts.extend((None, line) for line in lines[position:])
+    return parts
+
+
 def patch_pulled(text: str, values: Mapping[str, str]) -> str:
-    """Put each pulled right-hand side on every line assigning its name, or append it.
+    """Put each pulled right-hand side on every assignment of its name, or append it.
 
     `values` are ready to write, quotes included, so unlike `patch_keys` this
     does not `_requote` and replaces whatever stood behind the `=`, a comment
-    too. Every line for the reason `patch_keys` gives. A file nothing changes in
-    comes back as it was, because normalising its last newline would be a change
-    with no line to show in the diff, and a prompt over nothing.
+    too. Every assignment for the reason `patch_keys` gives, and all of it: left
+    behind, the continuation lines of a multi-line value are a line phpdotenv
+    refuses, so the application would stop at boot and no later run would heal it.
+    A name found only inside another name's value is absent. A file nothing
+    changes in comes back as it was, because normalising its last newline would
+    be a change with no line to show in the diff, and a prompt over nothing.
     """
-    remaining = dict(values)
     lines = _lines(text)
-    patched: list[str] = []
-    for line in lines:
-        match = _PULLED_HEAD.match(line)
-        if match is None or match["key"] not in values:
-            patched.append(line)
-            continue
-        remaining.pop(match["key"], None)
-        patched.append(f"{match[0]}{values[match['key']]}")
-    patched.extend(f"{key}={value}" for key, value in remaining.items())
+    parts = _parts(lines, values)
+    patched = [
+        real if entry is None else f"{entry.head}{values[entry.name]}" for entry, real in parts
+    ]
+    assigned = {entry.name for entry, _ in parts if entry is not None}
+    patched.extend(f"{key}={value}" for key, value in values.items() if key not in assigned)
     return text if patched == lines else "\n".join(patched) + "\n"
 
 
-def mask_pulled(diff: str, names: Collection[str]) -> str:
-    """Show every diff line assigning one of `names` as `NAME=***`.
+def mask_pulled(name: str, before: str, after: str, names: Collection[str]) -> str:
+    """The diff between two texts, with every assignment of `names` as `NAME=***`.
 
-    Context lines too, not only the changed ones: the diff prints the lines
-    around a change, and a pulled value that did not change is still a secret.
-    Line by line after the first character, which is the diff's own mark. The
-    header lines cannot match, since their second character is the mark again.
+    It takes the texts rather than a diff, because a hunk cannot tell whether it
+    starts inside a quote. The diff runs over the real text, with an assignment as
+    one element however many lines it spans, and only its output is replaced: so a
+    changed value still shows as `-A=***` and `+A=***`, and one that did not change
+    as a context line, which the diff prints around a change and which is still a
+    secret. With no `names` it is the plain diff.
     """
-    masked: list[str] = []
-    for line in diff.split("\n"):
-        match = _DECLARATION.match(line[1:])
-        masked.append(
-            f"{line[0]}{match['key']}=***" if match is not None and match["key"] in names else line
-        )
-    return "\n".join(masked)
+    old, new = _parts(_lines(before), names), _parts(_lines(after), names)
+    shown = {real: f"{entry.name}=***" for entry, real in (*old, *new) if entry is not None}
+    lines = difflib.unified_diff(
+        [real for _, real in old],
+        [real for _, real in new],
+        fromfile=name,
+        tofile=f"{name} (new)",
+        lineterm="",
+    )
+    return "\n".join(f"{line[0]}{shown.get(line[1:], line[1:])}" for line in lines)
 
 
 def declared_keys(text: str) -> set[str]:
@@ -279,7 +301,7 @@ class EnvRewriteOperation:
         values = expand_placeholders(
             {str(key): str(value) for key, value in imposed.items()}, context
         )
-        pulled = _read_pulled(context, names, values)
+        pulled = _read_pulled(context, names_to_read(context.merged.data))
         if defaulted:
             # Across every candidate that exists, not just the written file:
             # a key declared in `.env` while `.env.local` is written would
@@ -310,7 +332,7 @@ class EnvRewriteOperation:
             )
         if rewritten == original:
             return
-        diff = mask_pulled(_diff(path.name, original, rewritten), pulled)
+        diff = mask_pulled(path.name, original, rewritten, pulled)
         if not context.assume_yes and not confirm_env_change(diff):
             raise OperationError("env rewrite cancelled by the user")
         if to_create is None:
@@ -354,14 +376,19 @@ class EnvRewriteOperation:
 
         `None` when a candidate exists, or when there is no example, which
         preflight has refused by now and `_find_env_file` would refuse too. The
-        first candidate always exists: the planner refuses an empty `env.file`
-        beside `env.pull`.
+        first candidate always exists and is a plain name: the planner refuses an
+        empty `env.file`, and one with a slash, beside `env.pull`.
+
+        `context.local` is only the escape check here. It follows a symlink, and
+        the path to create must not, or a dangling link's target gets created.
         """
         candidates, existing = cls._candidates_and_existing(context, settings)
         if EXAMPLE_FILE not in existing or any(str(name) in existing for name in candidates):
             return None
+        first = str(candidates[0])
+        context.local(first)
         example = context.local(EXAMPLE_FILE).read_text(encoding="utf-8")
-        return context.local(str(candidates[0])), example
+        return context.project.root / first, example
 
     @classmethod
     def _find_env_file(cls, context: ExecutionContext, settings: dict[str, Any]) -> Path:
@@ -414,23 +441,17 @@ class EnvRewriteOperation:
         return declared
 
 
-def _read_pulled(
-    context: ExecutionContext, names: Sequence[str], imposed: Mapping[str, str]
-) -> dict[str, str]:
-    """The right-hand sides to write for `names`, leaving out what `env.set` decides.
+def _read_pulled(context: ExecutionContext, names: Sequence[str]) -> dict[str, str]:
+    """The right-hand sides to write for `names`, with no remote read for no names.
 
-    A name left out makes no remote read of its own, and is said out loud, as is
-    a value that refers to another variable: both are names only, never a value.
+    A value that refers to another variable gets a notice, by name only, because
+    it can read differently from the remote if the other variable is not pulled.
     """
-    overridden = [name for name in names if name in imposed]
-    if overridden:
-        context.progress(f"env.set keeps its own value, not pulled: {', '.join(overridden)}")
-    kept = [name for name in names if name not in imposed]
-    if not kept:
+    if not names:
         return {}
-    remote = read_remote_values(context, kept)
+    remote = read_remote_values(context, names)
     if remote.references:
-        context.progress(
+        context.notice(
             "copied as written, refers to another variable and resolves against the "
             f"local file: {', '.join(remote.references)}"
         )
@@ -442,21 +463,12 @@ def _create_file(path: Path, text: str) -> None:
 
     Exclusive, because the name was only compared against directory entries: on a
     case-insensitive filesystem `.env` opens a `.ENV` that comparison rightly did
-    not take for it, and overwriting that would lose the developer's file.
+    not take for it, and overwriting that would lose the developer's file. Only
+    its owner can read it, because it holds production values.
     """
     try:
-        with path.open("x", encoding="utf-8") as created:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as created:
             created.write(text)
     except OSError as error:
         raise OperationError(f"could not create {path}: {error.strerror}") from error
-
-
-def _diff(name: str, before: str, after: str) -> str:
-    lines = difflib.unified_diff(
-        _lines(before),
-        _lines(after),
-        fromfile=name,
-        tofile=f"{name} (new)",
-        lineterm="",
-    )
-    return "\n".join(lines)

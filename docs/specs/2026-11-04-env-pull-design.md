@@ -112,7 +112,8 @@ one more value.
 13. **An unset and an empty value differ.** A name absent from the remote refuses.
     A name set but empty is written empty, as in the handover.
 14. **Preflight, gated on `db_selected` and a non-empty list.** It reads the
-    remote file and refuses, listing every problem at once:
+    remote file, for the names `env.set` does not keep, and refuses, listing every
+    problem at once:
     - names not on the remote; under Docker the message says to add them to
       `DDEV_SYNC_EXPORT_ENV` or set it to `all`;
     - names whose value has a line break: listed in `DDEV_SYNC_SKIPPED` when the
@@ -124,11 +125,14 @@ one more value.
 15. **Creating the file.** `.env.example` is copied to the first `env.file`
     candidate, in the `env` step, after confirmation. The diff shows it as new.
     Its keys count as declared, so `env.default` behaves as for any existing file.
-16. **Masking.** In the printed diff, every line assigning a pulled name shows
-    `NAME=***`, on both sides. Imposed values print as they do today. If a pulled
-    value did not change, it produces no diff line, and a run with nothing to
-    change does not prompt. *(Comparing must use the real values, not the masked
-    ones.)*
+    It is created with mode 0600, because it holds production values; an existing
+    file keeps its mode.
+16. **Masking.** In the printed diff, a pulled name's whole assignment shows as one
+    `NAME=***` line, however many lines a quoted value spans: `-` and `+` when its
+    value changed, and a context line when it did not. So the diff is computed over
+    the real text and only its output is masked. Imposed values print as they do
+    today. A run with nothing to change does not prompt. *(Comparing must use the
+    real values, not the masked ones.)*
 17. **Dry run and plan.** The env step's detail names the pulled keys, never their
     values.
 
@@ -151,8 +155,10 @@ one more value.
     form can hold one. An empty value writes `NAME=`.
 20. **A new write path.** `patch_keys` and `_requote` wrap the replacement in the
     old line's quotes, which is wrong for an already quoted or encoded value. A
-    pulled value must replace the whole right-hand side, on every line assigning it,
-    or be appended if the name is absent. Imposed values keep `_requote`.
+    pulled value must replace the whole right-hand side of every assignment of its
+    name, the continuation lines of a multi-line value included, or be appended if the
+    name is absent. A line inside another name's value assigns nothing. Imposed values
+    keep `_requote`.
 
 ### The endpoint
 
