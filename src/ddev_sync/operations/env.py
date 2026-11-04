@@ -145,18 +145,23 @@ def patch_pulled(text: str, values: Mapping[str, str]) -> str:
     return text if patched == lines else "\n".join(patched) + "\n"
 
 
-def mask_pulled(name: str, before: str, after: str, names: Collection[str]) -> str:
-    """The diff between two texts, with every assignment of `names` as `NAME=***`.
+def mask_pulled(name: str, before: str, after: str, values: Mapping[str, str]) -> str:
+    """The diff between two texts, with every assignment of `values`' names as `NAME=***`.
 
     It takes the texts rather than a diff, because a hunk cannot tell whether it
     starts inside a quote. The diff runs over the real text, with an assignment as
     one element however many lines it spans, and only its output is replaced: so a
     changed value still shows as `-A=***` and `+A=***`, and one that did not change
     as a context line, which the diff prints around a change and which is still a
-    secret. With no `names` it is the plain diff.
+    secret. With no `values` it is the plain diff.
+
+    The values are what `patch_pulled` was given, because the line it appends for one
+    need not read as an assignment: behind a quote never closed, a value holding that
+    quote makes the line that open value's closing line.
     """
-    old, new = _parts(_lines(before), names), _parts(_lines(after), names)
-    shown = {real: f"{entry.name}=***" for entry, real in (*old, *new) if entry is not None}
+    old, new = _parts(_lines(before), values), _parts(_lines(after), values)
+    shown = {f"{key}={value}": f"{key}=***" for key, value in values.items()}
+    shown |= {real: f"{entry.name}=***" for entry, real in (*old, *new) if entry is not None}
     lines = difflib.unified_diff(
         [real for _, real in old],
         [real for _, real in new],

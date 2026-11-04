@@ -68,7 +68,7 @@ def _parse_name(raw: str) -> str:
     return name
 
 
-def _parse_value(raw: str) -> str:  # noqa: C901, PLR0912
+def _parse_value(raw: str) -> str:
     """The transducer of `EntryParser::processToken`, one character at a time."""
     state = "initial"
     value = ""
