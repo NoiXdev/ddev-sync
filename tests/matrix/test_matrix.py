@@ -884,7 +884,8 @@ def test_a_pulled_value_reads_back_through_the_framework(stack: Stack, cell: Cel
     # through phpdotenv - so the check is of what the application sees, not of
     # what the sync wrote. The tricky value carries a leading and trailing
     # space, both quote characters, `#`, `=` and `$`, which every encoder gets
-    # wrong somewhere. The whole sync has run by now (`test_a_whole_sync_succeeds`),
+    # wrong somewhere, and a `="`, which fails the whole file when it is misread as a
+    # multi-line start. The whole sync has run by now (`test_a_whole_sync_succeeds`),
     # and the env step is in its `db` group.
     if not cell.pulled:
         pytest.skip(f"{cell.name} pulls no env values")

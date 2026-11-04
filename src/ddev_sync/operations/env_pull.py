@@ -130,13 +130,15 @@ def encode_for_env_file(value: str) -> str:
     """Write a verbatim value so that phpdotenv reads back exactly that value.
 
     In single quotes phpdotenv takes everything literally up to the first `'`, with
-    no escapes at all, so they serve any value that does not hold one. A value that
-    does goes in double quotes, where `\\`, `"` and `$` need a backslash to stay
-    themselves.
+    no escapes at all, so they serve any value that does not hold one, nor a `="`:
+    `Lines::looksLikeMultilineStart` ignores quote style, so `A='x="y'` reads as the
+    start of a multi-line value and the whole file fails to parse. Those go in double
+    quotes, where `\\`, `"` and `$` need a backslash to stay themselves, and the
+    escaped quote no longer reads as `="`.
     """
     if _BARE_VALUE.fullmatch(value) is not None:
         return value
-    if "'" not in value:
+    if "'" not in value and '="' not in value:
         return f"'{value}'"
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
     return f'"{escaped}"'

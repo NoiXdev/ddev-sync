@@ -321,6 +321,7 @@ CELLS: tuple[Cell, ...] = (
         pulled=(
             ("PULLED_PLAIN", "plain-value"),
             ("PULLED_TRICKY", " pa'ss\"#=$ word "),
+            ("PULLED_EQUALS_QUOTE", 'x="y'),
         ),
     ),
     Cell(
@@ -355,6 +356,7 @@ CELLS: tuple[Cell, ...] = (
         pulled=(
             ("PULLED_PLAIN", "plain-value"),
             ("PULLED_TRICKY", " pa'ss\"#=$ word "),
+            ("PULLED_EQUALS_QUOTE", 'x="y'),
         ),
         # This cell verifies a transport, not a profile's commands, and
         # `mxlaravel` already holds the `laravel` row with evidence about

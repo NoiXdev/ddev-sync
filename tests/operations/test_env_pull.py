@@ -11,6 +11,7 @@ from ddev_sync.config.merge import LayerDoc, merge_layers
 from ddev_sync.config.models import Provider, ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.docs import doc_link
+from ddev_sync.errors import ConfigError
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import (
     HANDOVER_MARKER,
@@ -27,6 +28,7 @@ from ddev_sync.operations.env_pull import (
     read_remote_values,
 )
 from ddev_sync.transport.fake import FakeCommandRunner
+from tests.operations.phpdotenv_rules import load_like_phpdotenv
 
 ENV_PATH = "/srv/app/.env"
 # The same value `tests/integration/test_endpoint_image.py` hands through a real
@@ -105,10 +107,52 @@ def read_like_phpdotenv(text: str) -> str:
         ("abc\n", "'abc\n'"),
         ("it's", '"it\'s"'),
         ('it\'s $x \\ "q"', '"it\'s \\$x \\\\ \\"q\\""'),
+        ('x="y', '"x=\\"y"'),
+        ('="', '"=\\""'),
+        ('it\'s="x', '"it\'s=\\"x"'),
+        ('$a\\="', '"\\$a\\\\=\\""'),
+        # A `=` and a `"` apart do not start a multi-line value.
+        ('a=b"c', "'a=b\"c'"),
+        ("x='y z", '"x=\'y z"'),
     ],
 )
 def test_encoding_a_verbatim_value(value: str, written: str) -> None:
     assert encode_for_env_file(value) == written
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        'x="y',
+        '="',
+        'a="b"c"',
+        '=" ',
+        '#="',
+        '\\="',
+        'a\\="',
+        '$="',
+        'it\'s="x',
+        "x='\"",
+        'a=""',
+        TRICKY,
+        'a=b"c',
+        "plain value",
+    ],
+)
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [("FIRST=1\n", 'B=2\nC="three"\nD=4\n'), ("", ""), ('Z="z"\n', "\n# a comment\nB=2\n")],
+)
+def test_an_encoded_value_does_not_disturb_the_lines_around_it(
+    value: str, before: str, after: str
+) -> None:
+    # The check that failed is phpdotenv's line grouping, which ignores quote style:
+    # `A='x="y'` reads as the start of a multi-line value and takes the lines behind
+    # it along, so the whole file failed to parse. Hence the neighbours.
+    text = f"{before}A={encode_for_env_file(value)}\n{after}"
+    loaded = load_like_phpdotenv(text)
+    assert loaded.pop("A") == value
+    assert loaded == load_like_phpdotenv(f"{before}{after}")
 
 
 @pytest.mark.parametrize(
@@ -409,7 +453,7 @@ def test_an_empty_list_makes_no_call(tmp_path: Path) -> None:
 
 def test_it_validates_the_names_itself(tmp_path: Path) -> None:
     runner = FakeCommandRunner()
-    with pytest.raises(Exception, match="1BAD"):
+    with pytest.raises(ConfigError, match=r"env\.pull"):
         check_pull(make_context(runner, tmp_path, env={"pull": ["1BAD"]}))
     assert runner.calls == []
 
