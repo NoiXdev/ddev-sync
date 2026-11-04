@@ -625,6 +625,34 @@ def test_the_handover_file_is_read_verbatim(tmp_path: Path) -> None:
     assert credentials.host == "db"
 
 
+def test_a_handover_value_left_out_for_a_line_break_is_named_as_one(tmp_path: Path) -> None:
+    # Under `all` the endpoint skips a value with a line break, so "not set" would
+    # send someone looking at a stack that does set it.
+    body = HANDOVER.replace(
+        f"DB_PASSWORD={HANDOVER_PASSWORD}\n", "DDEV_SYNC_SKIPPED=OTHER,DB_PASSWORD\n"
+    )
+    with pytest.raises(OperationError, match="DB_PASSWORD holds a line break") as caught:
+        read_remote_credentials(docker_context(handover_runner(body), tmp_path))
+    assert "is not set" not in str(caught.value)
+    assert HANDOVER_PATH in str(caught.value)
+    assert (doc_link(caught.value) or "").endswith("#endpoint-export-env-value-has-a-newline")
+
+
+def test_a_variable_truly_absent_beside_a_skipped_one_is_still_not_set(tmp_path: Path) -> None:
+    body = HANDOVER.replace(f"DB_PASSWORD={HANDOVER_PASSWORD}\n", "DDEV_SYNC_SKIPPED=OTHER\n")
+    with pytest.raises(OperationError, match="DB_PASSWORD is not set"):
+        read_remote_credentials(docker_context(handover_runner(body), tmp_path))
+
+
+def test_a_remote_env_file_has_no_skipped_list(tmp_path: Path) -> None:
+    # The line means something only in the handover: in a project's own `.env` it
+    # would be an ordinary variable.
+    body = "DB_DATABASE=a\nDB_USERNAME=a\nDB_HOST=a\nDB_PORT=1\nDDEV_SYNC_SKIPPED=DB_PASSWORD\n"
+    runner = handover_runner(body, "/srv/app/.env")
+    with pytest.raises(OperationError, match="DB_PASSWORD is not set"):
+        read_remote_credentials(make_context(runner, tmp_path, LARAVEL_PROFILE))
+
+
 def test_an_empty_handover_value_is_reported_as_not_set(tmp_path: Path) -> None:
     body = HANDOVER.replace(HANDOVER_PASSWORD, "")
     with pytest.raises(OperationError, match="DB_PASSWORD is not set") as caught:

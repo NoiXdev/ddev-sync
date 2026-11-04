@@ -109,7 +109,7 @@ def read_like_phpdotenv(text: str) -> str:
         ('it\'s $x \\ "q"', '"it\'s \\$x \\\\ \\"q\\""'),
         ('x="y', '"x=\\"y"'),
         ('="', '"=\\""'),
-        ('it\'s="x', '"it\'s=\\"x"'),
+        ("it's=\"x", '"it\'s=\\"x"'),
         ('$a\\="', '"\\$a\\\\=\\""'),
         # A `=` and a `"` apart do not start a multi-line value.
         ('a=b"c', "'a=b\"c'"),
@@ -131,7 +131,7 @@ def test_encoding_a_verbatim_value(value: str, written: str) -> None:
         '\\="',
         'a\\="',
         '$="',
-        'it\'s="x',
+        "it's=\"x",
         "x='\"",
         'a=""',
         TRICKY,

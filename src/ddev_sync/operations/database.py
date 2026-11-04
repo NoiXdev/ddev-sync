@@ -40,6 +40,8 @@ _DEFAULT_ENV_FILES = (".env.local", ".env")
 # contract).
 HANDOVER_PATH = "/run/ddev-sync/app.env"
 HANDOVER_MARKER = "# ddev-sync endpoint handover v1"
+# The line an endpoint under `all` writes to name what it left out for a line break.
+HANDOVER_SKIPPED = "DDEV_SYNC_SKIPPED"
 
 
 @dataclass(frozen=True)
@@ -130,7 +132,15 @@ def _from_remote_env(context: ExecutionContext) -> RemoteCredentials:
         for key in _REQUIRED
     }
     values: dict[str, str] = {}
+    skipped = parsed.get(HANDOVER_SKIPPED, "").split(",") if path == HANDOVER_PATH else []
     for field_name, variable in mapping.items():
+        if variable in skipped:
+            raise OperationError(
+                f"{variable} holds a line break, so the endpoint left it out of {path} on "
+                f"{context.target.host}: the handover file keeps one variable per line. "
+                "Use a value without one.",
+                doc="endpoint-export-env-value-has-a-newline",
+            )
         if not parsed.get(variable):
             raise OperationError(
                 f"{variable} is not set in {path} on {context.target.host}",

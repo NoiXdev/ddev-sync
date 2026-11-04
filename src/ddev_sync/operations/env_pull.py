@@ -20,13 +20,10 @@ from ddev_sync.config.models import Provider
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import (
     HANDOVER_PATH,
+    HANDOVER_SKIPPED,
     fetch_remote_env_file,
     parse_handover,
 )
-
-# The line an endpoint under `all` writes to name what it left out (the endpoint's
-# entrypoint holds the writing side).
-_SKIPPED_LINE = "DDEV_SYNC_SKIPPED"
 
 EXAMPLE_FILE = ".env.example"
 
@@ -195,7 +192,7 @@ def read_remote_values(context: ExecutionContext, names: Sequence[str]) -> Remot
     if path == HANDOVER_PATH:
         parsed = parse_handover(contents, path)
         text = {name: encode_for_env_file(value) for name, value in parsed.items()}
-        multi_line = set(parsed.get(_SKIPPED_LINE, "").split(","))
+        multi_line = set(parsed.get(HANDOVER_SKIPPED, "").split(","))
         references: set[str] = set()
     else:
         text, multi_line = raw_assignments(contents)
