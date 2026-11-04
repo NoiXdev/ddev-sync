@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from ddev_sync.config.env_pull import pull_names
 from ddev_sync.config.merge import LIST_MODES, MergeResult
 from ddev_sync.config.models import Provider, ResolvedTarget
 from ddev_sync.ddev.project import DdevProject
@@ -429,6 +430,16 @@ class _Builder:
         node = self._data.get("env", {})
         settings = node if isinstance(node, dict) else {}
         strategy = str(settings.get("strategy", "patch_keys"))
+        # First, so a malformed list is refused whatever the strategy, in the
+        # dry-run and before preflight reads the names.
+        names = pull_names(self._data)
+        if names and strategy != "patch_keys":
+            # Neither of the others has anywhere to put a value that must replace
+            # a whole right-hand side, and a profile with `none` writes nothing
+            # at all until a project opts in.
+            raise ConfigError(
+                f"env.pull needs env.strategy: patch_keys, but the strategy is {strategy!r}"
+            )
         if strategy == "none":
             return []
         raw_values = settings.get("set", {})
@@ -448,7 +459,7 @@ class _Builder:
         # A non-mapping `set` is still no block, and the operation reads it so.
         imposed = raw_values if isinstance(raw_values, dict) else {}
         defaulted = raw_default or {}
-        if not imposed and not defaulted:
+        if not imposed and not defaulted and not names:
             return []
         if defaulted and strategy == "append_block":
             # `append_block` writes a block rather than reconciling keys, so
@@ -469,6 +480,11 @@ class _Builder:
                 f"env.file must be a file name or a list of file names, got {configured!r}"
             )
         candidates = [configured] if isinstance(configured, str) else [str(c) for c in configured]
+        if names and not candidates:
+            # The step creates a missing file as the first candidate, so unlike
+            # the other keys, which only ever find nothing to patch, this one
+            # would have nowhere to go.
+            raise ConfigError("env.pull needs a file to write to, but env.file lists none")
         # An imposed empty string blanks the key rather than setting it, which a
         # bare name in the list reads as the opposite of (`DB_URL` is emptied so
         # that it cannot override the discrete `DB_*` keys). A key whose value
@@ -480,20 +496,27 @@ class _Builder:
         # profile has one; the limit is recorded here rather than closed.
         emptied = sorted(str(key) for key, value in imposed.items() if str(value) == "")
         set_keys = sorted(str(key) for key in imposed if str(key) not in emptied)
+        imposed_keys = {str(key) for key in imposed}
         # `set` wins a key declared in both, so such a default is never written
-        # and is not worth naming.
-        written_if_absent = sorted({str(key) for key in defaulted} - {str(key) for key in imposed})
-        # Built piece by piece, so a profile with no emptied keys and no
-        # defaults renders exactly the string it always has and the goldens of
-        # every profile without either do not move.
+        # and is not worth naming. The same goes for a name `set` and `pull` both
+        # have, and for a default of a pulled name.
+        written_if_absent = sorted({str(key) for key in defaulted} - imposed_keys - set(names))
+        pulled = [name for name in names if name not in imposed_keys]
+        # Built piece by piece, so a profile with no emptied keys, no defaults
+        # and nothing pulled renders exactly the string it always has and the
+        # goldens of every profile without them do not move.
         groups = [", ".join(set_keys)] if set_keys else []
         if emptied:
             groups.append(f"emptied: {', '.join(emptied)}")
         if written_if_absent:
             groups.append(f"if absent: {', '.join(written_if_absent)}")
+        if pulled:
+            groups.append(f"pulls: {', '.join(pulled)}")
         counts = f"{len(imposed)} key(s)"
         if written_if_absent:
             counts += f" + {len(written_if_absent)} if absent"
+        if pulled:
+            counts += f" + {len(pulled)} pulled"
         detail = f"{strategy}: {counts} -> {', '.join(candidates)} ({'; '.join(groups)})"
         return [
             _Entry(

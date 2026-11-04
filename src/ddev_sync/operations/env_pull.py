@@ -27,7 +27,7 @@ from ddev_sync.operations.database import (
 # entrypoint holds the writing side).
 _SKIPPED_LINE = "DDEV_SYNC_SKIPPED"
 
-_EXAMPLE_FILE = ".env.example"
+EXAMPLE_FILE = ".env.example"
 
 _BARE_VALUE = re.compile(r"[A-Za-z0-9_./:@+=,-]*")
 
@@ -216,9 +216,9 @@ def _local_file_problem(context: ExecutionContext) -> str | None:
     configured = context.merged.data["env"].get("file", [".env.local", ".env"])
     candidates = [configured] if isinstance(configured, str) else [str(n) for n in configured]
     existing = {entry.name for entry in context.project.root.iterdir() if entry.is_file()}
-    if _EXAMPLE_FILE in existing or not existing.isdisjoint(candidates):
+    if EXAMPLE_FILE in existing or not existing.isdisjoint(candidates):
         return None
     return (
         f"no environment file in the project to write them to; looked at: "
-        f"{', '.join(candidates)}, and there is no {_EXAMPLE_FILE} to create one from."
+        f"{', '.join(candidates)}, and there is no {EXAMPLE_FILE} to create one from."
     )

@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -8,15 +9,19 @@ from ddev_sync.config.models import ResolvedTarget, Stage
 from ddev_sync.ddev.project import DdevProject
 from ddev_sync.docs import doc_link
 from ddev_sync.operations.base import ExecutionContext, OperationError
+from ddev_sync.operations.database import HANDOVER_MARKER, HANDOVER_PATH
 from ddev_sync.operations.env import (
     BLOCK_END,
     BLOCK_START,
     EnvRewriteOperation,
+    _diff,
     append_block,
     confirm_env_change,
     declared_keys,
     expand_placeholders,
+    mask_pulled,
     patch_keys,
+    patch_pulled,
 )
 from ddev_sync.transport.fake import FakeCommandRunner
 
@@ -645,3 +650,377 @@ def test_nothing_to_write_leaves_a_file_without_a_trailing_newline_untouched(
     )
     EnvRewriteOperation().execute(context, {})
     assert (tmp_path / ".env").read_bytes() == b"QUEUE_CONNECTION=redis"
+
+
+# ---- env.pull: the write path ----
+
+
+def test_a_pulled_value_replaces_the_whole_right_hand_side_without_requoting() -> None:
+    assert patch_pulled('A="old"\n', {"A": "'n w'"}) == "A='n w'\n"
+    assert patch_pulled("A=old # a comment\n", {"A": "new"}) == "A=new\n"
+
+
+def test_a_pulled_value_replaces_every_line_that_assigns_it() -> None:
+    assert patch_pulled("A=1\nB=2\nA=3\n", {"A": "x"}) == "A=x\nB=2\nA=x\n"
+
+
+def test_a_pulled_value_keeps_the_gap() -> None:
+    assert patch_pulled("A = old\n", {"A": "new"}) == "A = new\n"
+
+
+def test_a_pulled_name_that_is_absent_is_appended() -> None:
+    assert patch_pulled("B=2\n", {"A": "x"}) == "B=2\nA=x\n"
+    assert patch_pulled("", {"A": "x"}) == "A=x\n"
+
+
+@pytest.mark.parametrize("head", ["export A=", "  A=", '"A"=', "'A'=", "export  A = "])
+def test_a_pulled_value_replaces_the_forms_a_loader_reads_as_assigning(head: str) -> None:
+    # Spec decision 18 counts these as assigning the name. Left alone, one below a
+    # plain line would go on deciding what the loader reads, the last one winning.
+    assert patch_pulled(f"{head}old\n", {"A": "new"}) == f"{head}new\n"
+
+
+def test_a_comment_is_not_an_assignment_of_a_pulled_name() -> None:
+    assert patch_pulled("# A=old\n", {"A": "new"}) == "# A=old\nA=new\n"
+
+
+def test_pulling_nothing_new_leaves_the_text_as_it_was() -> None:
+    # A value that did not change must not prompt, and normalising a missing
+    # trailing newline would be a change with no line to show in the diff.
+    assert patch_pulled("A=1", {"A": "1"}) == "A=1"
+    assert patch_pulled("B=2", {}) == "B=2"
+    assert patch_pulled("", {}) == ""
+
+
+@pytest.mark.parametrize("separator", ["\f", "\v", "\x1c", "\x85", "\N{LINE SEPARATOR}"])
+def test_a_character_python_calls_a_line_break_stays_inside_its_value(separator: str) -> None:
+    # phpdotenv only ends a line at CR or LF and `raw_assignments` copies these as
+    # part of the value. `str.splitlines` would cut the line there, and every later
+    # run would then corrupt it further and show the second half in the diff.
+    text = f"A='x{separator}B=y'\n"
+    assert patch_pulled(text, {"A": f"'x{separator}B=y'"}) == text
+    assert patch_keys(text, {"C": "1"}) == f"{text}C=1\n"
+    assert declared_keys(text) == {"A"}
+    masked = mask_pulled(_diff(".env", "", text), {"A"})
+    assert masked.endswith("\n+A=***")
+    assert "y'" not in masked
+
+
+def test_masking_hides_both_sides_of_a_pulled_name() -> None:
+    masked = mask_pulled(_diff(".env", "A=before\nB=keep\n", "A=after\nB=keep\n"), {"A"})
+    assert "-A=***" in masked
+    assert "+A=***" in masked
+    assert "before" not in masked
+    assert "after" not in masked
+
+
+def test_masking_leaves_the_header_lines_and_other_names_alone() -> None:
+    masked = mask_pulled(_diff(".env", "DB_HOST=a\nA=old\n", "DB_HOST=b\nA=new\n"), {"A"})
+    assert masked.splitlines()[:2] == ["--- .env", "+++ .env (new)"]
+    assert "-DB_HOST=a" in masked
+    assert "+DB_HOST=b" in masked
+
+
+def test_masking_hides_a_pulled_name_on_an_unchanged_context_line() -> None:
+    # The diff prints three lines around a change, so a pulled value that did
+    # not change still reaches the screen beside an imposed key that did.
+    masked = mask_pulled(_diff(".env", "A=secret\nB=1\n", "A=secret\nB=2\n"), {"A"})
+    assert " A=***" in masked
+    assert "secret" not in masked
+
+
+@pytest.mark.parametrize("line", ["export A=secret", "  A=secret", '"A"=secret', "A = secret"])
+def test_masking_hides_every_form_of_assigning_a_pulled_name(line: str) -> None:
+    masked = mask_pulled(_diff(".env", f"{line}\nB=1\n", f"{line}\nB=2\n"), {"A"})
+    assert " A=***" in masked
+    assert "secret" not in masked
+
+
+REMOTE_ENV = "/srv/app/.env"
+
+
+def pull_context(
+    root: Path,
+    remote: str,
+    *,
+    assume_yes: bool = True,
+    progress: list[str] | None = None,
+    **env: Any,
+) -> ExecutionContext:
+    """A project whose remote `.env` holds `remote`, with `env` as its `env:` block."""
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout=f"{REMOTE_ENV}\n{remote}")
+    context = dataclasses.replace(make_context(root, env=env), runner=runner, assume_yes=assume_yes)
+    if progress is not None:
+        return dataclasses.replace(context, progress=progress.append)
+    return context
+
+
+def seen_diffs(monkeypatch: pytest.MonkeyPatch, *, answer: bool = True) -> list[str]:
+    """Replace the prompt; what it was asked with lands in the returned list."""
+    diffs: list[str] = []
+
+    def fake_confirm(diff: str) -> bool:
+        diffs.append(diff)
+        return answer
+
+    monkeypatch.setattr("ddev_sync.operations.env.confirm_env_change", fake_confirm)
+    return diffs
+
+
+def write_env(root: Path, text: str, name: str = ".env") -> Path:
+    path = root / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_the_pulled_text_lands_in_the_file(tmp_path: Path) -> None:
+    env = write_env(tmp_path, 'APP_KEY="old"\nKEEP=1\n')
+    context = pull_context(
+        tmp_path, "APP_KEY='base64:x y'\nOTHER=no\nNEW=\"a b\"\n", pull=["APP_KEY", "NEW"]
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == "APP_KEY='base64:x y'\nKEEP=1\nNEW=\"a b\"\n"
+
+
+def test_a_pulled_value_from_the_handover_is_written_encoded(tmp_path: Path) -> None:
+    env = write_env(tmp_path, "A=old\n")
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout=f"{HANDOVER_PATH}\n{HANDOVER_MARKER}\nA=p#ss $x\n")
+    context = dataclasses.replace(pull_context(tmp_path, "", pull=["A"]), runner=runner)
+    EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == "A='p#ss $x'\n"
+
+
+def test_a_placeholder_in_a_pulled_value_is_not_expanded(tmp_path: Path) -> None:
+    # `${DDEV_SITENAME}` is one the context really resolves: in a production
+    # password it is the password.
+    env = write_env(tmp_path, "HOST=old\n")
+    context = pull_context(
+        tmp_path,
+        "A='${DDEV_SITENAME}-${SECRET}'\n",
+        pull=["A"],
+        set={"HOST": "${DDEV_SITENAME}"},
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == "HOST=acme\nA='${DDEV_SITENAME}-${SECRET}'\n"
+
+
+def test_a_name_in_env_set_keeps_the_imposed_value_and_says_so(tmp_path: Path) -> None:
+    env = write_env(tmp_path, "A=old\n")
+    seen: list[str] = []
+    context = pull_context(
+        tmp_path, "A=remote\nB=2\n", progress=seen, pull=["A", "B"], set={"A": "imposed"}
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == "A=imposed\nB=2\n"
+    assert len(seen) == 1
+    assert "env.set" in seen[0]
+    assert seen[0].split()[-1] == "A"
+
+
+def test_only_names_in_env_set_make_no_remote_read(tmp_path: Path) -> None:
+    env = write_env(tmp_path, "A=old\n")
+    runner = FakeCommandRunner()
+    context = dataclasses.replace(
+        pull_context(tmp_path, "", pull=["A"], set={"A": "imposed"}), runner=runner
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == "A=imposed\n"
+    assert runner.calls == []
+
+
+def test_a_pulled_name_in_env_default_keeps_the_pulled_value(tmp_path: Path) -> None:
+    env = write_env(tmp_path, "OTHER=1\n")
+    context = pull_context(
+        tmp_path, "A=remote\n", pull=["A"], default={"A": "fallback", "B": "written"}
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == "OTHER=1\nA=remote\nB=written\n"
+
+
+def test_the_printed_diff_holds_no_pulled_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_env(tmp_path, "A=oldsecret\nB=unchangedsecret\nDB_HOST=prod\n")
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+    context = pull_context(
+        tmp_path,
+        "A=newsecret\nB=unchangedsecret\n",
+        assume_yes=False,
+        pull=["A", "B"],
+        set={"DB_HOST": "local"},
+    )
+    EnvRewriteOperation().execute(context, {})
+    printed = capsys.readouterr().out
+    assert "-A=***" in printed
+    assert "+A=***" in printed
+    assert " B=***" in printed
+    assert "secret" not in printed
+    assert "-DB_HOST=prod" in printed
+    assert "+DB_HOST=local" in printed
+
+
+def test_a_reference_is_named_in_a_progress_line(tmp_path: Path) -> None:
+    env = write_env(tmp_path, "")
+    seen: list[str] = []
+    context = pull_context(
+        tmp_path,
+        'VITE_NAME="${APP_NAME}"\nPLAIN=topsecret\n',
+        progress=seen,
+        pull=["VITE_NAME", "PLAIN"],
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == 'VITE_NAME="${APP_NAME}"\nPLAIN=topsecret\n'
+    assert len(seen) == 1
+    assert "VITE_NAME" in seen[0]
+    assert "PLAIN" not in seen[0]
+    assert "topsecret" not in seen[0]
+    assert "APP_NAME" not in seen[0]
+
+
+def test_no_reference_means_no_progress_line(tmp_path: Path) -> None:
+    write_env(tmp_path, "")
+    seen: list[str] = []
+    EnvRewriteOperation().execute(pull_context(tmp_path, "A=1\n", progress=seen, pull=["A"]), {})
+    assert seen == []
+
+
+def test_a_name_in_env_set_is_not_named_as_a_reference(tmp_path: Path) -> None:
+    write_env(tmp_path, "")
+    seen: list[str] = []
+    context = pull_context(
+        tmp_path, 'A="$B"\nC=1\n', progress=seen, pull=["A", "C"], set={"A": "imposed"}
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert len(seen) == 1
+    assert "env.set" in seen[0]
+
+
+def test_a_second_run_changes_nothing_and_does_not_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = write_env(tmp_path, 'A="old"\nDB_HOST=prod\n')
+    remote = "A=' tricky\f$x '\nB=\"$A\"\n"
+    settings: dict[str, Any] = {"pull": ["A", "B"], "set": {"DB_HOST": "local"}}
+    EnvRewriteOperation().execute(pull_context(tmp_path, remote, **settings), {})
+    written = env.read_bytes()
+
+    diffs = seen_diffs(monkeypatch)
+    EnvRewriteOperation().execute(pull_context(tmp_path, remote, assume_yes=False, **settings), {})
+    assert diffs == []
+    assert env.read_bytes() == written
+
+
+def test_a_pulled_value_that_did_not_change_does_not_prompt_or_normalise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = tmp_path / ".env"
+    env.write_bytes(b"A=1")
+    diffs = seen_diffs(monkeypatch)
+    EnvRewriteOperation().execute(pull_context(tmp_path, "A=1\n", assume_yes=False, pull=["A"]), {})
+    assert diffs == []
+    assert env.read_bytes() == b"A=1"
+
+
+def test_a_missing_file_is_created_from_the_example(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    example = "APP_ENV=local\nDECLARED=mine\nA=\n"
+    write_env(tmp_path, example, ".env.example")
+    diffs = seen_diffs(monkeypatch)
+    context = pull_context(
+        tmp_path,
+        "A=secret\n",
+        assume_yes=False,
+        pull=["A"],
+        file=[".env.app", ".env.other"],
+        set={"APP_ENV": "local"},
+        default={"DECLARED": "theirs", "ABSENT": "written"},
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env.app").read_text(encoding="utf-8") == (
+        "APP_ENV=local\nDECLARED=mine\nA=secret\nABSENT=written\n"
+    )
+    assert not (tmp_path / ".env.other").exists()
+    assert (tmp_path / ".env.example").read_text(encoding="utf-8") == example
+    # New in the diff: every line added, none taken away, and no value in it.
+    assert "+APP_ENV=local" in diffs[0]
+    assert "+A=***" in diffs[0]
+    assert "secret" not in diffs[0]
+    assert [line for line in diffs[0].splitlines()[1:] if line.startswith("-")] == []
+
+
+def test_a_file_the_values_would_not_change_is_still_created_from_the_example(
+    tmp_path: Path,
+) -> None:
+    write_env(tmp_path, "APP_ENV=local\nA=1\n", ".env.example")
+    context = pull_context(tmp_path, "A=1\n", pull=["A"], set={"APP_ENV": "local"})
+    EnvRewriteOperation().execute(context, {})
+    assert (tmp_path / ".env.local").read_text(encoding="utf-8") == "APP_ENV=local\nA=1\n"
+
+
+def test_an_existing_file_is_used_rather_than_the_example(tmp_path: Path) -> None:
+    write_env(tmp_path, "FROM_EXAMPLE=1\n", ".env.example")
+    env = write_env(tmp_path, "MINE=1\n")
+    EnvRewriteOperation().execute(pull_context(tmp_path, "A=1\n", pull=["A"]), {})
+    assert env.read_text(encoding="utf-8") == "MINE=1\nA=1\n"
+    assert not (tmp_path / ".env.local").exists()
+
+
+def test_declining_creates_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_env(tmp_path, "A=\n", ".env.example")
+    seen_diffs(monkeypatch, answer=False)
+    context = pull_context(tmp_path, "A=1\n", assume_yes=False, pull=["A"])
+    with pytest.raises(OperationError, match="cancelled"):
+        EnvRewriteOperation().execute(context, {})
+    assert [entry.name for entry in tmp_path.iterdir()] == [".env.example"]
+
+
+def test_declining_leaves_the_existing_file_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = write_env(tmp_path, "A=old\n")
+    seen_diffs(monkeypatch, answer=False)
+    context = pull_context(tmp_path, "A=new\n", assume_yes=False, pull=["A"])
+    with pytest.raises(OperationError, match="cancelled"):
+        EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == "A=old\n"
+
+
+def test_creating_never_overwrites_what_the_probe_did_not_recognise(tmp_path: Path) -> None:
+    # A directory stands in for the `.ENV` a case-insensitive filesystem would
+    # hand back for `.env`: the probe compares exact names and misses it, so
+    # the create has to be the thing that refuses, in the sync's own words.
+    write_env(tmp_path, "A=\n", ".env.example")
+    (tmp_path / ".env.local").mkdir()
+    context = pull_context(tmp_path, "A=1\n", pull=["A"])
+    with pytest.raises(OperationError, match=r"could not create .*\.env\.local"):
+        EnvRewriteOperation().execute(context, {})
+
+
+def test_a_project_without_env_pull_makes_no_remote_read(tmp_path: Path) -> None:
+    env = write_env(tmp_path, "A=old\n")
+    runner = FakeCommandRunner()
+    context = dataclasses.replace(pull_context(tmp_path, "", set={"A": "imposed"}), runner=runner)
+    EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == "A=imposed\n"
+    assert runner.calls == []
+
+
+def test_a_project_without_env_pull_does_not_create_the_file(tmp_path: Path) -> None:
+    write_env(tmp_path, "A=\n", ".env.example")
+    context = pull_context(tmp_path, "", set={"A": "imposed"})
+    with pytest.raises(OperationError) as caught:
+        EnvRewriteOperation().execute(context, {})
+    assert (doc_link(caught.value) or "").endswith("#no-environment-file-in-the-project")
+    assert not (tmp_path / ".env.local").exists()
+
+
+def test_with_env_pull_and_no_example_the_existing_refusal_still_stands(tmp_path: Path) -> None:
+    # Preflight refuses this first; the step does not make up a file if it ever
+    # got this far.
+    context = pull_context(tmp_path, "A=1\n", pull=["A"])
+    with pytest.raises(OperationError) as caught:
+        EnvRewriteOperation().execute(context, {})
+    assert (doc_link(caught.value) or "").endswith("#no-environment-file-in-the-project")

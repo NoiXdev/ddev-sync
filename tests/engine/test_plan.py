@@ -848,6 +848,81 @@ def test_a_malformed_env_file_is_an_error_for_a_default_only_profile_too() -> No
         plan_for(["db"], user_layers=[extra])
 
 
+def test_env_pull_alone_plans_the_step() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"pull": ["A"]}})
+    assert "env" in kinds(plan_for(["db"], user_layers=[extra]))
+
+
+def test_the_env_detail_names_what_is_pulled_and_no_value() -> None:
+    detail = env_detail({"file": [".env"], "pull": ["A", "B"]})
+    assert detail == "patch_keys: 0 key(s) + 2 pulled -> .env (pulls: A, B)"
+
+
+def test_the_env_detail_puts_the_pulled_names_beside_the_other_groups() -> None:
+    detail = env_detail(
+        {"file": [".env"], "set": {"S": "1", "E": ""}, "default": {"D": "1"}, "pull": ["P"]}
+    )
+    assert detail == (
+        "patch_keys: 2 key(s) + 1 if absent + 1 pulled -> .env "
+        "(S; emptied: E; if absent: D; pulls: P)"
+    )
+
+
+def test_the_env_detail_leaves_out_a_pulled_name_that_set_overrides() -> None:
+    detail = env_detail({"file": [".env"], "set": {"A": "1"}, "pull": ["A", "B"]})
+    assert detail == "patch_keys: 1 key(s) + 1 pulled -> .env (A; pulls: B)"
+    alone = env_detail({"file": [".env"], "set": {"A": "1"}, "pull": ["A"]})
+    assert alone == "patch_keys: 1 key(s) -> .env (A)"
+
+
+def test_the_env_detail_does_not_call_a_pulled_name_a_default() -> None:
+    detail = env_detail({"file": [".env"], "default": {"A": "1", "B": "2"}, "pull": ["A"]})
+    assert detail == (
+        "patch_keys: 0 key(s) + 1 if absent + 1 pulled -> .env (if absent: B; pulls: A)"
+    )
+
+
+def test_an_empty_env_pull_leaves_the_detail_and_the_step_as_they_were() -> None:
+    assert env_detail({"file": [".env"], "set": {"A": "1"}, "pull": []}) == (
+        "patch_keys: 1 key(s) -> .env (A)"
+    )
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"pull": None}})
+    assert "env" not in kinds(plan_for(["db"], user_layers=[extra]))
+
+
+@pytest.mark.parametrize("strategy", ["append_block", "none"])
+def test_env_pull_needs_patch_keys(strategy: str) -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"strategy": strategy, "pull": ["A"]}})
+    with pytest.raises(ConfigError, match="patch_keys"):
+        plan_for(["db"], user_layers=[extra])
+
+
+@pytest.mark.parametrize("pull", ["APP_KEY", ["no-dash"], ["DDEV_SYNC_X"], ["DB_URL"], [1]])
+def test_a_bad_env_pull_is_refused_at_plan_time(pull: object) -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"pull": pull}})
+    with pytest.raises(ConfigError, match=r"env\.pull"):
+        plan_for(["db"], user_layers=[extra])
+
+
+def test_a_bad_env_pull_is_refused_under_strategy_none_too() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"strategy": "none", "pull": "APP_KEY"}})
+    with pytest.raises(ConfigError, match=r"env\.pull must be a list"):
+        plan_for(["db"], user_layers=[extra])
+
+
+@pytest.mark.parametrize("bad", [None, 5])
+def test_a_malformed_env_file_is_an_error_for_a_pull_only_project_too(bad: object) -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"file": bad, "pull": ["A"]}})
+    with pytest.raises(ConfigError, match=r"env\.file"):
+        plan_for(["db"], user_layers=[extra])
+
+
+def test_env_pull_with_no_file_to_write_to_is_refused() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"file": [], "pull": ["A"]}})
+    with pytest.raises(ConfigError, match=r"env\.pull.*env\.file"):
+        plan_for(["db"], user_layers=[extra])
+
+
 def test_selecting_files_alone_does_not_pull_in_env() -> None:
     extra = LayerDoc(
         ".ddev/ddev-sync.yaml",

@@ -274,6 +274,26 @@ def test_a_malformed_env_file_is_a_message_and_only_for_the_step_that_uses_it(
     assert "Traceback" not in error
 
 
+@pytest.mark.parametrize("mode", ["--dry-run", "--yes"])
+def test_env_pull_with_a_bare_env_file_is_a_message_and_not_a_type_error(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str
+) -> None:
+    """The preflight check reads `env.file` trusting the planner's gate, so the
+    plan has to stop this before preflight runs, for a project that lists nothing
+    else under `env`.
+    """
+    config = project / ".ddev" / "ddev-sync.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + "env:\n  strategy: patch_keys\n  pull: [APP_KEY]\n  file:\n",
+        encoding="utf-8",
+    )
+    assert invoke(project, tmp_path, mode, "--steps", "db") == 1
+    error = capsys.readouterr().err
+    assert "env.file must be a file name" in error
+    assert "Traceback" not in error
+
+
 def test_an_empty_steps_value_is_refused_at_the_command_line(
     project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

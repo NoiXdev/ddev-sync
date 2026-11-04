@@ -4,15 +4,22 @@
 block on every run, so a file synced ten times carried ten blocks and the last
 one silently won. In-place replacement is idempotent and shows up in a diff as
 the change it actually is.
+
+`env.pull` adds values that are secrets, so they have their own write path and
+their own way through the confirmation diff. They are deliberately not added to
+`context.secrets`: nothing here hands one to a command, the remote read is
+`sensitive`, and scrubbing a value like `true` or `1` would mangle `-vv` output.
 """
 
 import difflib
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from ddev_sync.config.env_pull import pull_names
 from ddev_sync.operations.base import ExecutionContext, OperationError, confirm
+from ddev_sync.operations.env_pull import EXAMPLE_FILE, read_remote_values
 
 # Re-exported (not just used internally) so `tests/operations/test_env.py`'s
 # existing `from ddev_sync.operations.env import expand_placeholders` keeps
@@ -43,6 +50,27 @@ _DECLARATION = re.compile(
     r"^[ \t]*(?:export[ \t]+)?['\"]?(?P<key>[A-Za-z_][A-Za-z0-9_]*)['\"]?\s*="
 )
 
+# Everything ahead of a pulled value, gap included. As wide as `_DECLARATION`
+# because a pulled value replaces only the right-hand side and so has nothing to
+# reproduce, which is what keeps `patch_keys` to the narrow `_ASSIGNMENT`.
+_PULLED_HEAD = re.compile(rf"{_DECLARATION.pattern}\s*")
+
+_LINE_END = re.compile(r"\r?\n")
+
+
+def _lines(text: str) -> list[str]:
+    """The lines of an env file, as many as a loader sees.
+
+    Not `str.splitlines`, which also ends a line at a form feed, a `\\x85` or a
+    `\\u2028`. Those are ordinary characters to phpdotenv and can be part of a
+    pulled value: split there, the second half of a value would be a line of its
+    own, which no rewrite replaces and no mask hides.
+    """
+    lines = _LINE_END.split(text)
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
 
 def patch_keys(text: str, values: Mapping[str, str]) -> str:
     """Replace each key's value in place, in *every* line that assigns it;
@@ -61,7 +89,7 @@ def patch_keys(text: str, values: Mapping[str, str]) -> str:
     run.
     """
     remaining = dict(values)
-    lines = text.splitlines()
+    lines = _lines(text)
     patched: list[str] = []
 
     for line in lines:
@@ -75,6 +103,46 @@ def patch_keys(text: str, values: Mapping[str, str]) -> str:
 
     patched.extend(f"{key}={value}" for key, value in remaining.items())
     return "\n".join(patched) + "\n" if patched else ""
+
+
+def patch_pulled(text: str, values: Mapping[str, str]) -> str:
+    """Put each pulled right-hand side on every line assigning its name, or append it.
+
+    `values` are ready to write, quotes included, so unlike `patch_keys` this
+    does not `_requote` and replaces whatever stood behind the `=`, a comment
+    too. Every line for the reason `patch_keys` gives. A file nothing changes in
+    comes back as it was, because normalising its last newline would be a change
+    with no line to show in the diff, and a prompt over nothing.
+    """
+    remaining = dict(values)
+    lines = _lines(text)
+    patched: list[str] = []
+    for line in lines:
+        match = _PULLED_HEAD.match(line)
+        if match is None or match["key"] not in values:
+            patched.append(line)
+            continue
+        remaining.pop(match["key"], None)
+        patched.append(f"{match[0]}{values[match['key']]}")
+    patched.extend(f"{key}={value}" for key, value in remaining.items())
+    return text if patched == lines else "\n".join(patched) + "\n"
+
+
+def mask_pulled(diff: str, names: Collection[str]) -> str:
+    """Show every diff line assigning one of `names` as `NAME=***`.
+
+    Context lines too, not only the changed ones: the diff prints the lines
+    around a change, and a pulled value that did not change is still a secret.
+    Line by line after the first character, which is the diff's own mark. The
+    header lines cannot match, since their second character is the mark again.
+    """
+    masked: list[str] = []
+    for line in diff.split("\n"):
+        match = _DECLARATION.match(line[1:])
+        masked.append(
+            f"{line[0]}{match['key']}=***" if match is not None and match["key"] in names else line
+        )
+    return "\n".join(masked)
 
 
 def declared_keys(text: str) -> set[str]:
@@ -112,7 +180,7 @@ def declared_keys(text: str) -> set[str]:
     "unconfigured".
     """
     found: set[str] = set()
-    for line in text.splitlines():
+    for line in _lines(text):
         match = _DECLARATION.match(line)
         if match is not None:
             found.add(match.group("key"))
@@ -160,7 +228,7 @@ class EnvRewriteOperation:
     """Points the local environment file at DDEV."""
 
     def execute(self, context: ExecutionContext, params: Mapping[str, Any]) -> None:
-        """Apply the profile's `env.set` values using its strategy."""
+        """Apply `env.set`, `env.pull` and `env.default`, in that order of precedence."""
         node = context.merged.data.get("env", {})
         settings: dict[str, Any] = node if isinstance(node, dict) else {}
         strategy = str(settings.get("strategy", "patch_keys"))
@@ -186,7 +254,11 @@ class EnvRewriteOperation:
         # and here.
         imposed = raw_set if isinstance(raw_set, dict) else {}
         defaulted = raw_default if isinstance(raw_default, dict) else {}
-        if not imposed and not defaulted:
+        # Past the planner, which refuses bad names and any strategy but
+        # `patch_keys` beside them, and past preflight, which refuses a name the
+        # remote cannot give: `env.pull` rides with the same group as `db.dump`.
+        names = pull_names(context.merged.data)
+        if not imposed and not defaulted and not names:
             return
         if defaulted and strategy == "append_block":
             # `append_block` writes a block rather than reconciling keys, so
@@ -195,42 +267,104 @@ class EnvRewriteOperation:
             # that validator never sees.
             raise OperationError("env.default cannot be used with strategy 'append_block'")
 
-        path = self._find_env_file(context, settings)
-        original = path.read_text(encoding="utf-8")
+        to_create = self._file_to_create(context, settings) if names else None
+        if to_create is None:
+            path = self._find_env_file(context, settings)
+            original = start = path.read_text(encoding="utf-8")
+        else:
+            # Empty, not the example: the diff shows the file as new, and it is
+            # what is compared, so a file to create is always a change.
+            path, start = to_create
+            original = ""
         values = expand_placeholders(
             {str(key): str(value) for key, value in imposed.items()}, context
         )
+        pulled = _read_pulled(context, names, values)
         if defaulted:
             # Across every candidate that exists, not just the written file:
             # a key declared in `.env` while `.env.local` is written would
             # otherwise be overridden through Dotenv's overlay. `set` wins a
             # collision, because it is the stronger statement and a profile may
-            # inherit one of the two from a base.
-            declared = self._declared_across_candidates(context, settings)
+            # inherit one of the two from a base. A pulled name counts as
+            # declared, and so does what the example about to be copied declares.
+            declared = (
+                self._declared_across_candidates(context, settings)
+                | declared_keys(start)
+                | set(pulled)
+            )
             absent = {
                 str(key): str(value)
                 for key, value in defaulted.items()
                 if str(key) not in declared and str(key) not in values
             }
             values = {**values, **expand_placeholders(absent, context)}
-        if not values:
+        rewritten = patch_pulled(start, pulled)
+        if values:
             # Not an optimisation: `patch_keys(text, {})` still normalises a
             # file with no trailing newline or with CRLF endings, so without
-            # this return the step would prompt and write with nothing to change.
-            return
-        rewritten = (
-            patch_keys(original, values)
-            if strategy == "patch_keys"
-            else append_block(original, values)
-        )
+            # this check the step would prompt and write with nothing to change.
+            rewritten = (
+                patch_keys(rewritten, values)
+                if strategy == "patch_keys"
+                else append_block(rewritten, values)
+            )
         if rewritten == original:
             return
-        if not context.assume_yes and not confirm_env_change(_diff(path.name, original, rewritten)):
+        diff = mask_pulled(_diff(path.name, original, rewritten), pulled)
+        if not context.assume_yes and not confirm_env_change(diff):
             raise OperationError("env rewrite cancelled by the user")
-        path.write_text(rewritten, encoding="utf-8")
+        if to_create is None:
+            path.write_text(rewritten, encoding="utf-8")
+        else:
+            _create_file(path, rewritten)
 
     @staticmethod
-    def _find_env_file(context: ExecutionContext, settings: dict[str, Any]) -> Path:
+    def _candidates_and_existing(
+        context: ExecutionContext, settings: dict[str, Any]
+    ) -> tuple[list[Any], set[str]]:
+        """The `env.file` candidates, and the names of the files really in the project."""
+        configured = settings.get("file", [".env.local", ".env"])
+        # `list(configured)` cannot raise here although it would on, say, an
+        # integer: `engine/plan.py::_env` is the gate, and it rejects anything
+        # that is neither a string nor a list with a ConfigError before a plan
+        # containing this step exists at all. Named explicitly because the
+        # `[".env.local", ".env"]` default is read in several places with
+        # different tolerances - that gate, this method and its callers
+        # `_find_env_file`, `_declared_across_candidates` and `_file_to_create`,
+        # `operations/env_pull.py::_local_file_problem`, which trusts the gate
+        # exactly as this method does and has to agree with it on what is there,
+        # `operations/database.py::remote_env_candidates`, which checks
+        # `database.env_file` first, then falls back to this same `env.file`
+        # key, before quietly falling back to the default itself, and
+        # `cli/init.py::_missing_env_file`, which carries the same gate's
+        # guard rather than this method's trust in it, because it runs
+        # before any plan does - so "why is this one not defensive" is a
+        # question worth answering in place rather than by searching. A reader
+        # added later belongs in this list; the list deliberately does not
+        # state its own length.
+        candidates = [configured] if isinstance(configured, str) else list(configured)
+        existing = {entry.name for entry in context.project.root.iterdir() if entry.is_file()}
+        return candidates, existing
+
+    @classmethod
+    def _file_to_create(
+        cls, context: ExecutionContext, settings: dict[str, Any]
+    ) -> tuple[Path, str] | None:
+        """Where a missing env file goes and the example's text it starts from.
+
+        `None` when a candidate exists, or when there is no example, which
+        preflight has refused by now and `_find_env_file` would refuse too. The
+        first candidate always exists: the planner refuses an empty `env.file`
+        beside `env.pull`.
+        """
+        candidates, existing = cls._candidates_and_existing(context, settings)
+        if EXAMPLE_FILE not in existing or any(str(name) in existing for name in candidates):
+            return None
+        example = context.local(EXAMPLE_FILE).read_text(encoding="utf-8")
+        return context.local(str(candidates[0])), example
+
+    @classmethod
+    def _find_env_file(cls, context: ExecutionContext, settings: dict[str, Any]) -> Path:
         """Find the first configured candidate that exists, by exact name.
 
         `Path.is_file()` folds case on a case-insensitive filesystem (the
@@ -246,26 +380,7 @@ class EnvRewriteOperation:
         `iterdir()` already produced, so its name is never a guess - it
         only excludes directories and other non-files from candidacy.
         """
-        configured = settings.get("file", [".env.local", ".env"])
-        # `list(configured)` cannot raise here although it would on, say, an
-        # integer: `engine/plan.py::_env` is the gate, and it rejects anything
-        # that is neither a string nor a list with a ConfigError before a plan
-        # containing this step exists at all. Named explicitly because the
-        # `[".env.local", ".env"]` default is read in several places with
-        # different tolerances - that gate, this method,
-        # `_declared_across_candidates` below, which trusts the gate exactly as
-        # this method does and reads the same `env.file` key to test presence,
-        # `operations/database.py::remote_env_candidates`, which checks
-        # `database.env_file` first, then falls back to this same `env.file`
-        # key, before quietly falling back to the default itself, and
-        # `cli/init.py::_missing_env_file`, which carries the same gate's
-        # guard rather than this method's trust in it, because it runs
-        # before any plan does - so "why is this one not defensive" is a
-        # question worth answering in place rather than by searching. A reader
-        # added later belongs in this list; the list deliberately does not
-        # state its own length.
-        candidates = [configured] if isinstance(configured, str) else list(configured)
-        existing = {entry.name for entry in context.project.root.iterdir() if entry.is_file()}
+        candidates, existing = cls._candidates_and_existing(context, settings)
         for name in candidates:
             if str(name) in existing:
                 return context.local(str(name))
@@ -275,9 +390,9 @@ class EnvRewriteOperation:
             doc="no-environment-file-in-the-project",
         )
 
-    @staticmethod
+    @classmethod
     def _declared_across_candidates(
-        context: ExecutionContext, settings: dict[str, Any]
+        cls, context: ExecutionContext, settings: dict[str, Any]
     ) -> set[str]:
         """Every key declared by any candidate env file that exists.
 
@@ -291,9 +406,7 @@ class EnvRewriteOperation:
         # Same candidate resolution and `iterdir()` probe as `_find_env_file`,
         # for the reason its docstring gives: `is_file()` on a constructed path
         # folds case on macOS. Do not replace the probe with one.
-        configured = settings.get("file", [".env.local", ".env"])
-        candidates = [configured] if isinstance(configured, str) else list(configured)
-        existing = {entry.name for entry in context.project.root.iterdir() if entry.is_file()}
+        candidates, existing = cls._candidates_and_existing(context, settings)
         declared: set[str] = set()
         for name in candidates:
             if str(name) in existing:
@@ -301,10 +414,47 @@ class EnvRewriteOperation:
         return declared
 
 
+def _read_pulled(
+    context: ExecutionContext, names: Sequence[str], imposed: Mapping[str, str]
+) -> dict[str, str]:
+    """The right-hand sides to write for `names`, leaving out what `env.set` decides.
+
+    A name left out makes no remote read of its own, and is said out loud, as is
+    a value that refers to another variable: both are names only, never a value.
+    """
+    overridden = [name for name in names if name in imposed]
+    if overridden:
+        context.progress(f"env.set keeps its own value, not pulled: {', '.join(overridden)}")
+    kept = [name for name in names if name not in imposed]
+    if not kept:
+        return {}
+    remote = read_remote_values(context, kept)
+    if remote.references:
+        context.progress(
+            "copied as written, refers to another variable and resolves against the "
+            f"local file: {', '.join(remote.references)}"
+        )
+    return remote.text
+
+
+def _create_file(path: Path, text: str) -> None:
+    """Write a file that was not there, refusing whatever turns out to be.
+
+    Exclusive, because the name was only compared against directory entries: on a
+    case-insensitive filesystem `.env` opens a `.ENV` that comparison rightly did
+    not take for it, and overwriting that would lose the developer's file.
+    """
+    try:
+        with path.open("x", encoding="utf-8") as created:
+            created.write(text)
+    except OSError as error:
+        raise OperationError(f"could not create {path}: {error.strerror}") from error
+
+
 def _diff(name: str, before: str, after: str) -> str:
     lines = difflib.unified_diff(
-        before.splitlines(),
-        after.splitlines(),
+        _lines(before),
+        _lines(after),
         fromfile=name,
         tofile=f"{name} (new)",
         lineterm="",
