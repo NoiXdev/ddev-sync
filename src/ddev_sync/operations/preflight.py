@@ -183,6 +183,8 @@ class PreflightOperation:
                 f"a sync wants at least {MIN_FREE_BYTES // 1024**3} GB",
                 doc="not-enough-free-space",
             )
+        if bool(params.get("files_selected", False)):
+            self._probe_file_paths(context)
         if bool(params.get("db_selected", False)):
             # Reported rather than raised by `check()`; here it must stop the
             # run, because everything after this reads the database. Gated on
@@ -245,6 +247,37 @@ class PreflightOperation:
             # by hand, so a new one is dropped unless it is named here.
             path_readable=report.path_readable,
         )
+
+    @staticmethod
+    def _probe_file_paths(context: ExecutionContext) -> None:
+        """Refuse a run whose `files.paths` name something the remote does not have.
+
+        The files step runs after the import and before sanitize, so rsync
+        finding this out stops the run with production data already local and
+        unsanitized. One round trip for all of them. Only a line naming a path
+        counts as missing, so a login banner on stdout cannot refuse a run.
+        """
+        remotes = [pair.remote for pair in validate_path_pairs(context)]
+        if not remotes:
+            return
+        context.progress("checking the paths the files step pulls")
+        script = 'for path in "$@"; do [ -e "$path" ] || printf "%s\\n" "$path"; done'
+        result = context.runner.run(
+            ssh_command(context.target, ["sh", "-c", script, "sh", *remotes])
+        )
+        if not result.ok:
+            raise OperationError(
+                f"could not check the paths the files step pulls: {result.failure_detail()}"
+            )
+        reported = set(result.stdout.splitlines())
+        missing = [remote for remote in remotes if remote in reported]
+        if missing:
+            raise OperationError(
+                f"the files step pulls {', '.join(missing)}, which the remote does not have. "
+                "Nothing has been changed. Leave the files step out with --steps or in the "
+                "picker, or correct files.paths.",
+                doc="files",
+            )
 
     def _probe(self, context: ExecutionContext) -> tuple[PreflightReport, str]:
         """Run the ssh probe once and return the report plus any stderr.

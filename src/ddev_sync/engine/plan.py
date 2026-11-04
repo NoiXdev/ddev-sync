@@ -330,6 +330,7 @@ class _Builder:
         # Read from the operation's own params for the same reason
         # `_sanitize_selected` is: the operation never sees the Plan.
         self._db_selected = StepKind.DB_DUMP in steps
+        self._files_selected = StepKind.FILES_SYNC in steps
 
     def step(self, kind: StepKind) -> list[_Entry]:
         handlers = {
@@ -388,6 +389,7 @@ class _Builder:
                 params={
                     "sanitize_selected": self._sanitize_selected,
                     "db_selected": self._db_selected,
+                    "files_selected": self._files_selected,
                 },
             )
         ]

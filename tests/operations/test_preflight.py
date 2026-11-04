@@ -1634,3 +1634,96 @@ def test_a_credential_error_without_its_own_slug_links_to_the_database_area(
     with pytest.raises(OperationError, match="unknown credential source") as caught:
         PreflightOperation().execute(context, {"db_selected": True})
     assert caught.value.doc == "database"
+
+
+# The files step runs after the import and before sanitize, so a directory
+# that is not there used to stop the run with production data already local
+# and unsanitized. Found here, nothing has moved yet.
+def _context_with_file_paths(runner: FakeCommandRunner, root: Path) -> ExecutionContext:
+    return make_context(
+        runner,
+        root,
+        files={
+            "paths": [
+                {"remote": "storage/app/public/", "local": "storage/app/public"},
+                {"remote": "public/media/", "local": "public/media"},
+            ]
+        },
+    )
+
+
+def test_files_selected_passes_when_every_remote_path_exists(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="")
+    context = _context_with_file_paths(runner, tmp_path)
+
+    PreflightOperation().execute(context, {"files_selected": True})
+
+    # One round trip for every path, however many there are.
+    assert len(runner.calls) == 2
+    assert "/srv/app/storage/app/public/" in runner.calls[1][-1]
+    assert "/srv/app/public/media/" in runner.calls[1][-1]
+
+
+def test_files_selected_refuses_a_missing_remote_path_naming_only_that_one(
+    tmp_path: Path,
+) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="/srv/app/storage/app/public/\n")
+    context = _context_with_file_paths(runner, tmp_path)
+
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"files_selected": True})
+
+    message = str(caught.value)
+    assert "/srv/app/storage/app/public/" in message
+    assert "/srv/app/public/media/" not in message
+    assert "--steps" in message
+    assert doc_link(caught.value) == doc_link(OperationError("x", doc="files"))
+
+
+def test_files_selected_stops_before_the_database_is_read(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="/srv/app/public/media/\n")
+    context = _context_with_file_paths(runner, tmp_path)
+
+    with pytest.raises(OperationError, match="public/media"):
+        PreflightOperation().execute(
+            context, {"files_selected": True, "db_selected": True, "sanitize_selected": True}
+        )
+
+    assert len(runner.calls) == 2
+
+
+def test_a_login_banner_on_stdout_is_not_a_missing_path(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], stdout="Welcome to web01\n")
+    context = _context_with_file_paths(runner, tmp_path)
+
+    PreflightOperation().execute(context, {"files_selected": True})
+
+
+def test_a_failed_file_path_probe_raises_with_the_reason(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    runner.script_prefix(["ssh"], returncode=255, stderr="connection lost")
+    context = _context_with_file_paths(runner, tmp_path)
+
+    with pytest.raises(OperationError, match="connection lost"):
+        PreflightOperation().execute(context, {"files_selected": True})
+
+
+def test_files_not_selected_does_not_look_for_the_paths(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    context = _context_with_file_paths(runner, tmp_path)
+
+    PreflightOperation().execute(context, {"files_selected": False})
+
+    assert len(runner.calls) == 1
+
+
+def test_files_selected_with_no_paths_costs_no_round_trip(tmp_path: Path) -> None:
+    runner = healthy_runner()
+
+    PreflightOperation().execute(make_context(runner, tmp_path), {"files_selected": True})
+
+    assert len(runner.calls) == 1
