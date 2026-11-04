@@ -1081,6 +1081,16 @@ def test_a_file_the_values_would_not_change_is_still_created_from_the_example(
     assert (tmp_path / ".env.local").read_text(encoding="utf-8") == "APP_ENV=local\nA=1\n"
 
 
+def test_an_empty_env_local_is_written_rather_than_the_tracked_env(tmp_path: Path) -> None:
+    # What the docs tell a Symfony or Shopware project to do, whose `.env` is committed.
+    tracked = write_env(tmp_path, "APP_ENV=dev\n")
+    local = write_env(tmp_path, "", ".env.local")
+    context = pull_context(tmp_path, "A=secret\n", pull=["A"], file=[".env.local", ".env"])
+    EnvRewriteOperation().execute(context, {})
+    assert local.read_text(encoding="utf-8") == "A=secret\n"
+    assert tracked.read_text(encoding="utf-8") == "APP_ENV=dev\n"
+
+
 def test_an_existing_file_is_used_rather_than_the_example(tmp_path: Path) -> None:
     write_env(tmp_path, "FROM_EXAMPLE=1\n", ".env.example")
     env = write_env(tmp_path, "MINE=1\n")
