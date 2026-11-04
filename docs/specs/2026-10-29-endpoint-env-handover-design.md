@@ -40,12 +40,19 @@ the project. In short: runtime environment in, env file out.
 - Anything on `provider: server`. A server keeps its `.env` on disk.
 - Using the handover for anything other than what the engine already reads
   from the remote env file, which is the database credentials.
+  *(Superseded in part by `2026-11-04-env-pull-design.md`: the sync now also
+  reads the names a project lists in `env.pull` from the same file.)*
 
 ## Anti-goals
 
 - Writing the whole container environment. `DDEV_SYNC_AUTHORIZED_KEYS` and
   unrelated secrets of the stack must not end up in a file that a sync reads
   and copies to a laptop.
+  *(Superseded in part by `2026-11-04-env-pull-design.md`: only the listed
+  names still reach a laptop, but with `DDEV_SYNC_EXPORT_ENV: all` the file
+  holds the whole environment given to the service, `DDEV_SYNC_*` aside, so the
+  session can read all of it. That is an accepted exposure, chosen by the
+  deployer in the stack.)*
 - A file that other accounts in the container can read, or that outlives the
   container in a volume.
 - A value that is silently changed, such as stripped quotes, trimmed spaces or
