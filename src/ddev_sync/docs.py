@@ -61,6 +61,9 @@ ENTRIES: tuple[str, ...] = (
     "dump-is-incomplete",
     # env
     "no-environment-file-in-the-project",
+    "env-pull-variable-missing",
+    "env-pull-value-has-a-line-break",
+    "env-pull-no-example-file",
     # sanitize
     "malformed-sanitize-switch",
     "unknown-fake-kind-or-setting",

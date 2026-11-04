@@ -121,7 +121,7 @@ def _from_config(context: ExecutionContext) -> RemoteCredentials:
 
 
 def _from_remote_env(context: ExecutionContext) -> RemoteCredentials:
-    path, contents = _fetch_first_env_file(context, remote_env_paths(context))
+    path, contents = fetch_remote_env_file(context)
     # The handover file is the one place a value may carry quotes, `#` or edge
     # spaces that belong to it, so it must not go through the .env parser.
     parsed = parse_handover(contents, path) if path == HANDOVER_PATH else _parse_env(contents)
@@ -219,6 +219,24 @@ def _handover_unreadable(path: str, reason: str) -> OperationError:
         f"{path} cannot be read as a handover file: {reason}",
         doc="endpoint-handover-file-unreadable",
     )
+
+
+_ENV_FILE_CACHE_KEY = "remote_env_file"
+
+
+def fetch_remote_env_file(context: ExecutionContext) -> tuple[str, str]:
+    """The first of `remote_env_paths` that exists: its path and its contents.
+
+    Memoised on `context.cache`: the credentials and `env.pull` read the same
+    file in the same run, and it cannot change between them. Public because
+    `operations/env_pull.py` reads it too.
+    """
+    cached: tuple[str, str] | None = context.cache.get(_ENV_FILE_CACHE_KEY)
+    if cached is not None:
+        return cached
+    found = _fetch_first_env_file(context, remote_env_paths(context))
+    context.cache[_ENV_FILE_CACHE_KEY] = found
+    return found
 
 
 def _fetch_first_env_file(context: ExecutionContext, paths: list[str]) -> tuple[str, str]:

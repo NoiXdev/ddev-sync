@@ -107,8 +107,8 @@ class ExecutionContext:
     # Mutable on purpose, despite the surrounding frozen dataclass: `frozen`
     # only blocks reassigning a field, not mutating what it points to, and
     # this needs exactly one scratch dict that lives as long as `context`
-    # does. Two independent users share it by keying on their own string, not
-    # by splitting it into typed fields:
+    # does. Independent users share it by keying on their own string, not by
+    # splitting it into typed fields:
     # - `operations/placeholders.py` memoises a placeholder resolver that
     #   shells out (e.g. `${WP_TABLE_PREFIX}`) so it runs at most once per
     #   sync even though dozens of sanitize rules each expand independently.
@@ -118,6 +118,8 @@ class ExecutionContext:
     #   can all ask for it in the same run - without this it would be up to
     #   three identical ssh round trips, or three wp-cli calls against
     #   production, for data that cannot change between them.
+    # - `operations/database.py`'s `fetch_remote_env_file` memoises the remote
+    #   env file, which the credentials and `env.pull` both read.
     # `Any`, not `str`, because the second use case caches a dataclass
     # instance, not a string. `compare=False` keeps two otherwise-identical
     # contexts equal regardless of what either has resolved and cached so far.

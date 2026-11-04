@@ -39,6 +39,7 @@ from ddev_sync.operations.database import (
     remote_failure,
     remote_tls_options,
 )
+from ddev_sync.operations.env_pull import check_pull
 from ddev_sync.operations.fake import parse_columns
 from ddev_sync.operations.files import validate_path_pairs
 from ddev_sync.operations.sanitize import SanitizeRule, active_rules
@@ -196,6 +197,9 @@ class PreflightOperation:
                 # The slug the credential source's own error carried, so the
                 # link stays the specific entry rather than the preflight area.
                 raise OperationError(detail, doc=doc or "database")
+            # Announces itself when there is something to read: most projects
+            # list nothing, and a line for that would only be noise.
+            check_pull(context)
         if bool(params.get("sanitize_selected", False)):
             context.progress("checking the tables the sanitize rules name")
             self._probe_sanitize_tables(context)

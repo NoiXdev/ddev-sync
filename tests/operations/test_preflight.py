@@ -1727,3 +1727,88 @@ def test_files_selected_with_no_paths_costs_no_round_trip(tmp_path: Path) -> Non
     PreflightOperation().execute(make_context(runner, tmp_path), {"files_selected": True})
 
     assert len(runner.calls) == 1
+
+
+# --- `env.pull`: refused before the dump, not found out in the env step ------
+
+
+_CREDENTIALS_ENV = (
+    "DATABASE_NAME=app\nDATABASE_USER=deploy\nDATABASE_PASSWORD=s3cret\n"
+    "DATABASE_HOST=db.internal\nDATABASE_PORT=3306\n"
+)
+
+
+def _pull_context(runner: FakeCommandRunner, root: Path, **config: Any) -> ExecutionContext:
+    (root / ".env").write_text("", encoding="utf-8")
+    return make_context(runner, root, env={"pull": ["APP_KEY"]}, **config)
+
+
+def test_a_database_run_checks_what_env_pull_names_after_the_credentials(tmp_path: Path) -> None:
+    seen: list[str] = []
+    runner = healthy_runner()
+    _script_env_file(runner, _CREDENTIALS_ENV + "APP_KEY=base64:abc\n")
+    context = dataclasses.replace(_pull_context(runner, tmp_path), progress=seen.append)
+
+    PreflightOperation().execute(context, {"db_selected": True, "sanitize_selected": True})
+
+    assert seen == [
+        "reaching deploy@web01.example",
+        "reading the remote database credentials",
+        "reading the values env.pull names",
+        "checking the tables the sanitize rules name",
+    ]
+    # The connectivity probe and one read of the file, shared by both.
+    assert len(runner.calls) == 2
+
+
+def test_a_refused_pull_stops_before_the_sanitize_probe_and_any_dump(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    _script_env_file(runner, _CREDENTIALS_ENV)
+    context = _pull_context(
+        runner,
+        tmp_path,
+        sanitize={"rules": [{"name": "x", "sql": "TRUNCATE TABLE t", "requires_table": "t"}]},
+    )
+
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"db_selected": True, "sanitize_selected": True})
+
+    assert "APP_KEY" in str(caught.value)
+    assert (doc_link(caught.value) or "").endswith("#env-pull-variable-missing")
+    assert len(runner.calls) == 2
+    assert not any("SHOW TABLES" in argv[-1] or "mysqldump" in argv[-1] for argv in runner.calls)
+
+
+def test_a_credentials_failure_comes_before_the_pull_check(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    context = _pull_context(runner, tmp_path, database={"remote_credentials": "explicit"})
+
+    with pytest.raises(OperationError) as caught:
+        PreflightOperation().execute(context, {"db_selected": True})
+
+    assert (doc_link(caught.value) or "").endswith("#database-credentials-missing")
+    assert len(runner.calls) == 1
+
+
+def test_a_run_without_the_database_does_not_read_what_env_pull_names(tmp_path: Path) -> None:
+    runner = healthy_runner()
+    PreflightOperation().execute(_pull_context(runner, tmp_path), {"db_selected": False})
+    assert len(runner.calls) == 1
+
+
+def test_an_empty_pull_list_makes_no_extra_call(tmp_path: Path) -> None:
+    seen: list[str] = []
+    runner = healthy_runner()
+    context = context_with_rules(runner, tmp_path, [])
+    context = dataclasses.replace(
+        context,
+        merged=merge_layers(
+            [LayerDoc("profile", {**context.merged.data, "env": {"pull": []}})],
+        ),
+        progress=seen.append,
+    )
+
+    PreflightOperation().execute(context, {"db_selected": True})
+
+    assert len(runner.calls) == 1
+    assert "reading the values env.pull names" not in seen
