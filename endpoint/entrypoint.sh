@@ -159,8 +159,9 @@ if [ -n "${DDEV_SYNC_EXPORT_ENV:-}" ]; then
         # plain identifier would make its line mean something else, so it is
         # left out like the endpoint's own settings; a value with a line break
         # cannot be carried, and there is no one to refuse it to - its name is
-        # kept for the sync to report, never its value.
-        xargs -0 -n 1 sh -c '
+        # kept for the sync to report, never its value. `-s` lifts busybox's
+        # 32 KiB line limit above the 128 KiB the kernel allows one entry.
+        xargs -0 -n 1 -s 200000 sh -c '
             case $3 in *=*) ;; *) exit 0 ;; esac
             name=${3%%=*}
             case $name in
@@ -188,7 +189,7 @@ if [ -n "${DDEV_SYNC_EXPORT_ENV:-}" ]; then
         # side marks it set, keeps an empty value apart from that, and keeps
         # a trailing line break from being eaten by `$(...)`. What is left is
         # byte for byte what the stack set.
-        value="$(xargs -0 -n 1 sh -c 'case $1 in "$0="*) printf "x%sx" "${1#*=}" ;; esac' "$name" < "/proc/$$/environ")" ||
+        value="$(xargs -0 -n 1 -s 200000 sh -c 'case $1 in "$0="*) printf "x%sx" "${1#*=}" ;; esac' "$name" < "/proc/$$/environ")" ||
             refuse "could not read ${name} from the container's environment." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-export-env-variable-unset"
         [ -n "$value" ] ||
             refuse "DDEV_SYNC_EXPORT_ENV lists ${name}, but ${name} is not set in this container. Pass it to the endpoint through environment: or env_file:, or remove it from the list." "https://docs.noix.dev/ddev-sync/reference/troubleshooting/#endpoint-export-env-variable-unset"

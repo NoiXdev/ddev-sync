@@ -671,9 +671,7 @@ def test_all_skips_a_multi_line_value_and_names_it(endpoint_image: str, tmp_path
         logs = _run(["docker", "logs", container])
 
     assert "DB_HOST=db\n" in result.stdout, result.stderr
-    skipped = [
-        line for line in result.stdout.split("\n") if line.startswith("DDEV_SYNC_SKIPPED=")
-    ]
+    skipped = [line for line in result.stdout.split("\n") if line.startswith("DDEV_SYNC_SKIPPED=")]
     assert len(skipped) == 1
     assert sorted(skipped[0].removeprefix("DDEV_SYNC_SKIPPED=").split(",")) == ["CR", "PEM"]
     assert "line1" not in result.stdout
@@ -708,6 +706,61 @@ def test_all_in_a_large_environment(endpoint_image: str, tmp_path: Path) -> None
         result = ssh(key, f"cat {HANDOVER_FILE}")
 
     assert f"DB_PASSWORD={TRICKY}\n" in result.stdout.splitlines(keepends=True), result.stderr
+
+
+def test_all_hands_over_a_single_line_value_past_the_default_command_line(
+    endpoint_image: str, tmp_path: Path
+) -> None:
+    key, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={**keys, "DDEV_SYNC_EXPORT_ENV": "all", "BIG": "k" * 40000, "DB_HOST": "db"},
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    lines = result.stdout.splitlines(keepends=True)
+    assert f"BIG={'k' * 40000}\n" in lines, result.stderr
+    assert "DB_HOST=db\n" in lines
+
+
+def test_all_skips_a_multi_line_value_past_the_default_command_line(
+    endpoint_image: str, tmp_path: Path
+) -> None:
+    key, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={
+            **keys,
+            "DDEV_SYNC_EXPORT_ENV": "all",
+            "BIG": "k" * 20000 + "\n" + "k" * 20000,
+            "DB_HOST": "db",
+        },
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    assert "DB_HOST=db\n" in result.stdout, result.stderr
+    assert "DDEV_SYNC_SKIPPED=BIG\n" in result.stdout
+
+
+def test_a_list_finds_its_variable_beside_an_unlisted_one_past_the_default_command_line(
+    endpoint_image: str, tmp_path: Path
+) -> None:
+    key, keys = _keys(tmp_path)
+
+    with endpoint(
+        endpoint_image,
+        environment={
+            **keys,
+            "DDEV_SYNC_EXPORT_ENV": "DB_HOST",
+            "DB_HOST": "db",
+            "BIG": "k" * 40000,
+        },
+    ):
+        result = ssh(key, f"cat {HANDOVER_FILE}")
+
+    assert result.stdout == "# ddev-sync endpoint handover v1\nDB_HOST=db\n", result.stderr
 
 
 def test_a_list_naming_all_beside_another_name_still_means_a_variable(
