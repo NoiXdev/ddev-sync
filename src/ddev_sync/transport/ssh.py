@@ -170,6 +170,24 @@ def ssh_command(target: ResolvedTarget, remote_command: Sequence[str]) -> list[s
     return [*_ssh_prefix(target), remote_endpoint(target), quote_remote(remote_command)]
 
 
+def interactive_ssh_command(target: ResolvedTarget, start_in: str | None) -> list[str]:
+    """Build the `ssh -t` that opens a login shell on `target`, in `start_in` if given.
+
+    Without the shared connection: a shell lasts as long as someone works in it,
+    and a master it started would keep the session open behind the prompt for
+    `ControlPersist` longer, then take every sync's calls with it. `cd` is not
+    chained with `&&`: a directory that is gone is worth a message, not a lost shell.
+    """
+    command = ["ssh", "-t", *SSH_CONNECTION_OPTIONS, *_host_key_alias_flag(target)]
+    command.extend(_jump_flag(target))
+    if target.port is not None:
+        command.extend(["-p", str(target.port)])
+    command.append(remote_endpoint(target))
+    if start_in is not None:
+        command.append(f'cd {shlex.quote(start_in)}; exec "${{SHELL:-sh}}" -l')
+    return command
+
+
 def _ssh_prefix(target: ResolvedTarget) -> list[str]:
     prefix = ["ssh", *_connection_flags(target)]
     prefix.extend(_jump_flag(target))

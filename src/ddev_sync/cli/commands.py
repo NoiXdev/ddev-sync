@@ -17,6 +17,7 @@ from ddev_sync.cli.reporter import ConsoleReporter
 from ddev_sync.cli.verbose import VerboseRunner
 from ddev_sync.config.loader import discover_config_paths, load_user_layers
 from ddev_sync.config.merge import MergeResult
+from ddev_sync.config.models import Provider, ResolvedTarget
 from ddev_sync.config.targets import collect_targets, list_target_names
 from ddev_sync.engine.executor import Executor
 from ddev_sync.engine.plan import build_plan
@@ -26,6 +27,7 @@ from ddev_sync.operations.base import ExecutionContext, OperationError, discard_
 from ddev_sync.operations.preflight import PreflightOperation
 from ddev_sync.operations.sanitize import sanitize_switches
 from ddev_sync.transport.runner import CommandRunner
+from ddev_sync.transport.ssh import interactive_ssh_command, remote_endpoint
 
 DOWNLOADS = Path(".ddev") / ".downloads"
 
@@ -42,6 +44,43 @@ def targets_command(project_root: Path, home: Path, echo: Callable[[str], None])
     layers = load_user_layers(discover_config_paths(project_root, home))
     echo(render_targets(collect_targets(layers)))
     return 0
+
+
+def shell_command(
+    target: ResolvedTarget,
+    echo: Callable[[str], None],
+    *,
+    replace_process: Callable[[list[str]], None],
+) -> int:
+    """Open a shell on the target's host, as this process.
+
+    Under `provider: docker` that is the Docker host and its home directory: the
+    data path only exists inside the stack, and the endpoint is not where anyone
+    has work to do.
+    """
+    docker = target.provider == Provider.DOCKER
+    host = _docker_host(target) if docker else target
+    echo(f"connecting to {remote_endpoint(host)} ({target.name})")
+    replace_process(interactive_ssh_command(host, None if docker else target.data_root))
+    return 0
+
+
+def _docker_host(target: ResolvedTarget) -> ResolvedTarget:
+    """The machine a Docker endpoint is reached through, as a target of its own.
+
+    `targets.py::_build` moved it to the jump fields. Moved back here rather than
+    in the transport, which must not learn what a provider is.
+    """
+    return target.model_copy(
+        update={
+            "host": target.jump_host,
+            "user": target.jump_host_user,
+            "port": target.jump_host_port,
+            "jump_host": None,
+            "jump_host_user": None,
+            "host_key_alias": None,
+        }
+    )
 
 
 def doctor_command(

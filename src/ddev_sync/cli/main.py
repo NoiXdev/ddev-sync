@@ -52,6 +52,7 @@ from ddev_sync.cli.commands import (
     resolve_selection,
     resolve_target_name,
     run_command,
+    shell_command,
     targets_command,
 )
 from ddev_sync.cli.context import RunContext, build_context
@@ -226,6 +227,8 @@ def cli(
             "--yes": assume_yes,
         },
     )
+    if ctx.invoked_subcommand == "ssh" and dry_run:
+        raise click.UsageError("--dry-run cannot be combined with 'ssh': a shell has no dry run")
     ctx.obj = _Options(
         project_root=project_root,
         home=home if home is not None else Path.home(),
@@ -389,6 +392,22 @@ def doctor_cmd(options: _Options) -> int:
     # click's own default in place when colour is off.
     echo = partial(click.echo, color=True if use_colour else None)
     return doctor_command(context, echo, runner=options.runner, colour=use_colour)
+
+
+@cli.command("ssh")
+@click.pass_obj
+def ssh_cmd(options: _Options) -> int:
+    """Open a shell on a target's host; with several targets, ask which one."""
+    # Before the target, which may ask: off a terminal neither has anyone to answer.
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise DdevSyncError("ssh opens an interactive shell, so it needs a terminal")
+    target = _build_run_context(options).target
+    return shell_command(target, click.echo, replace_process=_replace_process)
+
+
+def _replace_process(argv: list[str]) -> None:
+    """Become ssh, so the terminal, the signals and the exit code are all its own."""
+    os.execvp(argv[0], argv)
 
 
 @cli.command("init")

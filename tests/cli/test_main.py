@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -895,3 +896,120 @@ def test_an_error_ends_with_its_docs_link(
 def test_a_usage_error_carries_no_link(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--not-a-real-option"]) == 2
     assert "More:" not in capsys.readouterr().err
+
+
+@pytest.fixture
+def execs(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """What `ssh` would have become instead of becoming it."""
+    seen: list[list[str]] = []
+    monkeypatch.setattr(os, "execvp", lambda _file, argv: seen.append(argv))
+    return seen
+
+
+def _on_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    # In the test's body: pytest swaps the capture streams between a fixture's
+    # setup and the call, which would take a patch of `sys.stdout` away with it.
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+
+def test_ssh_with_one_target_connects_without_asking(
+    project: Path,
+    tmp_path: Path,
+    execs: list[list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _on_a_terminal(monkeypatch)
+
+    def never(*_: object) -> str:
+        raise AssertionError("one target is not a question")
+
+    monkeypatch.setattr("ddev_sync.cli.commands.choose_target", never)
+    assert invoke(project, tmp_path, "ssh") == 0
+    assert execs[0][-2:] == ["deploy@web01.example", 'cd /srv/app/; exec "${SHELL:-sh}" -l']
+    assert "connecting to deploy@web01.example (production)" in capsys.readouterr().out
+
+
+def _two_targets(project: Path) -> None:
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\n"
+        "targets:\n"
+        "  production:\n"
+        "    host: web01.example\n"
+        "    user: deploy\n"
+        "    path: /srv/app/\n"
+        "    stage: production\n"
+        "  staging:\n"
+        "    host: staging.example\n"
+        "    user: deploy\n"
+        "    path: /srv/app/\n"
+        "    stage: staging\n",
+        encoding="utf-8",
+    )
+
+
+def test_ssh_with_several_targets_asks_which(
+    project: Path, tmp_path: Path, execs: list[list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _on_a_terminal(monkeypatch)
+    _two_targets(project)
+    monkeypatch.setattr("ddev_sync.cli.commands.choose_target", lambda names, _described: names[1])
+    assert invoke(project, tmp_path, "ssh") == 0
+    assert "deploy@staging.example" in execs[0]
+
+
+def test_ssh_does_not_ask_with_target_given(
+    project: Path, tmp_path: Path, execs: list[list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _on_a_terminal(monkeypatch)
+    _two_targets(project)
+    assert invoke(project, tmp_path, "--target", "staging", "ssh") == 0
+    assert "deploy@staging.example" in execs[0]
+
+
+def test_ssh_under_docker_goes_to_the_docker_host_and_its_home(
+    project: Path, tmp_path: Path, execs: list[list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _on_a_terminal(monkeypatch)
+    (project / ".ddev" / "ddev-sync.yaml").write_text(
+        "version: 1\n"
+        "targets:\n"
+        "  production:\n"
+        "    provider: docker\n"
+        "    host: docker.example\n"
+        "    user: deploy\n"
+        "    port: 2022\n"
+        "    sync_port: 2222\n"
+        "    path: /data/\n"
+        "    stage: production\n",
+        encoding="utf-8",
+    )
+    assert invoke(project, tmp_path, "ssh") == 0
+    argv = execs[0]
+    assert argv[-3:] == ["-p", "2022", "deploy@docker.example"]
+    assert not any("ProxyCommand" in part or "HostKeyAlias" in part for part in argv)
+
+
+@pytest.mark.parametrize("closed", ["stdin", "stdout"])
+def test_ssh_without_a_terminal_is_refused(
+    project: Path,
+    tmp_path: Path,
+    execs: list[list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    closed: str,
+) -> None:
+    _on_a_terminal(monkeypatch)
+    monkeypatch.setattr(getattr(sys, closed), "isatty", lambda: False)
+    assert invoke(project, tmp_path, "ssh") == 1
+    assert "needs a terminal" in capsys.readouterr().err
+    assert execs == []
+
+
+def test_ssh_refuses_a_dry_run(
+    project: Path, tmp_path: Path, execs: list[list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _on_a_terminal(monkeypatch)
+    assert invoke(project, tmp_path, "--dry-run", "ssh") == 2
+    assert execs == []

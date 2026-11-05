@@ -555,3 +555,26 @@ def test_a_control_directory_owned_by_someone_else_is_refused(
     with pytest.raises(DdevSyncError, match="only this user") as caught:
         ssh.prepare_control_directory()
     assert (doc_link(caught.value) or "").endswith("#shared-connection-directory")
+
+
+def test_the_interactive_command_has_a_terminal_and_no_shared_connection() -> None:
+    command = ssh.interactive_ssh_command(direct(), None)
+    assert command[:2] == ["ssh", "-t"]
+    assert command[-3:] == ["-p", "2222", "deploy@web01.example"]
+    assert "BatchMode=yes" in command
+    assert not any("Control" in part for part in command)
+
+
+def test_the_interactive_command_starts_in_a_quoted_directory() -> None:
+    command = ssh.interactive_ssh_command(direct(), "/srv/my app/")
+    assert command[-1] == "cd '/srv/my app/'; exec \"${SHELL:-sh}\" -l"
+
+
+def test_the_interactive_command_goes_through_the_jump_host() -> None:
+    command = ssh.interactive_ssh_command(with_jump(), None)
+    assert any(part.startswith("ProxyCommand=") for part in command)
+
+
+def test_the_interactive_command_leaves_the_port_to_an_alias() -> None:
+    target = direct().model_copy(update={"port": None, "user": None})
+    assert ssh.interactive_ssh_command(target, None)[-1] == "web01.example"
