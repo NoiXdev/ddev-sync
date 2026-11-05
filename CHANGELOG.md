@@ -1,3 +1,25 @@
+## [0.1.0-rc.6](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.5...v0.1.0-rc.6) (2026-11-05)
+
+
+### Features
+
+* **endpoint:** hand over the whole environment with DDEV_SYNC_EXPORT_ENV: all ([1703176](https://github.com/NoiXdev/ddev-sync/commit/1703176bca330d3261764dc3905c25c8464b8def))
+* **env:** copy the values env.pull names into the local env file ([7a2cbcd](https://github.com/NoiXdev/ddev-sync/commit/7a2cbcdbe7e3d31c5e1dd945d0e1f599e70e586c))
+* **env:** read and check the values env.pull names before anything moves ([ffdb6ca](https://github.com/NoiXdev/ddev-sync/commit/ffdb6cab4a94bf67b212583e24033848baabf58a))
+
+
+### Bug Fixes
+
+* **config:** keep what a bad env.pull holds out of its error ([ee100b7](https://github.com/NoiXdev/ddev-sync/commit/ee100b71a4abdec24b48e1529b7429acc62f5db0))
+* **database:** name the line break when the endpoint skipped a credential ([c5172d7](https://github.com/NoiXdev/ddev-sync/commit/c5172d7ed5867b1c2553c24767c1115e43f0a5bb))
+* **endpoint:** read an environment entry past busybox's default command line ([0cda23e](https://github.com/NoiXdev/ddev-sync/commit/0cda23ea8b5f8071af8dd4f3a80646c058b6d6b4))
+* **env:** encode and read single quotes as phpdotenv really does ([b07932b](https://github.com/NoiXdev/ddev-sync/commit/b07932beb81ae069656cd9365c6784a407e78c88))
+* **env:** keep pulled values out of a tracked later env file ([f990d0f](https://github.com/NoiXdev/ddev-sync/commit/f990d0f86e5b838e2aa79b3ad107798b509d9a12))
+* **env:** mask a pulled value appended behind a quote never closed ([e5290df](https://github.com/NoiXdev/ddev-sync/commit/e5290dfe40e0ce77fe6725fd52f986ad27b252b4))
+* **env:** replace a multi-line local value whole and print env.pull notices ([d85ba78](https://github.com/NoiXdev/ddev-sync/commit/d85ba789a002de489322ec1534b0235488ad8714))
+* **env:** write a handover value holding =" in double quotes ([fbf071d](https://github.com/NoiXdev/ddev-sync/commit/fbf071ddd8e6325295e4f8b1823905d87cd1c1d6))
+* **preflight:** refuse a files path the remote does not have ([d867c0e](https://github.com/NoiXdev/ddev-sync/commit/d867c0efbed572da21fb243c5ad59dccd1b89c28))
+
 ## [0.1.0-rc.5](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.4...v0.1.0-rc.5) (2026-10-30)
 
 
