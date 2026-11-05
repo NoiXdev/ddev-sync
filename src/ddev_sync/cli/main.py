@@ -49,6 +49,7 @@ import click
 from ddev_sync.cli.colour import colour_enabled
 from ddev_sync.cli.commands import (
     doctor_command,
+    offer_to_save_steps,
     resolve_selection,
     resolve_target_name,
     run_command,
@@ -57,7 +58,9 @@ from ddev_sync.cli.commands import (
 )
 from ddev_sync.cli.context import RunContext, build_context
 from ddev_sync.cli.init import init_command
+from ddev_sync.cli.step_defaults import read_step_defaults
 from ddev_sync.cli.waiting import Waiting, waiting_enabled
+from ddev_sync.config.loader import discover_config_paths, load_user_layers
 from ddev_sync.ddev.project import DEFAULT_PROJECT_ROOT
 from ddev_sync.docs import doc_link
 from ddev_sync.engine.plan import available_selection_groups
@@ -455,18 +458,30 @@ def build_cmd(options: _Options) -> int:
 def _run(options: _Options, *, steps: str | None, dry_run: bool, assume_yes: bool) -> int:
     """Plan (and maybe execute) a sync; the one code path both `cli` and `build_cmd` call."""
     context = _build_run_context(options)
-    selection = resolve_selection(
-        steps,
-        assume_yes,
-        available=available_selection_groups(
-            target=context.target,
-            project=context.project,
-            profile=context.profile,
-            merged=context.merged,
-            features=context.features,
-            only_feature_setup=options.only_feature_setup,
-        ),
+    paths = discover_config_paths(options.project_root, options.home)
+    stored = read_step_defaults(load_user_layers(paths))
+    available = available_selection_groups(
+        target=context.target,
+        project=context.project,
+        profile=context.profile,
+        merged=context.merged,
+        features=context.features,
+        only_feature_setup=options.only_feature_setup,
     )
+    selection = resolve_selection(
+        steps, assume_yes, available=available, configured=stored.for_target(context.target.name)
+    )
+    # Only where the picker was what chose. Before the sync, so that remembering
+    # the answer does not depend on the sync getting through.
+    if steps is None and not assume_yes and not dry_run:
+        offer_to_save_steps(
+            selection,
+            offered=sorted(available),
+            stored=stored,
+            paths=paths,
+            target=context.target.name,
+            echo=click.echo,
+        )
     use_colour = colour_enabled(os.environ, sys.stdout)
     return run_command(
         context,

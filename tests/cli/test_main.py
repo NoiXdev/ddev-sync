@@ -1013,3 +1013,56 @@ def test_ssh_refuses_a_dry_run(
     _on_a_terminal(monkeypatch)
     assert invoke(project, tmp_path, "--dry-run", "ssh") == 2
     assert execs == []
+
+
+def _with_steps(project: Path, steps: str) -> None:
+    config = project / ".ddev" / "ddev-sync.yaml"
+    config.write_text(config.read_text(encoding="utf-8") + steps, encoding="utf-8")
+
+
+def test_the_configured_steps_reach_a_sync_under_yes(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_steps(project, "steps:\n  by_target:\n    production: [db]\n")
+    assert invoke(project, tmp_path, "--yes", "--dry-run") == 0
+    output = capsys.readouterr().out
+    assert "dump" in output
+    assert "files" not in output.split("Plan", 1)[1].replace("env.file", "")
+
+
+def test_a_malformed_steps_block_is_a_message(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_steps(project, "steps:\n  default: [nope]\n")
+    assert invoke(project, tmp_path, "--yes", "--dry-run") == 1
+    assert "unknown steps: nope" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flags", [("--dry-run",), ("--steps", "db", "--dry-run")])
+def test_a_dry_run_does_not_offer_to_save(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: tuple[str, ...]
+) -> None:
+    def never(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("nothing to remember in a dry run")
+
+    monkeypatch.setattr(main_module, "offer_to_save_steps", never)
+    monkeypatch.setattr("ddev_sync.cli.commands.choose_steps", lambda _a, _p: ["db"])
+    assert invoke(project, tmp_path, *flags) == 0
+
+
+def test_a_picked_selection_is_offered_for_saving_before_the_sync(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order: list[str] = []
+    monkeypatch.setattr("ddev_sync.cli.commands.choose_steps", lambda _a, _p: ["db"])
+    monkeypatch.setattr(
+        main_module, "offer_to_save_steps", lambda *_a, **_k: order.append("offered")
+    )
+
+    def ran(*_args: object, **_kwargs: object) -> int:
+        order.append("ran")
+        return 0
+
+    monkeypatch.setattr(main_module, "run_command", ran)
+    assert invoke(project, tmp_path) == 0
+    assert order == ["offered", "ran"]

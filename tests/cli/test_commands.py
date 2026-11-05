@@ -3,12 +3,22 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ddev_sync.cli import commands
 from ddev_sync.cli.context import RunContext, build_context
 from ddev_sync.cli.main import main
+from ddev_sync.cli.prompts import (
+    SAVE_STEPS_NEVER,
+    SAVE_STEPS_NO,
+    SAVE_STEPS_PROJECT,
+    SAVE_STEPS_TARGET,
+)
 from ddev_sync.cli.reporter import ConsoleReporter
+from ddev_sync.cli.step_defaults import StepDefaults, read_step_defaults
+from ddev_sync.config.loader import ConfigPaths, discover_config_paths, load_user_layers
 from ddev_sync.config.merge import MergeResult
+from ddev_sync.config.writer import WriteRefused, write_settings
 from ddev_sync.docs import doc_link
 from ddev_sync.errors import DdevSyncError, TargetError
 from ddev_sync.operations.base import discard_progress
@@ -1118,7 +1128,7 @@ def test_the_picker_is_offered_only_the_available_names(
 ) -> None:
     offered: list[list[str]] = []
 
-    def record(available: list[str]) -> list[str]:
+    def record(available: list[str], _preselected: list[str]) -> list[str]:
         offered.append(available)
         return ["db"]
 
@@ -1138,7 +1148,7 @@ def test_ticking_nothing_in_the_picker_is_refused_rather_than_planning_nothing(
     for, on the primary interactive path. The two refusals must stay
     distinguishable, so this one must not read as "no terminal".
     """
-    monkeypatch.setattr(commands, "choose_steps", lambda _available: [])
+    monkeypatch.setattr(commands, "choose_steps", lambda _available, _preselected: [])
     with pytest.raises(DdevSyncError) as error:
         commands.resolve_selection(None, assume_yes=False, available=_AVAILABLE)
     message = str(error.value)
@@ -1150,7 +1160,7 @@ def test_ticking_nothing_in_the_picker_is_refused_rather_than_planning_nothing(
 def test_without_a_terminal_the_hint_lists_only_the_available_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(commands, "choose_steps", lambda _available: None)
+    monkeypatch.setattr(commands, "choose_steps", lambda _available, _preselected: None)
     with pytest.raises(DdevSyncError) as error:
         commands.resolve_selection(None, assume_yes=False, available=_AVAILABLE)
     assert "--steps (db,files,sanitize,setup)" in str(error.value)
@@ -1410,3 +1420,190 @@ def test_no_switch_means_no_switch_warning(project: Path, tmp_path: Path) -> Non
     for dry_run in (False, True):
         lines = _run(context, ["sanitize"], dry_run=dry_run)
         assert not [line for line in lines if "disable_sanitize" in line]
+
+
+def test_the_picker_ticks_the_built_in_default_with_nothing_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[list[str]] = []
+
+    def record(_available: list[str], preselected: list[str]) -> list[str]:
+        seen.append(preselected)
+        return ["db"]
+
+    monkeypatch.setattr(commands, "choose_steps", record)
+    commands.resolve_selection(None, assume_yes=False, available=_AVAILABLE)
+    assert seen == [["db", "files", "sanitize"]]
+
+
+def test_the_picker_ticks_what_is_configured_within_what_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[list[str]] = []
+
+    def record(_available: list[str], preselected: list[str]) -> list[str]:
+        seen.append(preselected)
+        return ["db"]
+
+    monkeypatch.setattr(commands, "choose_steps", record)
+    commands.resolve_selection(
+        None, assume_yes=False, available=_AVAILABLE, configured=["setup", "db", "s3"]
+    )
+    assert seen == [["db", "setup"]]
+
+
+def test_yes_takes_what_is_configured_instead_of_everything() -> None:
+    selected = commands.resolve_selection(
+        None, assume_yes=True, available=_AVAILABLE, configured=["db", "setup"]
+    )
+    assert selected == ["db", "setup"]
+
+
+def test_yes_with_nothing_configured_available_is_refused() -> None:
+    with pytest.raises(DdevSyncError, match="configured as the default have no work"):
+        commands.resolve_selection(None, assume_yes=True, available=_AVAILABLE, configured=["s3"])
+
+
+def test_steps_wins_over_what_is_configured() -> None:
+    selected = commands.resolve_selection(
+        "files", assume_yes=True, available=_AVAILABLE, configured=["db"]
+    )
+    assert selected == ["files"]
+
+
+def _save_paths(tmp_path: Path) -> ConfigPaths:
+    (tmp_path / ".ddev").mkdir()
+    (tmp_path / ".ddev" / "ddev-sync.yaml").write_text("version: 1\n# keep me\n", encoding="utf-8")
+    return discover_config_paths(tmp_path, tmp_path / "home")
+
+
+def _offer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str | None,
+    *,
+    chosen: tuple[str, ...] = ("db",),
+    stored: StepDefaults | None = None,
+) -> tuple[ConfigPaths, list[str], list[str]]:
+    paths = _save_paths(tmp_path)
+    asked: list[str] = []
+
+    def ask(target: str) -> str | None:
+        asked.append(target)
+        return answer
+
+    monkeypatch.setattr(commands, "choose_steps_to_save", ask)
+    said: list[str] = []
+    commands.offer_to_save_steps(
+        list(chosen),
+        offered=["db", "files", "sanitize"],
+        stored=stored or StepDefaults(),
+        paths=paths,
+        target="production",
+        echo=said.append,
+    )
+    return paths, asked, said
+
+
+def test_an_unchanged_selection_asks_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, asked, _ = _offer(tmp_path, monkeypatch, None, chosen=("sanitize", "files", "db"))
+    assert asked == []
+
+
+def test_a_selection_matching_the_configured_default_asks_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stored = StepDefaults(project=["db"])
+    _, asked, _ = _offer(tmp_path, monkeypatch, None, stored=stored)
+    assert asked == []
+
+
+def test_ask_to_save_off_asks_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, asked, _ = _offer(tmp_path, monkeypatch, None, stored=StepDefaults(ask_to_save=False))
+    assert asked == []
+
+
+@pytest.mark.parametrize("answer", [SAVE_STEPS_NO, None])
+def test_declining_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer: str | None
+) -> None:
+    paths, asked, said = _offer(tmp_path, monkeypatch, answer)
+    assert asked == ["production"]
+    assert said == []
+    assert paths.project_config.read_text(encoding="utf-8") == "version: 1\n# keep me\n"
+
+
+def test_saving_for_the_project_leaves_the_rest_of_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths, _, said = _offer(tmp_path, monkeypatch, SAVE_STEPS_PROJECT)
+    text = paths.project_config.read_text(encoding="utf-8")
+    assert "# keep me" in text
+    assert yaml.safe_load(text)["steps"] == {"default": ["db"]}
+    assert said == ["Saved as the project's default in .ddev/ddev-sync.yaml."]
+
+
+def test_saving_for_the_target_keeps_the_other_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stored = StepDefaults(in_project_file={"staging": ["files"]})
+    paths, _, said = _offer(
+        tmp_path, monkeypatch, f"{SAVE_STEPS_TARGET} (production)", stored=stored
+    )
+    loaded = yaml.safe_load(paths.project_config.read_text(encoding="utf-8"))
+    assert loaded["steps"]["by_target"] == {"staging": ["files"], "production": ["db"]}
+    assert said == ["Saved as the default for production in .ddev/ddev-sync.yaml."]
+
+
+def test_saving_for_a_target_with_a_dot_in_its_name_is_read_back(tmp_path: Path) -> None:
+    paths = _save_paths(tmp_path)
+    write_settings(
+        path=paths.project_config,
+        paths=paths,
+        settings={"steps.by_target": {"app.example": ["db"]}},
+    )
+    stored = read_step_defaults(load_user_layers(paths))
+    assert stored.for_target("app.example") == ["db"]
+
+
+def test_not_asking_again_goes_to_the_local_layer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths, _, said = _offer(tmp_path, monkeypatch, SAVE_STEPS_NEVER)
+    assert "steps" not in yaml.safe_load(paths.project_config.read_text(encoding="utf-8"))
+    assert yaml.safe_load(paths.local_config.read_text(encoding="utf-8"))["steps"] == {
+        "ask_to_save": False
+    }
+    assert read_step_defaults(load_user_layers(paths)).ask_to_save is False
+    assert said == ["Will not ask again."]
+
+
+def test_not_asking_again_uses_a_legacy_local_file_that_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".ddev").mkdir()
+    legacy = tmp_path / ".ddev" / "ddev-sync.local.yaml"
+    legacy.write_text("version: 1\n", encoding="utf-8")
+    monkeypatch.setattr(commands, "choose_steps_to_save", lambda _target: SAVE_STEPS_NEVER)
+    commands.offer_to_save_steps(
+        ["db"],
+        offered=["db", "files"],
+        stored=StepDefaults(),
+        paths=discover_config_paths(tmp_path, tmp_path / "home"),
+        target="production",
+        echo=lambda _line: None,
+    )
+    assert "ask_to_save: false" in legacy.read_text(encoding="utf-8")
+
+
+def test_a_refused_write_is_said_and_does_not_stop_the_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(**_kwargs: object) -> None:
+        raise WriteRefused("could not write")
+
+    monkeypatch.setattr(commands, "write_settings", refuse)
+    _, _, said = _offer(tmp_path, monkeypatch, SAVE_STEPS_PROJECT)
+    assert said == ["could not write"]

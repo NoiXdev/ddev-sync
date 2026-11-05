@@ -19,7 +19,7 @@ Ctrl-C.
 """
 
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 import questionary
 
@@ -33,6 +33,11 @@ ENV_FILE_NONE = "None of these - I will create the file myself"
 REMOTE_ENV_NONE = "None of these - I will fix it another way"
 EXPLICIT_SOURCE = "Enter the database credentials by hand"
 WP_CLI_SOURCE = "Read them from WordPress on the target (wp-cli)"
+
+SAVE_STEPS_NO = "No, just this once"
+SAVE_STEPS_TARGET = "For this target"
+SAVE_STEPS_PROJECT = "For the whole project"
+SAVE_STEPS_NEVER = "No, and do not ask again"
 
 # What questionary accepts: True to take the answer, or the sentence to show
 # before asking again.
@@ -116,10 +121,20 @@ def choose_target(names: list[str], descriptions: dict[str, str]) -> str | None:
     return None if chosen is None else labels[chosen]
 
 
-def choose_steps(available: list[str]) -> list[str] | None:
+def choose_steps(
+    available: list[str], preselected: Collection[str] = DEFAULT_STEPS
+) -> list[str] | None:
     """Pick which step groups to run."""
-    defaults = [name for name in available if name in DEFAULT_STEPS]
+    defaults = [name for name in available if name in preselected]
     return _checkbox("What do you want to sync?", available, defaults)
+
+
+def choose_steps_to_save(target: str) -> str | None:
+    """Ask whether a changed selection becomes the new default, and for what."""
+    return _select(
+        "Save this selection as the new default?",
+        [SAVE_STEPS_NO, f"{SAVE_STEPS_TARGET} ({target})", SAVE_STEPS_PROJECT, SAVE_STEPS_NEVER],
+    )
 
 
 def confirm_detection(profile: str, source: str) -> bool | None:

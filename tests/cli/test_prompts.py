@@ -679,3 +679,32 @@ def test_ask_credentials_stops_at_the_first_missing_terminal(
     )
     assert prompts.ask_credentials() is None
     assert [question for question, _default in asked] == ["Database name?", "Database user?"]
+
+
+def test_choose_steps_ticks_what_it_is_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+
+    def fake_checkbox(_question: str, _choices: list[str], defaults: list[str]) -> list[str]:
+        seen.append(defaults)
+        return defaults
+
+    monkeypatch.setattr(prompts, "_checkbox", fake_checkbox)
+    prompts.choose_steps(["db", "files", "setup"], ["setup"])
+    assert seen == [["setup"]]
+
+
+def test_the_save_question_names_the_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+
+    def fake_select(_question: str, choices: list[str]) -> str:
+        seen.append(choices)
+        return choices[0]
+
+    monkeypatch.setattr(prompts, "_select", fake_select)
+    assert prompts.choose_steps_to_save("production") == prompts.SAVE_STEPS_NO
+    assert seen[0] == [
+        prompts.SAVE_STEPS_NO,
+        f"{prompts.SAVE_STEPS_TARGET} (production)",
+        prompts.SAVE_STEPS_PROJECT,
+        prompts.SAVE_STEPS_NEVER,
+    ]

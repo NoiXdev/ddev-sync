@@ -65,6 +65,13 @@ version: 1
 # and its table prefix both come from WP-CLI, which needs a PHP the endpoint
 # deliberately does not carry - the refusal says so rather than failing later.
 
+# Which steps `ddev sync` ticks, here for a project with no files but a setup.
+# Change the ticks in a run and it offers to save them here.
+# steps:
+#   default: [db, setup]
+#   by_target:
+#     production: [db]
+
 # Where the remote's database credentials come from:
 #   env      - read from a .env on the remote (the default)
 #   explicit - from `database.credentials` below; they are secrets, so put

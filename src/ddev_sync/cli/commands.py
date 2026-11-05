@@ -7,18 +7,34 @@ where that is more convenient.
 """
 
 import contextlib
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
+from typing import Any
 
 from ddev_sync.cli.context import RunContext
-from ddev_sync.cli.prompts import choose_steps, choose_target
+from ddev_sync.cli.prompts import (
+    DEFAULT_STEPS,
+    SAVE_STEPS_NEVER,
+    SAVE_STEPS_PROJECT,
+    SAVE_STEPS_TARGET,
+    choose_steps,
+    choose_steps_to_save,
+    choose_target,
+)
 from ddev_sync.cli.render import describe_endpoint, render_doctor, render_plan, render_targets
 from ddev_sync.cli.reporter import ConsoleReporter
+from ddev_sync.cli.step_defaults import StepDefaults
 from ddev_sync.cli.verbose import VerboseRunner
-from ddev_sync.config.loader import discover_config_paths, load_user_layers
+from ddev_sync.config.loader import (
+    PROJECT_LABEL,
+    ConfigPaths,
+    discover_config_paths,
+    load_user_layers,
+)
 from ddev_sync.config.merge import MergeResult
 from ddev_sync.config.models import Provider, ResolvedTarget
 from ddev_sync.config.targets import collect_targets, list_target_names
+from ddev_sync.config.writer import WriteRefused, write_settings
 from ddev_sync.engine.executor import Executor
 from ddev_sync.engine.plan import build_plan
 from ddev_sync.engine.steps import steps_for_selection
@@ -239,7 +255,11 @@ def _warn_sanitize_switches(
 
 
 def resolve_selection(
-    steps: str | None, assume_yes: bool, *, available: frozenset[str]
+    steps: str | None,
+    assume_yes: bool,
+    *,
+    available: frozenset[str],
+    configured: Sequence[str] | None = None,
 ) -> list[str]:
     """Turn `--steps` into a selection, asking when it is absent.
 
@@ -253,6 +273,10 @@ def resolve_selection(
     `composer install` and framework commands that can take minutes, and
     someone who just wants fresh data should not wait for a frontend build
     they did not ask for.
+
+    `configured` is what `steps:` says this target starts from. The picker ticks
+    it, and `--yes` takes it instead of everything: a project that said it has no
+    files should not pull them because a script asked not to be asked.
     """
     offered = sorted(available)
     # Spelled out so an empty list reads "Available: none." and not "Available: .".
@@ -276,14 +300,22 @@ def resolve_selection(
             )
         return names
     if assume_yes:
-        return offered
-    chosen = choose_steps(offered)
-    if chosen is None:
+        if configured is None:
+            return offered
+        chosen = preselected_steps(offered, configured)
+        if not chosen:
+            raise DdevSyncError(
+                f"the steps configured as the default have no work in this project. "
+                f"Available: {offered_text}. Pass --steps, or change steps: in the config."
+            )
+        return chosen
+    picked = choose_steps(offered, preselected_steps(offered, configured))
+    if picked is None:
         raise DdevSyncError(
             "no steps selected. Without a terminal there is nothing to ask, so pass "
             f"--steps ({','.join(offered)}) or --yes for all of them."
         )
-    if not chosen:
+    if not picked:
         # `None` and `[]` are two different answers and must not share a
         # sentence: `None` is "there was no terminal to ask", while `[]` is
         # Enter pressed at the picker with nothing ticked. questionary's
@@ -295,7 +327,60 @@ def resolve_selection(
             f"no step was ticked, so there is nothing to sync. Available: {offered_text}. "
             "Tick at least one, or pass --yes for all of them."
         )
-    return chosen
+    return picked
+
+
+def preselected_steps(offered: Sequence[str], configured: Collection[str] | None) -> list[str]:
+    """What the picker ticks: `configured`, or the built-in default, within `offered`."""
+    ticked = DEFAULT_STEPS if configured is None else configured
+    return [name for name in offered if name in ticked]
+
+
+def offer_to_save_steps(
+    chosen: Sequence[str],
+    *,
+    offered: Sequence[str],
+    stored: StepDefaults,
+    paths: ConfigPaths,
+    target: str,
+    echo: Callable[[str], None],
+) -> None:
+    """After the picker changed something, ask whether that is the new default.
+
+    A write that is refused is said and otherwise ignored: the selection stands,
+    and a sync should not stop over remembering it. The whole `by_target` block
+    is written because a target's name may hold a dot, which the writer's dotted
+    keys would read as a level. "Do not ask again" goes to the local layer, as it
+    says something about this developer and not the project.
+    """
+    selected = list(chosen)
+    if not stored.ask_to_save or set(selected) == set(
+        preselected_steps(offered, stored.for_target(target))
+    ):
+        return
+    answer = choose_steps_to_save(target)
+    settings: dict[str, Any]
+    if answer == SAVE_STEPS_NEVER:
+        legacy = paths.legacy_local_config
+        file = legacy if legacy.is_file() else paths.local_config
+        settings = {"steps.ask_to_save": False}
+        said = "Will not ask again"
+    elif answer == SAVE_STEPS_PROJECT:
+        file = paths.project_config
+        settings = {"steps.default": selected}
+        said = f"Saved as the project's default in {PROJECT_LABEL}"
+    elif answer is not None and answer.startswith(SAVE_STEPS_TARGET):
+        file = paths.project_config
+        settings = {"steps.by_target": {**stored.in_project_file, target: selected}}
+        said = f"Saved as the default for {target} in {PROJECT_LABEL}"
+    else:
+        return
+    try:
+        write_settings(path=file, paths=paths, settings=settings)
+    except WriteRefused as refusal:
+        echo(str(refusal))
+        return
+    echo(f"{said}.")
 
 
 def resolve_target_name(explicit: str | None, project_root: Path, home: Path) -> str:
