@@ -1,3 +1,17 @@
+## [0.1.0-rc.7](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.6...v0.1.0-rc.7) (2026-11-05)
+
+
+### Features
+
+* **cli:** configure which steps the picker ticks and offer to save changes ([8a628df](https://github.com/NoiXdev/ddev-sync/commit/8a628df36aea94b81fa1f138edfd22a0bc4e58d9))
+* **cli:** open a shell on a target's host with ddev sync ssh ([92fd2e6](https://github.com/NoiXdev/ddev-sync/commit/92fd2e6f0474d5a1c6dbad2e654b9a0f1302c8a4))
+* **env:** pull profile defaults, extend them, or pull everything ([e2fce28](https://github.com/NoiXdev/ddev-sync/commit/e2fce2853d74c1732d835364c5b245f54c315be6))
+
+
+### Bug Fixes
+
+* **image:** pin the rclone Alpine now carries ([fe953b0](https://github.com/NoiXdev/ddev-sync/commit/fe953b0b1fe7c77e2f1f2daeffee1bf73bd6bdbc))
+
 ## [0.1.0-rc.6](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.5...v0.1.0-rc.6) (2026-11-05)
 
 

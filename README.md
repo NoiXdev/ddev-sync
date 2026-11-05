@@ -18,7 +18,7 @@ afterwards, all with one command.
 
 ```bash
 cd /your/project
-ddev add-on get NoiXdev/ddev-sync --version v0.1.0-rc.6
+ddev add-on get NoiXdev/ddev-sync --version v0.1.0-rc.7
 ddev auth ssh && ddev restart
 ddev sync init
 ```
