@@ -1091,6 +1091,76 @@ def test_an_empty_env_local_is_written_rather_than_the_tracked_env(tmp_path: Pat
     assert tracked.read_text(encoding="utf-8") == "APP_ENV=dev\n"
 
 
+def test_a_listed_first_candidate_is_created_rather_than_the_tracked_env_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fresh Symfony or Shopware checkout: only the committed `.env` is there.
+    tracked = write_env(tmp_path, "APP_ENV=prod\nKEPT=mine\n")
+    write_env(tmp_path, "FROM_EXAMPLE=1\n", ".env.example")
+    diffs = seen_diffs(monkeypatch)
+    context = pull_context(
+        tmp_path,
+        "A=secret\n",
+        assume_yes=False,
+        pull=["A"],
+        file=[".env.local", ".env"],
+        set={"APP_ENV": "dev"},
+        default={"KEPT": "theirs", "ABSENT": "written"},
+    )
+    EnvRewriteOperation().execute(context, {})
+    # The overlay carries the rest, so neither the tracked file nor the example is copied.
+    assert (tmp_path / ".env.local").read_text(encoding="utf-8") == (
+        "A=secret\nAPP_ENV=dev\nABSENT=written\n"
+    )
+    assert (tmp_path / ".env.local").stat().st_mode & 0o777 == 0o600
+    assert tracked.read_text(encoding="utf-8") == "APP_ENV=prod\nKEPT=mine\n"
+    assert "+A=***" in diffs[0]
+    assert "secret" not in diffs[0]
+
+
+def test_declining_the_first_candidate_leaves_the_tracked_env_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracked = write_env(tmp_path, "APP_ENV=prod\n")
+    seen_diffs(monkeypatch, answer=False)
+    context = pull_context(
+        tmp_path, "A=1\n", assume_yes=False, pull=["A"], file=[".env.local", ".env"]
+    )
+    with pytest.raises(OperationError, match="cancelled"):
+        EnvRewriteOperation().execute(context, {})
+    assert not (tmp_path / ".env.local").exists()
+    assert tracked.read_text(encoding="utf-8") == "APP_ENV=prod\n"
+
+
+def test_a_second_run_writes_the_created_first_candidate_and_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_env(tmp_path, "APP_ENV=prod\n")
+    files = [".env.local", ".env"]
+    EnvRewriteOperation().execute(pull_context(tmp_path, "A=1\n", pull=["A"], file=files), {})
+    diffs = seen_diffs(monkeypatch)
+    context = pull_context(tmp_path, "A=1\n", assume_yes=False, pull=["A"], file=files)
+    EnvRewriteOperation().execute(context, {})
+    assert diffs == []
+    assert (tmp_path / ".env.local").read_text(encoding="utf-8") == "A=1\n"
+
+
+def test_without_a_listed_env_file_the_existing_env_is_written(tmp_path: Path) -> None:
+    # The default list is no statement about the loader, which may read `.env` alone.
+    env = write_env(tmp_path, "MINE=1\n")
+    EnvRewriteOperation().execute(pull_context(tmp_path, "A=1\n", pull=["A"]), {})
+    assert env.read_text(encoding="utf-8") == "MINE=1\nA=1\n"
+    assert not (tmp_path / ".env.local").exists()
+
+
+def test_a_project_without_env_pull_still_writes_the_later_candidate(tmp_path: Path) -> None:
+    env = write_env(tmp_path, "MINE=1\n")
+    context = pull_context(tmp_path, "", file=[".env.local", ".env"], set={"APP_ENV": "dev"})
+    EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == "MINE=1\nAPP_ENV=dev\n"
+    assert not (tmp_path / ".env.local").exists()
+
+
 def test_an_existing_file_is_used_rather_than_the_example(tmp_path: Path) -> None:
     write_env(tmp_path, "FROM_EXAMPLE=1\n", ".env.example")
     env = write_env(tmp_path, "MINE=1\n")

@@ -299,8 +299,8 @@ class EnvRewriteOperation:
             path = self._find_env_file(context, settings)
             original = start = path.read_text(encoding="utf-8")
         else:
-            # Empty, not the example: the diff shows the file as new, and it is
-            # what is compared, so a file to create is always a change.
+            # Compared against nothing, whatever it starts from: the diff shows the
+            # file as new, and a file to create is always a change.
             path, start = to_create
             original = ""
         values = expand_placeholders(
@@ -377,23 +377,38 @@ class EnvRewriteOperation:
     def _file_to_create(
         cls, context: ExecutionContext, settings: dict[str, Any]
     ) -> tuple[Path, str] | None:
-        """Where a missing env file goes and the example's text it starts from.
+        """Where a missing env file goes and the text it starts from.
 
-        `None` when a candidate exists, or when there is no example, which
-        preflight has refused by now and `_find_env_file` would refuse too. The
-        first candidate always exists and is a plain name: the planner refuses an
-        empty `env.file`, and one with a slash, beside `env.pull`.
+        Two cases. No candidate exists: the first one starts from the example, or
+        there is nothing to create when there is no example, which preflight has
+        refused by now and `_find_env_file` would refuse too. Only a later candidate
+        exists, in a list the configuration names: the first one starts empty. Such
+        a list overlays by the profiles' convention, `.env.local` over a `.env` that
+        is committed, and writing production values into the later file would put
+        them in version control. The default list says nothing about the loader,
+        which may read `.env` alone, so a file created beside it might go unread:
+        without a named list the existing file is written, as ever.
+
+        The first candidate always exists and is a plain name: the planner refuses
+        an empty `env.file`, and one with a slash, beside `env.pull`.
 
         `context.local` is only the escape check here. It follows a symlink, and
         the path to create must not, or a dangling link's target gets created.
         """
         candidates, existing = cls._candidates_and_existing(context, settings)
-        if EXAMPLE_FILE not in existing or any(str(name) in existing for name in candidates):
-            return None
         first = str(candidates[0])
+        if first in existing:
+            return None
+        if any(str(name) in existing for name in candidates):
+            if "file" not in settings:
+                return None
+            start = ""
+        elif EXAMPLE_FILE not in existing:
+            return None
+        else:
+            start = context.local(EXAMPLE_FILE).read_text(encoding="utf-8")
         context.local(first)
-        example = context.local(EXAMPLE_FILE).read_text(encoding="utf-8")
-        return context.project.root / first, example
+        return context.project.root / first, start
 
     @classmethod
     def _find_env_file(cls, context: ExecutionContext, settings: dict[str, Any]) -> Path:

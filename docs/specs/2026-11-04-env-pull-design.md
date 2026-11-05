@@ -126,7 +126,12 @@ one more value.
     candidate, in the `env` step, after confirmation. The diff shows it as new.
     Its keys count as declared, so `env.default` behaves as for any existing file.
     It is created with mode 0600, because it holds production values; an existing
-    file keeps its mode.
+    file keeps its mode. When the first candidate of a list named in `env.file` is
+    missing and a later one exists, the first is created empty, the same way, and
+    the later one is left alone: `.env.local` overlays a `.env` that Symfony and
+    Shopware commit, and production values must not land in version control. The
+    default list names no loader, so without a named list the existing file is
+    written.
 16. **Masking.** In the printed diff, a pulled name's whole assignment shows as one
     `NAME=***` line, however many lines a quoted value spans: `-` and `+` when its
     value changed, and a context line when it did not. So the diff is computed over
