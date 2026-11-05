@@ -43,7 +43,7 @@ RUN apk add --no-cache \
       openssh-client-default=10.3_p1-r1 \
       rsync=3.5.0-r0 \
       mariadb-client=11.8.9-r0 \
-      rclone=1.74.1-r3 \
+      rclone=1.75.2-r0 \
       docker-cli=29.9.2-r0
 
 COPY --from=builder /dist/*.whl /tmp/
