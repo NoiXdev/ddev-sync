@@ -47,7 +47,9 @@ one more value.
 ## Anti-goals
 
 - A local application that reaches production because a value came along
-  unasked. This is why there is a list and no "pull everything" mode: S3 keys,
+  unasked. *(`docs/specs/2026-11-05-env-pull-all-design.md` adds a "pull
+  everything" mode that a project has to switch on, at the owner's request.)*
+  This is why there is a list and no "pull everything" mode: S3 keys,
   payment keys and relays would otherwise point a laptop at the real services.
 - A profile safeguard that a pull can undo. `DB_HOST` must not be able to point
   at production because someone listed it.

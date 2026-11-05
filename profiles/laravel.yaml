@@ -12,6 +12,9 @@ detect:
 env:
   file: [.env]
   strategy: patch_keys
+  # Encrypted columns and sessions in a synced database can only be read with
+  # the key they were written with.
+  pull_defaults: [APP_KEY]
   # Imposed on every sync: the sync's own work makes the project's value here
   # wrong or dangerous (it imports a database locally, sets up the local site,
   # puts real addresses on a machine that can send mail, and runs commands

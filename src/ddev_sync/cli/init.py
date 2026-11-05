@@ -68,7 +68,11 @@ from ddev_sync.cli.render import describe_endpoint
 from ddev_sync.cli.waiting import Wait, not_shown
 from ddev_sync.composer import requires
 from ddev_sync.config.detect import WORDPRESS_PROFILE
-from ddev_sync.config.env_pull import pull_names, refuse_an_unusable_strategy, refuse_unusable_files
+from ddev_sync.config.env_pull import (
+    pulls_anything,
+    refuse_an_unusable_strategy,
+    refuse_unusable_files,
+)
 from ddev_sync.config.loader import (
     GLOBAL_LABEL,
     LEGACY_LOCAL_LABEL,
@@ -346,7 +350,7 @@ def _ask_project_settings(
             # `env.pull` is checked in preflight, which the others have no need of.
             stops = (
                 "in preflight, before anything has moved"
-                if pull_names(resolution.merged.data)
+                if pulls_anything(resolution.merged.data)
                 else "at the env step, after the database has been imported"
             )
             echo(
@@ -417,15 +421,15 @@ def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:
     node = resolution.merged.data.get("env", {})
     settings = node if isinstance(node, dict) else {}
     strategy = str(settings.get("strategy", "patch_keys"))
-    names = pull_names(resolution.merged.data)
-    refuse_an_unusable_strategy(names, strategy)
+    pulling = pulls_anything(resolution.merged.data)
+    refuse_an_unusable_strategy(pulling, strategy)
     if strategy == "none":
         return None
     raw_values = settings.get("set", {})
     raw_default = settings.get("default", {})
     imposed = raw_values if isinstance(raw_values, dict) else {}
     defaulted = raw_default if isinstance(raw_default, dict) else {}
-    if not imposed and not defaulted and not names:
+    if not imposed and not defaulted and not pulling:
         return None
     if defaulted and strategy == "append_block":
         raise ConfigError("env.default cannot be used with strategy 'append_block'")
@@ -437,9 +441,9 @@ def _missing_env_file(resolution: ProjectResolution) -> list[str] | None:
     candidates = (
         [configured] if isinstance(configured, str) else [str(entry) for entry in configured]
     )
-    refuse_unusable_files(names, candidates)
+    refuse_unusable_files(pulling, candidates)
     existing = {entry.name for entry in resolution.project.root.iterdir() if entry.is_file()}
-    if any(name in existing for name in candidates) or (names and EXAMPLE_FILE in existing):
+    if any(name in existing for name in candidates) or (pulling and EXAMPLE_FILE in existing):
         return None
     return candidates
 

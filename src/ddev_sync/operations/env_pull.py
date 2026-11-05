@@ -12,10 +12,16 @@ password.
 """
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass, field
 
-from ddev_sync.config.env_pull import names_to_read, pull_names
+from ddev_sync.config.env_pull import (
+    may_pull_all,
+    names_to_read,
+    optional_names,
+    pull_all,
+    pulls_anything,
+)
 from ddev_sync.config.models import Provider
 from ddev_sync.operations.base import ExecutionContext, OperationError
 from ddev_sync.operations.database import (
@@ -26,6 +32,8 @@ from ddev_sync.operations.database import (
 )
 
 EXAMPLE_FILE = ".env.example"
+
+_NO_REMOTE_FILE = "no-environment-file-on-the-remote"
 
 _BARE_VALUE = re.compile(r"[A-Za-z0-9_./:@+=,-]*")
 
@@ -54,7 +62,9 @@ class RemoteValues:
     """What the remote has for the names asked about.
 
     `text` holds each right-hand side ready for the local file, and only for the
-    names asked about. Every list keeps the order the names were asked in.
+    names asked about. Every list keeps the order the names were asked in. An
+    optional name the remote cannot give is in `skipped` and in neither list that
+    refuses a run.
     """
 
     path: str
@@ -62,6 +72,7 @@ class RemoteValues:
     missing: list[str]
     multi_line: list[str]
     references: list[str]
+    skipped: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -182,28 +193,64 @@ def _refers_to_a_variable(raw: str) -> bool:
     return "$" in value
 
 
-def read_remote_values(context: ExecutionContext, names: Sequence[str]) -> RemoteValues:
+def read_remote_values(
+    context: ExecutionContext, names: Sequence[str], optional: Collection[str] = ()
+) -> RemoteValues:
     """Look `names` up in the file the credentials come from, in one round trip.
 
     The sources are not merged: a mounted `.env` hides the handover entirely, so
     a name it lacks is missing even when the endpoint would hand it over.
     """
-    path, contents = fetch_remote_env_file(context)
-    if path == HANDOVER_PATH:
-        parsed = parse_handover(contents, path)
-        text = {name: encode_for_env_file(value) for name, value in parsed.items()}
-        multi_line = set(parsed.get(HANDOVER_SKIPPED, "").split(","))
-        references: set[str] = set()
-    else:
-        text, multi_line = raw_assignments(contents)
-        references = {name for name, raw in text.items() if _refers_to_a_variable(raw)}
+    path, text, multi_line, references = _read_remote_file(context)
+    required = [name for name in names if name not in optional]
     return RemoteValues(
         path=path,
         text={name: text[name] for name in names if name in text},
-        missing=[name for name in names if name not in text and name not in multi_line],
-        multi_line=[name for name in names if name in multi_line],
+        missing=[name for name in required if name not in text and name not in multi_line],
+        multi_line=[name for name in required if name in multi_line],
         references=[name for name in names if name in references],
+        skipped=[name for name in names if name in optional and name not in text],
     )
+
+
+def read_pulled_values(context: ExecutionContext) -> RemoteValues | None:
+    """What this run pulls, or None when there is nothing to read or nowhere to read it.
+
+    A remote without an environment file only answers None when all the run asks
+    for is optional: credentials set by hand need no such file, and a profile's
+    default must not start to.
+    """
+    data = context.merged.data
+    names = names_to_read(data)
+    optional = optional_names(data)
+    everything = pull_all(data)
+    if not names and not everything:
+        return None
+    try:
+        _, text, multi_line, _ = _read_remote_file(context)
+    except OperationError as error:
+        if everything or error.doc != _NO_REMOTE_FILE or not set(names) <= optional:
+            raise
+        context.notice(f"no environment file on the remote, so not pulled: {', '.join(names)}")
+        return None
+    if everything:
+        found = [name for name in [*text, *sorted(multi_line)] if may_pull_all(name, data)]
+        extra = [name for name in found if name not in names]
+        names = [*names, *extra]
+        optional = optional | set(extra)
+    return read_remote_values(context, names, optional)
+
+
+def _read_remote_file(context: ExecutionContext) -> tuple[str, dict[str, str], set[str], set[str]]:
+    """The file's path, its values ready to write, and its multi-line and referring names."""
+    path, contents = fetch_remote_env_file(context)
+    if path == HANDOVER_PATH:
+        parsed = parse_handover(contents, path)
+        skipped = parsed.pop(HANDOVER_SKIPPED, "")
+        text = {name: encode_for_env_file(value) for name, value in parsed.items()}
+        return path, text, set(filter(None, skipped.split(","))), set()
+    text, multi_line = raw_assignments(contents)
+    return path, text, multi_line, {n for n, raw in text.items() if _refers_to_a_variable(raw)}
 
 
 def check_pull(context: ExecutionContext) -> None:
@@ -214,15 +261,15 @@ def check_pull(context: ExecutionContext) -> None:
     problem's slug is the link: one error carries one link. Only names go into
     the message, never a value.
     """
-    if not pull_names(context.merged.data):
+    if not pulls_anything(context.merged.data):
         return
     problems: list[tuple[str, str]] = []
     # A name `env.set` keeps is not read: a value that would never be used cannot
     # refuse the run. It still lets the step create a file, so the local check stays.
-    names = names_to_read(context.merged.data)
-    if names:
+    if names_to_read(context.merged.data) or pull_all(context.merged.data):
         context.progress("reading the values env.pull names")
-        values = read_remote_values(context, names)
+    values = read_pulled_values(context)
+    if values is not None:
         if values.missing:
             problems.append((_missing_problem(context, values), "env-pull-variable-missing"))
         if values.multi_line:

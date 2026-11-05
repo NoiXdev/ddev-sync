@@ -1407,10 +1407,13 @@ def test_init_does_not_ask_when_the_strategy_is_none(
 
 def test_init_offers_the_env_files_that_are_there(
     project: Path,
+    project_file: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _laravel(project)
+    # With the profile's default pull, the example would be copied instead.
+    project_file.write_text("version: 1\nenv:\n  pull: []\n", encoding="utf-8")
     (project / ".env.example").write_text("APP_ENV=\n", encoding="utf-8")
     seen: dict[str, list[str]] = {}
 
@@ -1439,7 +1442,7 @@ def test_init_writes_nothing_when_no_env_file_is_chosen(
     report_green(monkeypatch)
     invoke(project, tmp_path)
     assert "env" not in yaml.safe_load(project_file.read_text(encoding="utf-8"))
-    assert "after the database has been imported" in capsys.readouterr().out
+    assert "in preflight, before anything has moved" in capsys.readouterr().out
 
 
 def test_a_directory_named_env_is_not_a_file(

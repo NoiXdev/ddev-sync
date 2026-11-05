@@ -1243,3 +1243,32 @@ def test_with_env_pull_and_no_example_the_existing_refusal_still_stands(tmp_path
     with pytest.raises(OperationError) as caught:
         EnvRewriteOperation().execute(context, {})
     assert (doc_link(caught.value) or "").endswith("#no-environment-file-in-the-project")
+
+
+def test_pull_all_writes_every_value_and_keeps_the_local_ones(tmp_path: Path) -> None:
+    env = write_env(tmp_path, "KEPT=old\nDATABASE_HOST=local\n")
+    runner = FakeCommandRunner()
+    runner.script_prefix(
+        ["ssh"], stdout="/srv/app/.env\nSTRIPE=s3cret\nKEPT=remote\nDATABASE_HOST=prod\n"
+    )
+    context = dataclasses.replace(
+        pull_context(tmp_path, "", set={"KEPT": "local"}, pull_all=True), runner=runner
+    )
+    EnvRewriteOperation().execute(context, {})
+    written = env.read_text(encoding="utf-8")
+    assert "STRIPE=s3cret" in written
+    assert "KEPT=local" in written
+    assert "DATABASE_HOST=local" in written
+
+
+def test_an_optional_name_the_remote_lacks_is_named_and_not_written(tmp_path: Path) -> None:
+    env = write_env(tmp_path, "APP_KEY=local\n")
+    seen: list[str] = []
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], stdout="/srv/app/.env\nOTHER=1\n")
+    context = dataclasses.replace(
+        pull_context(tmp_path, "", pull_defaults=["APP_KEY"]), runner=runner, notice=seen.append
+    )
+    EnvRewriteOperation().execute(context, {})
+    assert env.read_text(encoding="utf-8") == "APP_KEY=local\n"
+    assert seen == ["not set on the remote or holding a line break, so not pulled: APP_KEY"]

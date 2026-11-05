@@ -11,7 +11,10 @@ from typing import Any
 
 from ddev_sync.config.env_pull import (
     names_to_read,
+    optional_names,
+    pull_all,
     pull_names,
+    pulls_anything,
     refuse_an_unusable_strategy,
     refuse_unusable_files,
 )
@@ -440,7 +443,9 @@ class _Builder:
         # First, so a malformed list is refused whatever the strategy, in the
         # dry-run and before preflight reads the names.
         names = pull_names(self._data)
-        refuse_an_unusable_strategy(names, strategy)
+        pulling = pulls_anything(self._data)
+        everything = pull_all(self._data)
+        refuse_an_unusable_strategy(pulling, strategy)
         if strategy == "none":
             return []
         raw_values = settings.get("set", {})
@@ -460,7 +465,7 @@ class _Builder:
         # A non-mapping `set` is still no block, and the operation reads it so.
         imposed = raw_values if isinstance(raw_values, dict) else {}
         defaulted = raw_default or {}
-        if not imposed and not defaulted and not names:
+        if not imposed and not defaulted and not pulling:
             return []
         if defaulted and strategy == "append_block":
             # `append_block` writes a block rather than reconciling keys, so
@@ -481,7 +486,7 @@ class _Builder:
                 f"env.file must be a file name or a list of file names, got {configured!r}"
             )
         candidates = [configured] if isinstance(configured, str) else [str(c) for c in configured]
-        refuse_unusable_files(names, candidates)
+        refuse_unusable_files(pulling, candidates)
         # An imposed empty string blanks the key rather than setting it, which a
         # bare name in the list reads as the opposite of (`DB_URL` is emptied so
         # that it cannot override the discrete `DB_*` keys). A key whose value
@@ -500,12 +505,18 @@ class _Builder:
             {str(key) for key in defaulted} - {str(key) for key in imposed} - set(names)
         )
         pulled = names_to_read(self._data)
-        kept_by_set = [name for name in names if name not in pulled]
+        optional = optional_names(self._data)
+        kept_by_set = [name for name in names if name not in pulled and name not in optional]
         if kept_by_set:
             # On the plan, so it is read in a dry run and in a log alike.
             self.notices.append(
                 f"env.set keeps its own value for {', '.join(kept_by_set)}, "
                 "so env.pull does not bring them"
+            )
+        if everything:
+            self.notices.append(
+                "env.pull_all copies every value the remote has into the local file, production "
+                "secrets included, except the database's and what env.set keeps"
             )
         # Built piece by piece, so a profile with no emptied keys, no defaults
         # and nothing pulled renders exactly the string it always has and the
@@ -515,12 +526,14 @@ class _Builder:
             groups.append(f"emptied: {', '.join(emptied)}")
         if written_if_absent:
             groups.append(f"if absent: {', '.join(written_if_absent)}")
-        if pulled:
-            groups.append(f"pulls: {', '.join(pulled)}")
+        if pulled or everything:
+            groups.append(f"pulls: {', '.join(['everything'] if everything else pulled)}")
         counts = f"{len(imposed)} key(s)"
         if written_if_absent:
             counts += f" + {len(written_if_absent)} if absent"
-        if pulled:
+        if everything:
+            counts += " + all pulled"
+        elif pulled:
             counts += f" + {len(pulled)} pulled"
         detail = f"{strategy}: {counts} -> {', '.join(candidates)} ({'; '.join(groups)})"
         return [

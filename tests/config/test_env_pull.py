@@ -4,7 +4,14 @@ from typing import Any
 
 import pytest
 
-from ddev_sync.config.env_pull import names_to_read, pull_names
+from ddev_sync.config.env_pull import (
+    may_pull_all,
+    names_to_read,
+    optional_names,
+    pull_all,
+    pull_names,
+    pulls_anything,
+)
 from ddev_sync.errors import ConfigError
 
 
@@ -131,3 +138,111 @@ def test_an_env_map_that_is_no_mapping_leaves_the_default_names() -> None:
 def test_the_refusal_says_why_the_database_names_cannot_come_along() -> None:
     with pytest.raises(ConfigError, match="production"):
         pull_names(_data(["DB_URL"]))
+
+
+def _env(**env: Any) -> dict[str, Any]:
+    return {"env": env}
+
+
+def test_the_profile_defaults_apply_when_the_project_lists_nothing() -> None:
+    data = _env(pull_defaults=["APP_KEY"])
+    assert pull_names(data) == ["APP_KEY"]
+    assert optional_names(data) == {"APP_KEY"}
+
+
+def test_a_list_of_the_projects_own_replaces_the_defaults() -> None:
+    data = _env(pull_defaults=["APP_KEY"], pull=["OTHER"])
+    assert pull_names(data) == ["OTHER"]
+    assert optional_names(data) == set()
+
+
+def test_an_empty_list_takes_the_defaults_away() -> None:
+    assert pull_names(_env(pull_defaults=["APP_KEY"], pull=[])) == []
+
+
+def test_extend_adds_the_projects_list_to_the_defaults() -> None:
+    data = _env(pull_defaults=["APP_KEY"], pull=["OTHER"], extend=True)
+    assert pull_names(data) == ["APP_KEY", "OTHER"]
+    assert optional_names(data) == {"APP_KEY"}
+
+
+def test_a_default_the_project_lists_too_is_required() -> None:
+    data = _env(pull_defaults=["APP_KEY"], pull=["APP_KEY"], extend=True)
+    assert pull_names(data) == ["APP_KEY"]
+    assert optional_names(data) == set()
+
+
+def test_optional_names_of_a_non_mapping_env_is_nothing() -> None:
+    assert optional_names({"env": "nonsense"}) == set()
+
+
+def test_extend_with_a_malformed_list_entry_is_still_refused() -> None:
+    with pytest.raises(ConfigError, match="entry 2 is not one"):
+        pull_names(_env(pull_defaults=["APP_KEY"], pull=[1], extend=True))
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"strategy": "append_block"},
+        {"strategy": "none"},
+        {"file": []},
+        {"file": ["config/.env"]},
+        {"file": None},
+    ],
+)
+def test_defaults_are_dropped_where_the_env_settings_cannot_take_them(
+    settings: dict[str, Any],
+) -> None:
+    assert pull_names(_env(pull_defaults=["APP_KEY"], **settings)) == []
+
+
+def test_defaults_work_with_one_file_named_as_a_string() -> None:
+    assert pull_names(_env(pull_defaults=["APP_KEY"], file=".env")) == ["APP_KEY"]
+
+
+def test_malformed_defaults_are_refused() -> None:
+    with pytest.raises(ConfigError, match=r"env\.pull_defaults must be a list"):
+        pull_names(_env(pull_defaults="APP_KEY"))
+
+
+def test_the_word_all_in_env_pull_points_at_pull_all() -> None:
+    with pytest.raises(ConfigError, match=r"set env\.pull_all: true"):
+        pull_names(_env(pull="all"))
+
+
+@pytest.mark.parametrize("flag", ["extend", "pull_all"])
+def test_a_flag_that_is_no_boolean_is_refused(flag: str) -> None:
+    data = _env(pull=[], **{flag: "yes"})
+    with pytest.raises(ConfigError, match=f"env.{flag} must be true or false"):
+        pull_names(data) if flag == "extend" else pull_all(data)
+
+
+def test_pull_all_is_off_by_default() -> None:
+    assert pull_all({}) is False
+    assert pull_all(_env()) is False
+    assert pull_all(_env(pull_all=None)) is False
+    assert pulls_anything(_env()) is False
+
+
+def test_pull_all_alone_pulls_something() -> None:
+    assert pull_all(_env(pull_all=True)) is True
+    assert pulls_anything(_env(pull_all=True)) is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["DDEV_SYNC_SKIPPED", "PATH", "HOSTNAME", "DATABASE_HOST", "DB_URL", "KEPT", "not-a-name"],
+)
+def test_pull_all_leaves_out_what_must_stay_local(name: str) -> None:
+    assert may_pull_all(name, _env(pull_all=True, set={"KEPT": "1"})) is False
+
+
+def test_pull_all_leaves_out_a_renamed_database_setting() -> None:
+    data = {"env": {"pull_all": True}, "database": {"env_map": {"host": "DB_HOST"}}}
+    assert may_pull_all("DB_HOST", data) is False
+
+
+@pytest.mark.parametrize("imposed", [{}, None, "oops"])
+def test_pull_all_takes_any_other_name(imposed: Any) -> None:
+    assert may_pull_all("STRIPE_SECRET", _env(pull_all=True, set=imposed)) is True

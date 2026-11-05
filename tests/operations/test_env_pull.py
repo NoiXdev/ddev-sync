@@ -25,6 +25,7 @@ from ddev_sync.operations.env_pull import (
     encode_for_env_file,
     logical_assignments,
     raw_assignments,
+    read_pulled_values,
     read_remote_values,
 )
 from ddev_sync.transport.fake import FakeCommandRunner
@@ -627,3 +628,98 @@ def test_the_match_is_against_real_directory_entries(
     runner = remote_file(ENV_PATH, "A=1\n")
     context = make_context(runner, tmp_path, env={"pull": ["A"]})
     assert (doc_link(refusal(context)) or "").endswith("#env-pull-no-example-file")
+
+
+def test_nothing_to_pull_makes_no_read(tmp_path: Path) -> None:
+    runner = FakeCommandRunner()
+    assert read_pulled_values(make_context(runner, tmp_path, env={})) is None
+    assert runner.calls == []
+
+
+def test_pull_all_reads_every_name_but_those_kept_local(tmp_path: Path) -> None:
+    runner = remote_file(
+        ENV_PATH, 'APP_KEY=k\nSTRIPE=s\nKEPT=remote\nDATABASE_HOST=prod\nDB_URL=x\nPEM="a\nb"\n'
+    )
+    context = make_context(runner, tmp_path, env={"pull_all": True, "set": {"KEPT": "local"}})
+    values = read_pulled_values(context)
+    assert values is not None
+    assert values.text == {"APP_KEY": "k", "STRIPE": "s"}
+    assert values.missing == []
+    assert values.multi_line == []
+    assert values.skipped == ["PEM"]
+
+
+def test_pull_all_from_the_handover_leaves_out_the_containers_own(tmp_path: Path) -> None:
+    runner = remote_file(
+        HANDOVER_PATH,
+        handover("PATH=/bin", "HOSTNAME=abc", "APP_KEY=k", "DDEV_SYNC_SKIPPED=PEM,OTHER"),
+    )
+    values = read_pulled_values(docker_context(runner, tmp_path, env={"pull_all": True}))
+    assert values is not None
+    assert values.text == {"APP_KEY": "k"}
+    assert values.skipped == ["OTHER", "PEM"]
+
+
+def test_pull_all_keeps_a_listed_name_required(tmp_path: Path) -> None:
+    runner = remote_file(ENV_PATH, "A=1\n")
+    context = make_context(runner, tmp_path, env={"pull_all": True, "pull": ["NEEDED"]})
+    values = read_pulled_values(context)
+    assert values is not None
+    assert values.missing == ["NEEDED"]
+    assert values.text == {"A": "1"}
+
+
+def test_an_optional_name_the_remote_lacks_is_skipped_not_missing(tmp_path: Path) -> None:
+    runner = remote_file(ENV_PATH, "OTHER=1\n")
+    values = read_pulled_values(make_context(runner, tmp_path, env={"pull_defaults": ["APP_KEY"]}))
+    assert values is not None
+    assert values.missing == []
+    assert values.skipped == ["APP_KEY"]
+
+
+def _no_remote_file() -> FakeCommandRunner:
+    runner = FakeCommandRunner()
+    runner.script_prefix(["ssh"], returncode=9)
+    return runner
+
+
+def test_only_optional_names_and_no_remote_file_is_a_notice(tmp_path: Path) -> None:
+    seen: list[str] = []
+    context = dataclasses.replace(
+        make_context(_no_remote_file(), tmp_path, env={"pull_defaults": ["APP_KEY"]}),
+        notice=seen.append,
+    )
+    assert read_pulled_values(context) is None
+    assert seen == ["no environment file on the remote, so not pulled: APP_KEY"]
+
+
+@pytest.mark.parametrize(
+    "env", [{"pull_all": True}, {"pull": ["APP_KEY"]}, {"pull_defaults": ["A"], "pull": ["B"]}]
+)
+def test_asking_for_it_and_no_remote_file_is_refused(tmp_path: Path, env: dict[str, Any]) -> None:
+    with pytest.raises(OperationError, match="no environment file found"):
+        read_pulled_values(make_context(_no_remote_file(), tmp_path, env=env))
+
+
+def test_a_failure_that_is_not_the_missing_file_still_stops_an_optional_read(
+    tmp_path: Path,
+) -> None:
+    runner = remote_file(HANDOVER_PATH, "not the marker\n")
+    context = docker_context(runner, tmp_path, env={"pull_defaults": ["APP_KEY"]})
+    with pytest.raises(OperationError) as refused:
+        read_pulled_values(context)
+    assert refused.value.doc == "endpoint-handover-file-unreadable"
+
+
+def test_preflight_lets_an_optional_name_the_remote_lacks_through(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    runner = remote_file(ENV_PATH, "OTHER=1\n")
+    check_pull(make_context(runner, tmp_path, env={"pull_defaults": ["APP_KEY"]}))
+
+
+def test_preflight_refuses_a_listed_name_under_pull_all(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    runner = remote_file(ENV_PATH, "OTHER=1\n")
+    context = make_context(runner, tmp_path, env={"pull_all": True, "pull": ["NEEDED"]})
+    with pytest.raises(OperationError, match="NEEDED"):
+        check_pull(context)

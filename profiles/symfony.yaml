@@ -12,6 +12,8 @@ detect:
 env:
   file: [.env.local, .env]
   strategy: patch_keys
+  # What signed the data in a synced database has to sign it locally too.
+  pull_defaults: [APP_SECRET]
   set:
     APP_ENV: dev
     APP_DEBUG: "1"

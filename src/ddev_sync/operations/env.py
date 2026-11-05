@@ -18,13 +18,13 @@ from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from ddev_sync.config.env_pull import names_to_read, pull_names
+from ddev_sync.config.env_pull import pulls_anything
 from ddev_sync.operations.base import ExecutionContext, OperationError, confirm
 from ddev_sync.operations.env_pull import (
     EXAMPLE_FILE,
     Assignment,
     logical_assignments,
-    read_remote_values,
+    read_pulled_values,
 )
 
 # Re-exported (not just used internally) so `tests/operations/test_env.py`'s
@@ -284,8 +284,8 @@ class EnvRewriteOperation:
         # Past the planner, which refuses bad names and any strategy but
         # `patch_keys` beside them, and past preflight, which refuses a name the
         # remote cannot give: `env.pull` rides with the same group as `db.dump`.
-        names = pull_names(context.merged.data)
-        if not imposed and not defaulted and not names:
+        pulling = pulls_anything(context.merged.data)
+        if not imposed and not defaulted and not pulling:
             return
         if defaulted and strategy == "append_block":
             # `append_block` writes a block rather than reconciling keys, so
@@ -294,7 +294,7 @@ class EnvRewriteOperation:
             # that validator never sees.
             raise OperationError("env.default cannot be used with strategy 'append_block'")
 
-        to_create = self._file_to_create(context, settings) if names else None
+        to_create = self._file_to_create(context, settings) if pulling else None
         if to_create is None:
             path = self._find_env_file(context, settings)
             original = start = path.read_text(encoding="utf-8")
@@ -306,7 +306,7 @@ class EnvRewriteOperation:
         values = expand_placeholders(
             {str(key): str(value) for key, value in imposed.items()}, context
         )
-        pulled = _read_pulled(context, names_to_read(context.merged.data))
+        pulled = _read_pulled(context)
         if defaulted:
             # Across every candidate that exists, not just the written file:
             # a key declared in `.env` while `.env.local` is written would
@@ -461,15 +461,21 @@ class EnvRewriteOperation:
         return declared
 
 
-def _read_pulled(context: ExecutionContext, names: Sequence[str]) -> dict[str, str]:
-    """The right-hand sides to write for `names`, with no remote read for no names.
+def _read_pulled(context: ExecutionContext) -> dict[str, str]:
+    """The right-hand sides to write, with no remote read when nothing is pulled.
 
     A value that refers to another variable gets a notice, by name only, because
     it can read differently from the remote if the other variable is not pulled.
+    So does an optional name the remote could not give.
     """
-    if not names:
+    remote = read_pulled_values(context)
+    if remote is None:
         return {}
-    remote = read_remote_values(context, names)
+    if remote.skipped:
+        context.notice(
+            f"not set on the remote or holding a line break, so not pulled: "
+            f"{', '.join(remote.skipped)}"
+        )
     if remote.references:
         context.notice(
             "copied as written, refers to another variable and resolves against the "

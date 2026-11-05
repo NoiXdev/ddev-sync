@@ -1369,3 +1369,32 @@ def test_both_switches_report_only_the_all_switch() -> None:
 def test_without_a_switch_the_detail_is_unchanged() -> None:
     detail = _sanitize_detail({}, _MIXED_RULES)
     assert detail == "3 rules: wipe-sessions, mask-mail, fake-names"
+
+
+def test_pull_all_plans_the_step_and_warns_on_the_plan() -> None:
+    extra = LayerDoc(".ddev/ddev-sync.yaml", {"env": {"file": [".env"], "pull_all": True}})
+    plan = plan_for(["db"], user_layers=[extra])
+    detail = next(entry.detail for entry in plan.steps if entry.kind is StepKind.ENV)
+    assert "+ all pulled" in detail
+    assert "pulls: everything" in detail
+    assert any("env.pull_all copies every value" in notice for notice in plan.notices)
+
+
+@pytest.mark.parametrize("strategy", ["append_block", "none"])
+def test_pull_all_needs_patch_keys(strategy: str) -> None:
+    with pytest.raises(ConfigError, match=r"env\.strategy: patch_keys"):
+        env_detail({"strategy": strategy, "pull_all": True})
+
+
+def test_pull_all_with_a_candidate_in_another_directory_is_refused() -> None:
+    with pytest.raises(ConfigError, match="in the project root"):
+        env_detail({"file": ["config/.env"], "pull_all": True})
+
+
+def test_a_default_env_set_keeps_gets_no_notice() -> None:
+    extra = LayerDoc(
+        ".ddev/ddev-sync.yaml",
+        {"env": {"file": [".env"], "pull_defaults": ["A"], "set": {"A": "1"}}},
+    )
+    plan = plan_for(["db"], user_layers=[extra])
+    assert not any("env.set keeps" in notice for notice in plan.notices)
