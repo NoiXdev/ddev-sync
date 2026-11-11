@@ -33,9 +33,9 @@ FROM alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f
 # Pinned with `=`: when a branch rotates a package the build fails naming it,
 # which is the point.
 RUN apk add --no-cache \
-      openssh-server=9.9_p2-r0 \
-      openssh-keygen=9.9_p2-r0 \
-      rsync=3.5.0-r0 \
+      openssh-server=9.9_p2-r1 \
+      openssh-keygen=9.9_p2-r1 \
+      rsync=3.5.2-r1 \
       mariadb-client=11.4.13-r0
 
 # Alpine ships an account called `sync` of its own (`sync:x:5:0`, the classic
