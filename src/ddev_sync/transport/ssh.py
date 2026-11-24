@@ -5,8 +5,9 @@ only place a string is ever handed to a shell is on the far side of ssh, where
 `quote_remote` has already escaped every argument. The tool this replaces
 interpolated paths and passwords straight into shell strings.
 
-The one thing here that touches the machine is `prepare_control_directory`,
-which creates the directory the shared connection's socket lives in.
+The two things here that touch the machine are `prepare_control_directory`,
+which creates the directory the shared connection's socket lives in, and
+`prepare_identity`, which writes a target's public key into it.
 """
 
 import contextlib
@@ -178,7 +179,13 @@ def interactive_ssh_command(target: ResolvedTarget, start_in: str | None) -> lis
     `ControlPersist` longer, then take every sync's calls with it. `cd` is not
     chained with `&&`: a directory that is gone is worth a message, not a lost shell.
     """
-    command = ["ssh", "-t", *SSH_CONNECTION_OPTIONS, *_host_key_alias_flag(target)]
+    command = [
+        "ssh",
+        "-t",
+        *SSH_CONNECTION_OPTIONS,
+        *_identity_flags(target),
+        *_host_key_alias_flag(target),
+    ]
     command.extend(_jump_flag(target))
     if target.port is not None:
         command.extend(["-p", str(target.port)])
@@ -197,7 +204,48 @@ def _ssh_prefix(target: ResolvedTarget) -> list[str]:
 
 
 def _connection_flags(target: ResolvedTarget) -> list[str]:
-    return [*SSH_CONNECTION_OPTIONS, *_control_flags(target), *_host_key_alias_flag(target)]
+    return [
+        *SSH_CONNECTION_OPTIONS,
+        *_identity_flags(target),
+        *_control_flags(target),
+        *_host_key_alias_flag(target),
+    ]
+
+
+def _identity_flags(target: ResolvedTarget, uid: str = "%i") -> list[str]:
+    """Offer the target's one key, and no other the agent holds.
+
+    ssh offers every key in the agent in turn, and a server cuts the attempt off
+    after `MaxAuthTries` (6 by default) with "Too many authentication failures",
+    so with enough keys loaded the right one is never reached - and each wrong
+    one counts against fail2ban. `IdentityFile` names a public key, which ssh
+    then looks up in the agent; `prepare_identity` wrote it. `uid` stays ssh's
+    own `%i` where ssh expands it, and is the real uid inside a `ProxyCommand`,
+    where ssh does not know that token and refuses the whole command.
+    """
+    if target.ssh_public_key is None:
+        return []
+    return ["-o", "IdentitiesOnly=yes", "-o", f"IdentityFile={_identity_path(target, uid)}"]
+
+
+def _identity_path(target: ResolvedTarget, uid: str) -> str:
+    assert target.ssh_public_key is not None
+    key = hashlib.sha256(target.ssh_public_key.encode("utf-8")).hexdigest()[:16]
+    return f"{CONTROL_DIRECTORY.replace('%i', uid)}/key-{key}.pub"
+
+
+def prepare_identity(target: ResolvedTarget) -> None:
+    """Write the target's public key where `_identity_flags` points ssh at it.
+
+    Into the directory `prepare_control_directory` made private, so the file
+    cannot be swapped for another key by someone else on the machine.
+    """
+    if target.ssh_public_key is None:
+        return
+    prepare_control_directory()
+    Path(_identity_path(target, str(os.getuid()))).write_text(
+        f"{target.ssh_public_key}\n", encoding="utf-8"
+    )
 
 
 def _host_key_alias_flag(target: ResolvedTarget) -> list[str]:
@@ -227,7 +275,7 @@ def _jump_flag(target: ResolvedTarget) -> list[str]:
     """
     if target.jump_host is None:
         return []
-    hop = ["ssh", *SSH_CONNECTION_OPTIONS]
+    hop = ["ssh", *SSH_CONNECTION_OPTIONS, *_identity_flags(target, str(os.getuid()))]
     if target.jump_host_user is not None:
         hop.extend(["-l", target.jump_host_user])
     hop.extend(["-p", str(target.jump_host_port), "-W", "[%h]:%p", target.jump_host])

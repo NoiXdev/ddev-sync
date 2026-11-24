@@ -104,7 +104,7 @@ from ddev_sync.transport.deployer import (
     make_deployer_resolver,
 )
 from ddev_sync.transport.runner import CommandRunner
-from ddev_sync.transport.ssh import ssh_command
+from ddev_sync.transport.ssh import prepare_identity, ssh_command
 
 DEFAULT_NAME = "production"
 
@@ -657,7 +657,7 @@ def _resolve_context(
     resolve the target before offering the fix, once more afterwards so that
     `doctor` sees the configuration as it was fixed, not as it was found.
     """
-    return build_context(
+    context = build_context(
         project_root=project_root,
         home=home,
         target_name=name,
@@ -668,6 +668,8 @@ def _resolve_context(
         runner=runner,
         deployer=deployer,
     )
+    prepare_identity(context.target)
+    return context
 
 
 def _fix_credentials(

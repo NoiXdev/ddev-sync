@@ -42,7 +42,9 @@ services:
       # that very uid, so either would work; the proxy is the choice that
       # keeps working if the service ever runs as anyone else, which is what
       # the image does by default. Verified against DDEV v1.25.4 - base
-      # design §12.
+      # design §12. DDEV v1.25.5 serves `socket` instead and leaves a dead
+      # `proxy-socket` behind; the engine moves to whichever answers
+      # (transport/agent.py).
       - SSH_AUTH_SOCK=/home/.ssh-agent/proxy-socket
       - DDEV_SITENAME
       - DDEV_PRIMARY_URL

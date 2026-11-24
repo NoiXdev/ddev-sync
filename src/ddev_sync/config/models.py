@@ -1,9 +1,16 @@
 """Pydantic models for sync targets, before and after resolution."""
 
+import re
 from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+
+_PUBLIC_KEY = re.compile(
+    r"(?P<type>ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)"
+    r"|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)"
+    r" (?P<blob>[A-Za-z0-9+/]+={0,3})(?: [^\n]*)?"
+)
 
 
 class Stage(StrEnum):
@@ -122,7 +129,23 @@ class TargetSpec(BaseModel):
     jump_host: str | None = None
     jump_host_user: str | None = None
     jump_host_port: int = 22
+    # The public key ssh offers, alone, from the agent: `ssh-ed25519 AAAA...`.
+    ssh_public_key: str | None = None
     deployer: DeployerRef | None = None
+
+    @field_validator("ssh_public_key", mode="after")
+    @classmethod
+    def _one_public_key(cls, key: str | None) -> str | None:
+        """Kept as `type base64`, without the comment, which ssh does not read."""
+        if key is None:
+            return None
+        match = _PUBLIC_KEY.fullmatch(key.strip())
+        if match is None:
+            raise ValueError(
+                "ssh_public_key must be one public key as in a .pub file, "
+                "such as 'ssh-ed25519 AAAA... you@host'"
+            )
+        return f"{match['type']} {match['blob']}"
 
     @model_validator(mode="before")
     @classmethod
@@ -196,6 +219,7 @@ class ResolvedTarget(BaseModel):
     jump_host: str | None = None
     jump_host_user: str | None = None
     jump_host_port: int = 22
+    ssh_public_key: str | None = None
 
     @field_validator("path", mode="after")
     @classmethod

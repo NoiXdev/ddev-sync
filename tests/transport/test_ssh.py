@@ -578,3 +578,63 @@ def test_the_interactive_command_goes_through_the_jump_host() -> None:
 def test_the_interactive_command_leaves_the_port_to_an_alias() -> None:
     target = direct().model_copy(update={"port": None, "user": None})
     assert ssh.interactive_ssh_command(target, None)[-1] == "web01.example"
+
+
+KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID+GYaQTJmqDy+WMZpz1/m97pJAXATzQ9coY3tLjMipR"
+
+
+def with_key(target: ResolvedTarget) -> ResolvedTarget:
+    return target.model_copy(update={"ssh_public_key": KEY})
+
+
+def test_without_a_key_every_agent_key_is_offered() -> None:
+    assert not any("IdentitiesOnly" in part for part in ssh.ssh_command(direct(), ["true"]))
+
+
+def test_a_target_key_is_the_only_one_offered() -> None:
+    command = ssh.ssh_command(with_key(direct()), ["true"])
+    assert "IdentitiesOnly=yes" in command
+    identity = next(part for part in command if part.startswith("IdentityFile="))
+    assert identity.startswith(f"IdentityFile={ssh.CONTROL_DIRECTORY}/key-")
+    assert identity.endswith(".pub")
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda t: ssh.interactive_ssh_command(t, None),
+        lambda t: ssh.scp_download_command(t, "/a", "/b"),
+        lambda t: ssh.rsync_pull_command(t, "/a", "/b"),
+    ],
+)
+def test_every_command_offers_only_the_target_key(
+    build: Callable[[ResolvedTarget], list[str]],
+) -> None:
+    assert "IdentitiesOnly=yes" in " ".join(build(with_key(direct())))
+
+
+def test_the_jump_host_offers_the_same_key_with_the_uid_spelled_out() -> None:
+    command = ssh.ssh_command(with_key(with_jump()), ["true"])
+    proxy = next(part for part in command if part.startswith("ProxyCommand="))
+    assert "IdentitiesOnly=yes" in proxy
+    assert "%i" not in proxy
+    assert f"ddev-sync-{os.getuid()}/key-" in proxy
+
+
+def test_prepare_identity_writes_the_key_where_ssh_looks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ssh, "CONTROL_DIRECTORY", str(tmp_path / "ddev-sync-%i"))
+    target = with_key(direct())
+    ssh.prepare_identity(target)
+    flag = next(p for p in ssh.ssh_command(target, ["true"]) if p.startswith("IdentityFile="))
+    written = Path(flag.removeprefix("IdentityFile=").replace("%i", str(os.getuid())))
+    assert written.read_text(encoding="utf-8") == f"{KEY}\n"
+
+
+def test_prepare_identity_without_a_key_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ssh, "CONTROL_DIRECTORY", str(tmp_path / "ddev-sync-%i"))
+    ssh.prepare_identity(direct())
+    assert not (tmp_path / f"ddev-sync-{os.getuid()}").exists()

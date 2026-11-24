@@ -43,6 +43,7 @@ from ddev_sync.operations.env_pull import check_pull
 from ddev_sync.operations.fake import parse_columns
 from ddev_sync.operations.files import validate_path_pairs
 from ddev_sync.operations.sanitize import SanitizeRule, active_rules
+from ddev_sync.transport.agent import answers
 from ddev_sync.transport.container import web_command
 from ddev_sync.transport.runner import CommandResult
 from ddev_sync.transport.ssh import remote_endpoint, ssh_command
@@ -393,6 +394,14 @@ class PreflightOperation:
             return False, (
                 f"{configured} is not readable and writable by this user - the sidecar needs "
                 "the agent's `proxy-socket` (mode 0666), not `socket` (0600)"
+            )
+        # A socket a restarted agent left behind exists, is 0666, and refuses
+        # every connection. `cli/main.py` already moved to one beside it that
+        # answers, if there is one.
+        if not answers(configured):
+            return False, (
+                f"{configured} does not answer, and no other socket of DDEV's agent does - "
+                "run `ddev restart`"
             )
         return True, configured
 

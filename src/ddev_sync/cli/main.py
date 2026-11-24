@@ -68,8 +68,9 @@ from ddev_sync.engine.steps import SELECTION_GROUPS
 from ddev_sync.errors import AmbiguousTargetError, DdevSyncError, SyncInterrupted
 from ddev_sync.features.registry import DEFAULT_FEATURE_ROOT
 from ddev_sync.profiles.registry import DEFAULT_PROFILE_ROOT
+from ddev_sync.transport.agent import use_an_answering_agent
 from ddev_sync.transport.runner import CommandRunner, SubprocessRunner
-from ddev_sync.transport.ssh import prepare_control_directory
+from ddev_sync.transport.ssh import prepare_control_directory, prepare_identity
 
 # `build` means exactly `--steps=setup --features=node-build
 # --only-feature-setup` - nothing more. These three constants are the single
@@ -252,6 +253,9 @@ def cli(
     # and a directory that is not safe to share a connection through is
     # refused before anything has run.
     prepare_control_directory()
+    # Before anything connects, and in this process's own environment, so ssh,
+    # scp and rsync all inherit the socket that answers.
+    use_an_answering_agent(os.environ)
     if ctx.invoked_subcommand is not None:
         return None
     return _run(ctx.obj, steps=steps, dry_run=dry_run, assume_yes=assume_yes)
@@ -550,11 +554,16 @@ def _build_run_context(options: _Options) -> RunContext:
             )
 
     if options.target_name is not None:
-        return build(resolve_target_name(options.target_name, options.project_root, options.home))
-    try:
-        return build(None)
-    except AmbiguousTargetError:
-        return build(resolve_target_name(None, options.project_root, options.home))
+        context = build(
+            resolve_target_name(options.target_name, options.project_root, options.home)
+        )
+    else:
+        try:
+            context = build(None)
+        except AmbiguousTargetError:
+            context = build(resolve_target_name(None, options.project_root, options.home))
+    prepare_identity(context.target)
+    return context
 
 
 def _group_option_names() -> frozenset[str]:

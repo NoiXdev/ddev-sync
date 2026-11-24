@@ -971,3 +971,50 @@ def test_a_deployer_block_with_the_docker_provider_is_refused() -> None:
                 host="prod.example", user="deploy", port=22, path="/srv/app/", layout=Layout.PLAIN
             ),
         )
+
+
+_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID+GYaQTJmqDy+WMZpz1/m97pJAXATzQ9coY3tLjMipR"
+
+
+def _with_key(key: str | None) -> list[LayerDoc]:
+    return [
+        layer(
+            "project",
+            {
+                "production": {
+                    "host": "web01.example",
+                    "user": "deploy",
+                    "path": "/srv/app/",
+                    "stage": "production",
+                    "ssh_public_key": key,
+                }
+            },
+        )
+    ]
+
+
+def test_a_public_key_is_kept_without_its_comment() -> None:
+    target = resolve_target(
+        "production", collect_targets(_with_key(f"  {_KEY} noidee@MacRosi.local "))
+    )
+    assert target.ssh_public_key == _KEY
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "AAAAC3NzaC1lZDI1NTE5AAAAID",
+        "ssh-ed25519",
+        "SHA256:TpFa+vHBAwMdgJLGdQ5ykn+KEMTeQ+STeZiUUzNsfaI",
+        f"{_KEY}\n{_KEY}",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+    ],
+)
+def test_anything_but_one_public_key_is_refused(key: str) -> None:
+    with pytest.raises(TargetError, match="ssh_public_key must be one public key"):
+        resolve_target("production", collect_targets(_with_key(key)))
+
+
+def test_a_bare_public_key_setting_is_no_key() -> None:
+    target = resolve_target("production", collect_targets(_with_key(None)))
+    assert target.ssh_public_key is None

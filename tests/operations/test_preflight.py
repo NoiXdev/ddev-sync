@@ -1085,9 +1085,22 @@ def test_check_reports_a_usable_agent_socket(
     socket = tmp_path / "proxy-socket"
     socket.touch(mode=0o666)
     monkeypatch.setenv("SSH_AUTH_SOCK", str(socket))
+    monkeypatch.setattr("ddev_sync.operations.preflight.answers", lambda _path: True)
     report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
     assert report.agent_ok is True
     assert "proxy-socket" in report.agent_detail
+
+
+def test_check_reports_an_agent_socket_that_does_not_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # What DDEV v1.25.5 leaves behind: a 0666 `proxy-socket` nothing serves.
+    socket = tmp_path / "proxy-socket"
+    socket.touch(mode=0o666)
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(socket))
+    report = PreflightOperation().check(make_context(healthy_runner(), tmp_path))
+    assert report.agent_ok is False
+    assert "does not answer" in report.agent_detail
 
 
 def test_the_remote_table_probe_does_not_relax_tls(tmp_path: Path) -> None:
