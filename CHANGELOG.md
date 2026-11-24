@@ -1,3 +1,12 @@
+## [0.1.0-rc.8](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.7...v0.1.0-rc.8) (2026-11-24)
+
+
+### Bug Fixes
+
+* **image:** pin the mariadb-client Alpine now carries ([0a294d6](https://github.com/NoiXdev/ddev-sync/commit/0a294d61eee5e719f1af19ce8253cd2e50798b9c))
+* **image:** pin the openssh, rsync and docker-cli Alpine now carries ([f7876bc](https://github.com/NoiXdev/ddev-sync/commit/f7876bc3b9da3eceac6ea71052d7b76e03c3a7b1))
+* **ssh:** use the agent socket that answers and offer one key per target ([2c169bc](https://github.com/NoiXdev/ddev-sync/commit/2c169bc5ac5fd7e0226c1f965aa8c68cf538ef92))
+
 ## [0.1.0-rc.7](https://github.com/NoiXdev/ddev-sync/compare/v0.1.0-rc.6...v0.1.0-rc.7) (2026-11-05)
 
 
