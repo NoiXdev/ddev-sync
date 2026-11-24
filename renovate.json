@@ -1,0 +1,39 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Only the apk pins in the two Dockerfiles: Alpine replaces a release when it ships a fix, and a pin it no longer carries fails every build without a cached layer.",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["custom.regex"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The engine image, on Alpine 3.24 through python:3.13-alpine.",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": ["\\s(?<depName>[a-z0-9][a-z0-9+._-]*)=(?<currentValue>\\d[^\\s\\\\]*)"],
+      "datasourceTemplate": "repology",
+      "packageNameTemplate": "alpine_3_24/{{{depName}}}",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)(?:\\.(?<patch>\\d+))?(?:_p(?<build>\\d+))?-r(?<revision>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "The endpoint image, on alpine:3.21.",
+      "managerFilePatterns": ["/^endpoint/Dockerfile$/"],
+      "matchStrings": ["\\s(?<depName>[a-z0-9][a-z0-9+._-]*)=(?<currentValue>\\d[^\\s\\\\]*)"],
+      "datasourceTemplate": "repology",
+      "packageNameTemplate": "alpine_3_21/{{{depName}}}",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)(?:\\.(?<patch>\\d+))?(?:_p(?<build>\\d+))?-r(?<revision>\\d+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "One pull request per image, with conventional-commit titles the CI gate accepts.",
+      "matchManagers": ["custom.regex"],
+      "groupName": "alpine packages",
+      "additionalBranchPrefix": "{{packageFileDir}}-",
+      "semanticCommitType": "fix",
+      "semanticCommitScope": "image"
+    }
+  ],
+  "semanticCommits": "enabled",
+  "schedule": ["before 6am on monday"],
+  "timezone": "Europe/Berlin"
+}
