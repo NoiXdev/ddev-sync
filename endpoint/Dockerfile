@@ -36,7 +36,7 @@ RUN apk add --no-cache \
       openssh-server=9.9_p2-r1 \
       openssh-keygen=9.9_p2-r1 \
       rsync=3.5.2-r1 \
-      mariadb-client=11.4.13-r0
+      mariadb-client=11.4.14-r0
 
 # Alpine ships an account called `sync` of its own (`sync:x:5:0`, the classic
 # `/bin/sync` shell), and the engine connects as `sync` - fixed by
